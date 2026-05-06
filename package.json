@@ -1,0 +1,29 @@
+{
+  "name": "stewardledger",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "check": "turbo check",
+    "test": "pnpm test:db:push && turbo test",
+    "test:db:up": "docker compose up -d --wait test-db",
+    "test:db:down": "docker compose stop test-db && docker compose rm -f test-db && docker volume rm -f stewardledger_pgdata_test",
+    "test:db:push": "ENV_FILE=../../.env.test pnpm --filter @stewardledger/db db:push",
+    "db:generate": "turbo db:generate",
+    "db:migrate": "turbo db:migrate",
+    "db:push": "turbo db:push",
+    "db:studio": "pnpm --filter @stewardledger/db db:studio",
+    "clean": "turbo clean"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.13",
+    "turbo": "^2.9.6",
+    "typescript": "^5.8.3"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20 <25"
+  }
+}

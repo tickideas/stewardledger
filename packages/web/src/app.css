@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+:root {
+  --color-brand-deep: #0f1f3a;
+  --color-brand-accent: #f0d687;
+}

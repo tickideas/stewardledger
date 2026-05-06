@@ -1,0 +1,40 @@
+{
+  "name": "@stewardledger/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "node build.mjs",
+    "check": "tsc --noEmit",
+    "lint": "biome lint src",
+    "start": "node dist/server.js",
+    "clean": "rm -rf dist",
+    "test": "ENV_FILE=../../.env.test vitest run",
+    "test:watch": "ENV_FILE=../../.env.test vitest"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.1",
+    "@hono/zod-validator": "^0.7.6",
+    "@stewardledger/db": "workspace:*",
+    "@stewardledger/shared": "workspace:*",
+    "better-auth": "^1.6.9",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.7.7",
+    "pino": "^9.5.0",
+    "postgres": "^3.4.5",
+    "usesend-js": "^1.6.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "dotenv": "^16.5.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.4"
+  }
+}

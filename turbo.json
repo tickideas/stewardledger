@@ -1,0 +1,45 @@
+{
+  "$schema": "https://v2-9-6.turborepo.dev/schema.json",
+  "globalEnv": [
+    "DATABASE_URL",
+    "AUTH_SECRET",
+    "PUBLIC_APP_URL",
+    "PUBLIC_API_URL",
+    "PUBLIC_APP_DOMAIN",
+    "PUBLIC_TENANT_DOMAIN",
+    "VITE_API_URL",
+    "NODE_ENV"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".svelte-kit/**", "build/**"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "lint": {
+      "dependsOn": ["^build"]
+    },
+    "check": {
+      "dependsOn": ["^build"]
+    },
+    "clean": {
+      "cache": false
+    },
+    "db:generate": {
+      "cache": false
+    },
+    "db:migrate": {
+      "cache": false
+    },
+    "db:push": {
+      "cache": false
+    },
+    "test": {
+      "cache": false,
+      "dependsOn": ["^build"]
+    }
+  }
+}
