@@ -10,7 +10,7 @@
     "test": "pnpm test:db:push && turbo test",
     "test:db:up": "docker compose up -d --wait test-db",
     "test:db:down": "docker compose stop test-db && docker compose rm -f test-db && docker volume rm -f stewardledger_pgdata_test",
-    "test:db:push": "ENV_FILE=../../.env.test pnpm --filter @stewardledger/db db:push",
+    "test:db:push": "ENV_FILE=../../.env.test pnpm --filter @stewardledger/db db:push && ENV_FILE=../../.env.test pnpm --filter @stewardledger/db db:bootstrap",
     "db:generate": "turbo db:generate",
     "db:migrate": "turbo db:migrate",
     "db:push": "turbo db:push",

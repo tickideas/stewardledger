@@ -119,7 +119,7 @@ Exit checklist:
 
 ---
 
-## Phase 4 — Giving setup & periods *(current focus)*
+## Phase 4 — Giving setup & periods
 
 Deliverables:
 
@@ -138,13 +138,13 @@ Implementation notes:
 
 Exit checklist:
 
-- [ ] Seed scripts create a full year of `giving_periods` for a new zone in <2 seconds.
-- [ ] Period auto-derivation works on a test set of arbitrary dates.
-- [ ] Currency on a new contribution defaults from zone, can be overridden if account currency differs.
+- [x] Seed scripts create a full year of `giving_periods` for a new zone in <2 seconds (`period-seed.test.ts` asserts the budget; full-year seed runs comfortably under 1s on the test DB).
+- [x] Period auto-derivation works on a test set of arbitrary dates (`period-seed.test.ts` covers Jan 1, end-of-Q1 Sunday, mid-Q3 Tuesday, ISO-week-52 Sunday, and the Dec-31-belongs-to-next-ISO-year edge case).
+- [x] Currency on a new contribution defaults from zone, can be overridden if account currency differs (`accounts.currency_code` defaults from the zone in the API layer — `tenant-giving.test.ts`; the contribution + batch schema lets callers override `currency_code` and the per-line currency-match trigger keeps lines aligned with their parent — `contributions.test.ts`).
 
 ---
 
-## Phase 5 — Contributions (manual + envelope batch)
+## Phase 5 — Contributions (manual + envelope batch) *(current focus)*
 
 Deliverables:
 
@@ -160,12 +160,17 @@ Deliverables:
 - Reverse with linked corrected contribution.
 - Member statement preview.
 
+Implementation notes:
+
+- DB layer (`contribution_batches`, `contributions`, `contribution_lines`, `contribution_members`) is in place with composite `(zone_id, id)` cross-tenant FKs and posted-immutability triggers (`packages/db/src/schema/contributions.ts`, `packages/db/src/bootstrap-triggers.ts`). Triggers are applied via `pnpm --filter @stewardledger/db db:bootstrap`, which `test:db:push` now runs automatically.
+- Routes / UI for the treasurer flow are not yet built.
+
 Exit checklist:
 
 - [ ] A treasurer can record a Sunday batch in under 5 minutes for a 30-member service.
-- [ ] Posted contributions are immutable; the immutability is enforced at the DB level.
+- [x] Posted contributions are immutable; the immutability is enforced at the DB level (triggers `contributions_posted_guard`, `contributions_no_delete_when_posted`, `contribution_lines_posted_guard`; verified by `contributions.test.ts`).
 - [ ] Member running totals match per-member sum across all sources.
-- [ ] Mixed-currency batches are forbidden (a batch is single-currency); UI forces a clear choice.
+- [ ] Mixed-currency batches are forbidden (a batch is single-currency); UI forces a clear choice. *(line-currency match enforced at the DB level; UI gate pending.)*
 
 ---
 

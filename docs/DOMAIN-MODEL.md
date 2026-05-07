@@ -484,9 +484,10 @@ contribution_members                       -- multi-member contribution (oblatio
 ### Posted-immutability
 
 - `contributions` and `contribution_lines` rows in `posted` status cannot be updated or deleted.
-- A database trigger enforces this; it can only allow:
-  - status transitions to `voided` or `reversed`
-  - cosmetic fields (e.g. `description`, `notes`) appended via an audit-logged update path
+- Database triggers enforce this (defined in `packages/db/src/bootstrap-triggers.ts`, applied by `pnpm --filter @stewardledger/db db:bootstrap`):
+  - `contributions_posted_guard` permits only the void/reverse + bookkeeping columns to change once `status = 'posted'`; any other column change raises a `check_violation`.
+  - `contributions_no_delete_when_posted` blocks deletes of `posted` rows.
+  - `contribution_lines_posted_guard` blocks any insert / update / delete on lines once the parent contribution is `posted`, and refuses lines whose `currency_code` doesn't match their parent.
 - Corrections are applied as **new** contributions with `reversal_of_contribution_id` set.
 
 ### Currency rule

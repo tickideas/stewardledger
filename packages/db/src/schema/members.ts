@@ -12,6 +12,7 @@ import {
   pgTable,
   text,
   timestamp,
+  unique,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { user } from "./auth";
@@ -80,6 +81,7 @@ export const members = pgTable(
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
   (table) => [
+    unique("members_zone_id_unique").on(table.zoneId, table.id),
     uniqueIndex("members_zone_reference_idx").on(table.zoneId, table.referenceCode),
     index("members_zone_chapter_idx").on(table.zoneId, table.chapterId),
     index("members_zone_active_idx")
