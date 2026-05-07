@@ -251,3 +251,78 @@ export const memberMergeProposalListQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 export type MemberMergeProposalListQuery = z.infer<typeof memberMergeProposalListQuerySchema>;
+
+// ─── Giving setup ────────────────────────────────────────────────────
+
+const shortCodeSchema = z
+  .string()
+  .min(1)
+  .max(32)
+  .regex(/^[A-Z0-9_-]+$/, "shortCode must be uppercase letters, numbers, underscores, or hyphens");
+
+export const givingCategoryCreateSchema = z.object({
+  name: z.string().min(1).max(120),
+  parentCategoryId: uuidSchema.nullish(),
+  shortCode: shortCodeSchema.nullish(),
+  ordinal: z.number().int().min(0).max(1000).optional(),
+  dateFrom: z.string().date().optional(),
+  dateTo: z.string().date().nullish(),
+});
+export type GivingCategoryCreateInput = z.infer<typeof givingCategoryCreateSchema>;
+
+export const givingCategoryUpdateSchema = givingCategoryCreateSchema.partial();
+export type GivingCategoryUpdateInput = z.infer<typeof givingCategoryUpdateSchema>;
+
+export const accountCreateSchema = z.object({
+  name: z.string().min(1).max(120),
+  description: z.string().max(500).nullish(),
+  currencyCode: currencyCodeSchema.optional(),
+  dateFrom: z.string().date().optional(),
+  dateTo: z.string().date().nullish(),
+});
+export type AccountCreateInput = z.infer<typeof accountCreateSchema>;
+
+export const accountUpdateSchema = accountCreateSchema.partial();
+export type AccountUpdateInput = z.infer<typeof accountUpdateSchema>;
+
+export const givingTypeCreateSchema = z.object({
+  name: z.string().min(1).max(120),
+  categoryId: uuidSchema,
+  shortCode: shortCodeSchema.nullish(),
+  isZonal: z.boolean().optional(),
+  isChapter: z.boolean().optional(),
+  hasPartnershipTarget: z.boolean().optional(),
+  accountId: uuidSchema.nullish(),
+  ordinal: z.number().int().min(0).max(1000).optional(),
+  isActive: z.boolean().optional(),
+});
+export type GivingTypeCreateInput = z.infer<typeof givingTypeCreateSchema>;
+
+export const givingTypeUpdateSchema = givingTypeCreateSchema.partial();
+export type GivingTypeUpdateInput = z.infer<typeof givingTypeUpdateSchema>;
+
+export const paymentMethodCreateSchema = z.object({
+  code: z
+    .string()
+    .min(1)
+    .max(40)
+    .regex(/^[a-z0-9_]+$/, "code must be lowercase snake_case"),
+  name: z.string().min(1).max(120),
+  isActive: z.boolean().optional(),
+  ordinal: z.number().int().min(0).max(1000).optional(),
+});
+export type PaymentMethodCreateInput = z.infer<typeof paymentMethodCreateSchema>;
+
+export const paymentMethodUpdateSchema = paymentMethodCreateSchema.partial();
+export type PaymentMethodUpdateInput = z.infer<typeof paymentMethodUpdateSchema>;
+
+export const serviceTypeCreateSchema = z.object({
+  name: z.string().min(1).max(120),
+  shortCode: shortCodeSchema.nullish(),
+  isActive: z.boolean().optional(),
+  ordinal: z.number().int().min(0).max(1000).optional(),
+});
+export type ServiceTypeCreateInput = z.infer<typeof serviceTypeCreateSchema>;
+
+export const serviceTypeUpdateSchema = serviceTypeCreateSchema.partial();
+export type ServiceTypeUpdateInput = z.infer<typeof serviceTypeUpdateSchema>;

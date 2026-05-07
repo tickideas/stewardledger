@@ -132,6 +132,10 @@ Deliverables:
 - Service events (manual create, calendar view).
 - Periods (giving / fiscal / ministry / partnership) seeded for current year on zone creation.
 
+Implementation notes:
+
+- Tenant API routes are in place for giving categories, giving types, payment methods, accounts, and service types under `/api/tenant/giving/*`.
+
 Exit checklist:
 
 - [ ] Seed scripts create a full year of `giving_periods` for a new zone in <2 seconds.

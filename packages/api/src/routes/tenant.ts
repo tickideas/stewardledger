@@ -22,6 +22,8 @@ import {
 } from "../services/invitations";
 import { brandedEmailHtml, escapeHtml, sendEmail } from "../services/email";
 import { env } from "../env";
+import { tenantGivingMethodsRouter } from "./tenant-giving-methods";
+import { tenantGivingRouter } from "./tenant-giving";
 import { tenantMembersRouter } from "./tenant-members";
 
 export const tenantRouter = new Hono();
@@ -30,6 +32,8 @@ tenantRouter.use("*", tenantMiddleware, requireSession, requireTenantAuth);
 
 // Member-domain routes live in their own module to keep this file small.
 tenantRouter.route("/", tenantMembersRouter);
+tenantRouter.route("/", tenantGivingRouter);
+tenantRouter.route("/", tenantGivingMethodsRouter);
 
 /** Current user's authorization context for the resolved zone. */
 tenantRouter.get("/me", async (c) => {
