@@ -10,9 +10,11 @@ import type { Database } from "@stewardledger/db";
 
 import { env } from "../env";
 import { brandedEmailHtml, escapeHtml, sendEmail } from "./email";
+import { seedZoneGivingSetup } from "./giving-setup-seed";
 import { createInvitation } from "./invitations";
 import { seedZoneLookups } from "./lookup-seed";
 import { assertNameAvailable, NameTakenError } from "./names";
+import { seedZonePeriods } from "./period-seed";
 import { seedZoneRoles } from "./role-seed";
 
 export class SignupError extends Error {
@@ -50,7 +52,7 @@ export async function signupZone(
       .from(regions)
       .where(eq(regions.id, input.regionId))
       .limit(1);
-    if (!region[0] || !region[0].isActive) {
+    if (!region[0]?.isActive) {
       throw new SignupError("region_not_found", "Selected region is not available.");
     }
   }
@@ -89,6 +91,11 @@ export async function signupZone(
 
     await seedZoneRoles(tx, zone.id);
     await seedZoneLookups(tx, zone.id);
+    await seedZoneGivingSetup(tx, zone.id, input.defaultCurrency);
+    await seedZonePeriods(tx, zone.id, {
+      fiscalYearStartMonth: input.fiscalYearStartMonth,
+      ministryYearStartMonth: input.ministryYearStartMonth,
+    });
 
     const invitation = await createInvitation(tx, {
       zoneId: zone.id,

@@ -6,9 +6,16 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import {
+  accounts,
+  fiscalPeriods,
+  givingCategories,
+  givingPeriods,
+  givingTypes,
   invitations,
+  paymentMethods,
   regions,
   roles,
+  serviceTypes,
   user as userTable,
   userRoleBindings,
   zones,
@@ -16,6 +23,7 @@ import {
 import { CHAPTER_ROLES, ZONE_ROLES } from "@stewardledger/shared";
 import { db } from "../db";
 import { applyAcceptedInvitation, findInvitationByToken } from "./invitations";
+import { deriveGivingPeriodForDate } from "./period-seed";
 import { signupZone, SignupError } from "./signup";
 
 function unique(): string {
@@ -39,7 +47,7 @@ describe("signupZone", () => {
     for (const n of regionNames) await cleanupRegion(n);
   });
 
-  it("creates a zone in pending_setup, seeds 9 system roles, and creates a zone_owner invite", async () => {
+  it("creates a zone in pending_setup, seeds foundations, and creates a zone_owner invite", async () => {
     const slug = `t-${unique()}`;
     const name = `Test Zone ${unique()}`;
     slugs.push(slug);
@@ -72,6 +80,54 @@ describe("signupZone", () => {
     expect(seededRoles.length).toBe(9);
     expect(seededRoles.map((r) => r.code)).toContain(ZONE_ROLES.ZONE_OWNER);
     expect(seededRoles.map((r) => r.code)).toContain(CHAPTER_ROLES.CHAPTER_TREASURER);
+
+    const [givingCategoryCount] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(givingCategories)
+      .where(sql`${givingCategories.zoneId} = ${result.zoneId}`);
+    expect(givingCategoryCount.count).toBe(4);
+
+    const [accountCount] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(accounts)
+      .where(sql`${accounts.zoneId} = ${result.zoneId}`);
+    expect(accountCount.count).toBe(2);
+
+    const [givingTypeCount] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(givingTypes)
+      .where(sql`${givingTypes.zoneId} = ${result.zoneId}`);
+    expect(givingTypeCount.count).toBe(4);
+
+    const [paymentMethodCount] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(paymentMethods)
+      .where(sql`${paymentMethods.zoneId} = ${result.zoneId}`);
+    expect(paymentMethodCount.count).toBe(6);
+
+    const [serviceTypeCount] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(serviceTypes)
+      .where(sql`${serviceTypes.zoneId} = ${result.zoneId}`);
+    expect(serviceTypeCount.count).toBe(3);
+
+    const [givingPeriodCount] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(givingPeriods)
+      .where(sql`${givingPeriods.zoneId} = ${result.zoneId}`);
+    expect(givingPeriodCount.count).toBeGreaterThanOrEqual(365);
+
+    const seededFiscalPeriods = await db
+      .select({ periodNumber: fiscalPeriods.periodNumber })
+      .from(fiscalPeriods)
+      .where(sql`${fiscalPeriods.zoneId} = ${result.zoneId}`);
+    expect(seededFiscalPeriods.length).toBeGreaterThanOrEqual(12);
+
+    const July15 = `${new Date().getUTCFullYear()}-07-15`;
+    const derivedPeriod = await deriveGivingPeriodForDate(db, result.zoneId, July15);
+    expect(derivedPeriod).not.toBeNull();
+    expect(derivedPeriod?.month).toBe(7);
+    expect(derivedPeriod?.quarter).toBe(3);
 
     const invs = await db
       .select()
