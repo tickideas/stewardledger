@@ -238,6 +238,14 @@ export const contributions = pgTable(
       "contributions_voided_requires_timestamp",
       sql`(${table.status} <> 'voided') or (${table.voidedAt} is not null)`,
     ),
+    check(
+      "contributions_reversal_not_self",
+      sql`${table.reversalOfContributionId} is null or ${table.reversalOfContributionId} <> ${table.id}`,
+    ),
+    check(
+      "contributions_parent_not_self",
+      sql`${table.parentContributionId} is null or ${table.parentContributionId} <> ${table.id}`,
+    ),
   ],
 );
 
