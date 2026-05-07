@@ -3,7 +3,6 @@
 
 import { zValidator } from "@hono/zod-validator";
 import {
-  CHAPTER_ROLES,
   ZONE_ROLES,
   chapterCreateSchema,
   invitationCreateSchema,

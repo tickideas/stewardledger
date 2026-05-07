@@ -24,6 +24,7 @@ export function createApp() {
         return origin;
       },
       credentials: true,
+      allowHeaders: ["content-type", "x-stewardledger-zone-slug"],
     }),
   );
 

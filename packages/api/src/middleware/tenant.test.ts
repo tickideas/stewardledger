@@ -1,7 +1,7 @@
 // packages/api/src/middleware/tenant.test.ts
 
 import { describe, expect, it } from "vitest";
-import { resolveZoneSlugFromHost } from "./tenant";
+import { resolveDevZoneSlugFromHeader, resolveZoneSlugFromHost } from "./tenant";
 
 describe("resolveZoneSlugFromHost", () => {
   const apex = "stewardledger.church";
@@ -30,5 +30,21 @@ describe("resolveZoneSlugFromHost", () => {
 
   it("works against a localhost dev domain", () => {
     expect(resolveZoneSlugFromHost("uk-zone-1.localhost", "localhost")).toBe("uk-zone-1");
+  });
+});
+
+describe("resolveDevZoneSlugFromHeader", () => {
+  it("accepts a valid dev-only localhost zone header", () => {
+    expect(resolveDevZoneSlugFromHeader("uk-zone-1", "development", "localhost")).toBe(
+      "uk-zone-1",
+    );
+  });
+
+  it("rejects the dev header in production", () => {
+    expect(resolveDevZoneSlugFromHeader("uk-zone-1", "production", "localhost")).toBeNull();
+  });
+
+  it("rejects invalid slugs", () => {
+    expect(resolveDevZoneSlugFromHeader("Not A Slug", "development", "localhost")).toBeNull();
   });
 });

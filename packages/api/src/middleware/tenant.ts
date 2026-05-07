@@ -2,7 +2,7 @@
 // Resolves the current zone (tenant) from the Host header — subdomain or custom domain.
 // Throws 404 if no zone matches; downstream handlers may attach the user binding context.
 
-import type { AuthorizedContext } from "@stewardledger/shared";
+import { zoneSlugSchema, type AuthorizedContext } from "@stewardledger/shared";
 import { eq } from "drizzle-orm";
 import type { Context, MiddlewareHandler } from "hono";
 import { customDomains, zones } from "@stewardledger/db/schema";
@@ -36,12 +36,28 @@ export function resolveZoneSlugFromHost(host: string, tenantDomain: string): str
   return sub;
 }
 
+export function resolveDevZoneSlugFromHeader(
+  header: string | undefined,
+  nodeEnv: string,
+  tenantDomain: string,
+): string | null {
+  if (nodeEnv === "production" || tenantDomain !== "localhost" || !header) return null;
+  const parsed = zoneSlugSchema.safeParse(header);
+  return parsed.success ? parsed.data : null;
+}
+
 /** Hono middleware that loads the tenant by Host header. */
 export const tenantMiddleware: MiddlewareHandler = async (c: Context, next) => {
   const host = c.req.header("host") ?? "";
   if (!host) return c.json({ error: { code: "no_host", message: "Host header missing" } }, 400);
 
-  const slug = resolveZoneSlugFromHost(host, env.PUBLIC_TENANT_DOMAIN);
+  const slug =
+    resolveZoneSlugFromHost(host, env.PUBLIC_TENANT_DOMAIN) ??
+    resolveDevZoneSlugFromHeader(
+      c.req.header("x-stewardledger-zone-slug"),
+      env.NODE_ENV,
+      env.PUBLIC_TENANT_DOMAIN,
+    );
 
   let tenant: TenantBindings | null = null;
   if (slug) {

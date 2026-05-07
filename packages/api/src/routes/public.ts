@@ -10,7 +10,7 @@ import {
 } from "@stewardledger/shared";
 import { and, asc, eq, ilike, isNull } from "drizzle-orm";
 import { Hono } from "hono";
-import { regions } from "@stewardledger/db/schema";
+import { regions, userRoleBindings, zones } from "@stewardledger/db/schema";
 import { auth } from "../auth";
 import { db } from "../db";
 import { log } from "../logger";
@@ -48,6 +48,30 @@ publicRouter.get(
     return c.json({ items: rows });
   },
 );
+
+/** Current session's zones. Used by local-dev login before tenant host routing exists. */
+publicRouter.get("/session-zones", async (c) => {
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+  if (!session?.user) {
+    return c.json({ error: { code: "unauthenticated", message: "Sign in required" } }, 401);
+  }
+
+  const rows = await db
+    .select({ id: zones.id, slug: zones.slug, name: zones.name })
+    .from(userRoleBindings)
+    .innerJoin(zones, eq(userRoleBindings.zoneId, zones.id))
+    .where(and(eq(userRoleBindings.userId, session.user.id), isNull(userRoleBindings.revokedAt)))
+    .orderBy(asc(zones.name));
+
+  const seen = new Set<string>();
+  const items = rows.filter((row) => {
+    if (seen.has(row.id)) return false;
+    seen.add(row.id);
+    return true;
+  });
+
+  return c.json({ items });
+});
 
 /** Public zone signup. Always invites the owner immediately (no admin gate). */
 publicRouter.post("/signup", zValidator("json", zoneSignupSchema), async (c) => {
