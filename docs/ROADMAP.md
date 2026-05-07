@@ -134,7 +134,7 @@ Deliverables:
 
 Implementation notes:
 
-- Tenant API routes are in place for giving categories, giving types, payment methods, accounts, and service types under `/api/tenant/giving/*`.
+- Tenant API routes are in place for giving categories, giving types, payment methods, accounts, service types, and service events under `/api/tenant/giving/*`.
 
 Exit checklist:
 

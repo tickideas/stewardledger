@@ -326,3 +326,24 @@ export type ServiceTypeCreateInput = z.infer<typeof serviceTypeCreateSchema>;
 
 export const serviceTypeUpdateSchema = serviceTypeCreateSchema.partial();
 export type ServiceTypeUpdateInput = z.infer<typeof serviceTypeUpdateSchema>;
+
+export const serviceEventListQuerySchema = z.object({
+  chapterId: uuidSchema.optional(),
+  serviceTypeId: uuidSchema.optional(),
+  dateFrom: z.string().date().optional(),
+  dateTo: z.string().date().optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type ServiceEventListQuery = z.infer<typeof serviceEventListQuerySchema>;
+
+export const serviceEventCreateSchema = z.object({
+  chapterId: uuidSchema.nullish(),
+  serviceTypeId: uuidSchema,
+  serviceDate: z.string().date(),
+  notes: z.string().max(2000).nullish(),
+});
+export type ServiceEventCreateInput = z.infer<typeof serviceEventCreateSchema>;
+
+export const serviceEventUpdateSchema = serviceEventCreateSchema.partial();
+export type ServiceEventUpdateInput = z.infer<typeof serviceEventUpdateSchema>;

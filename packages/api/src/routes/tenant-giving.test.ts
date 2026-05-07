@@ -3,10 +3,14 @@
 
 import { sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { ZONE_ROLES } from "@stewardledger/shared";
+import { CHAPTER_ROLES, ZONE_ROLES } from "@stewardledger/shared";
 import {
+  chapters,
   givingCategories,
+  givingPeriods,
   paymentMethods,
+  serviceEvents,
+  serviceTypes,
   user as userTable,
   userRoleBindings,
   zones,
@@ -15,6 +19,7 @@ import { createApp } from "../app";
 import { auth } from "../auth";
 import { db } from "../db";
 import { seedZoneGivingSetup } from "../services/giving-setup-seed";
+import { seedZonePeriods } from "../services/period-seed";
 import { seedZoneRoles } from "../services/role-seed";
 
 function unique(): string {
@@ -27,6 +32,7 @@ interface SeededZone {
   id: string;
   slug: string;
   ownerRoleId: string;
+  chapterTreasurerRoleId: string;
 }
 
 async function seedZone(slug: string, currencyCode: string): Promise<SeededZone> {
@@ -44,11 +50,29 @@ async function seedZone(slug: string, currencyCode: string): Promise<SeededZone>
     .returning({ id: zones.id, slug: zones.slug });
   const seededRoles = await seedZoneRoles(db, zone.id);
   await seedZoneGivingSetup(db, zone.id, currencyCode);
+  await seedZonePeriods(db, zone.id, {
+    fiscalYearStartMonth: 1,
+    ministryYearStartMonth: 3,
+  });
   return {
     id: zone.id,
     slug: zone.slug,
     ownerRoleId: seededRoles.get(ZONE_ROLES.ZONE_OWNER)!,
+    chapterTreasurerRoleId: seededRoles.get(CHAPTER_ROLES.CHAPTER_TREASURER)!,
   };
+}
+
+async function seedChapter(zoneId: string, name: string): Promise<string> {
+  const [row] = await db
+    .insert(chapters)
+    .values({
+      zoneId,
+      referenceCode: `C${unique()}`,
+      name,
+      dateFrom: new Date().toISOString().slice(0, 10),
+    })
+    .returning({ id: chapters.id });
+  return row.id;
 }
 
 async function seedUser(email: string): Promise<string> {
@@ -91,6 +115,9 @@ describe("tenant giving setup routes", () => {
   let zoneA: SeededZone;
   let zoneB: SeededZone;
   let userA: string;
+  let chapterUserA: string;
+  let chapterA: string;
+  let chapterB: string;
   const cleanupSlugs: string[] = [];
   const cleanupUserIds: string[] = [];
 
@@ -98,18 +125,29 @@ describe("tenant giving setup routes", () => {
     zoneA = await seedZone(`give-a-${unique()}`, "GBP");
     zoneB = await seedZone(`give-b-${unique()}`, "USD");
     cleanupSlugs.push(zoneA.slug, zoneB.slug);
+    chapterA = await seedChapter(zoneA.id, "Chapter A");
+    chapterB = await seedChapter(zoneB.id, "Chapter B");
 
     userA = await seedUser(`giving-a+${unique()}@example.com`);
-    cleanupUserIds.push(userA);
+    chapterUserA = await seedUser(`giving-chapter-a+${unique()}@example.com`);
+    cleanupUserIds.push(userA, chapterUserA);
     await db.insert(userRoleBindings).values({
       userId: userA,
       zoneId: zoneA.id,
       roleId: zoneA.ownerRoleId,
     });
+    await db.insert(userRoleBindings).values({
+      userId: chapterUserA,
+      zoneId: zoneA.id,
+      chapterId: chapterA,
+      roleId: zoneA.chapterTreasurerRoleId,
+    });
   });
 
   afterAll(async () => {
     for (const slug of cleanupSlugs) {
+      await db.execute(sql`delete from service_events where zone_id = (select id from zones where slug = ${slug})`);
+      await db.execute(sql`delete from chapters where zone_id = (select id from zones where slug = ${slug})`);
       await db.execute(sql`delete from zones where slug = ${slug}`);
     }
     for (const id of cleanupUserIds) {
@@ -209,5 +247,145 @@ describe("tenant giving setup routes", () => {
     vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "giving-a@example.com"));
     const res = await call(zoneB.slug, "/api/tenant/giving/accounts");
     expect(res.status).toBe(403);
+  });
+
+  it("creates a service event and derives its giving period from serviceDate", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "giving-a@example.com"));
+    const [serviceType] = await db
+      .select({ id: serviceTypes.id })
+      .from(serviceTypes)
+      .where(sql`${serviceTypes.zoneId} = ${zoneA.id}`)
+      .limit(1);
+    const serviceDate = `${new Date().getUTCFullYear()}-07-15`;
+
+    const res = await call(zoneA.slug, "/api/tenant/giving/service-events", {
+      method: "POST",
+      body: { chapterId: chapterA, serviceTypeId: serviceType.id, serviceDate, notes: "Sunday close" },
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      serviceEvent: { id: string; givingPeriodId: string; serviceDate: string };
+    };
+    expect(body.serviceEvent.serviceDate).toBe(serviceDate);
+
+    const [period] = await db
+      .select({ id: givingPeriods.id, month: givingPeriods.month, quarter: givingPeriods.quarter })
+      .from(givingPeriods)
+      .where(sql`${givingPeriods.id} = ${body.serviceEvent.givingPeriodId}`);
+    expect(period.month).toBe(7);
+    expect(period.quarter).toBe(3);
+  });
+
+  it("updates a service event and re-derives the giving period when the date changes", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "giving-a@example.com"));
+    const [serviceType] = await db
+      .select({ id: serviceTypes.id })
+      .from(serviceTypes)
+      .where(sql`${serviceTypes.zoneId} = ${zoneA.id}`)
+      .limit(1);
+    const originalDate = `${new Date().getUTCFullYear()}-02-10`;
+    const nextDate = `${new Date().getUTCFullYear()}-11-12`;
+    const create = await call(zoneA.slug, "/api/tenant/giving/service-events", {
+      method: "POST",
+      body: { chapterId: chapterA, serviceTypeId: serviceType.id, serviceDate: originalDate },
+    });
+    expect(create.status).toBe(201);
+    const created = (await create.json()) as { serviceEvent: { id: string; givingPeriodId: string } };
+
+    const patch = await call(zoneA.slug, `/api/tenant/giving/service-events/${created.serviceEvent.id}`, {
+      method: "PATCH",
+      body: { serviceDate: nextDate },
+    });
+    expect(patch.status).toBe(200);
+    const patched = (await patch.json()) as { serviceEvent: { givingPeriodId: string; serviceDate: string } };
+    expect(patched.serviceEvent.serviceDate).toBe(nextDate);
+    expect(patched.serviceEvent.givingPeriodId).not.toBe(created.serviceEvent.givingPeriodId);
+
+    const [period] = await db
+      .select({ month: givingPeriods.month })
+      .from(givingPeriods)
+      .where(sql`${givingPeriods.id} = ${patched.serviceEvent.givingPeriodId}`);
+    expect(period.month).toBe(11);
+  });
+
+  it("rejects service events using another zone's chapter or service type", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "giving-a@example.com"));
+    const [zoneAType] = await db
+      .select({ id: serviceTypes.id })
+      .from(serviceTypes)
+      .where(sql`${serviceTypes.zoneId} = ${zoneA.id}`)
+      .limit(1);
+    const [zoneBType] = await db
+      .select({ id: serviceTypes.id })
+      .from(serviceTypes)
+      .where(sql`${serviceTypes.zoneId} = ${zoneB.id}`)
+      .limit(1);
+    const serviceDate = `${new Date().getUTCFullYear()}-08-01`;
+
+    const foreignChapter = await call(zoneA.slug, "/api/tenant/giving/service-events", {
+      method: "POST",
+      body: { chapterId: chapterB, serviceTypeId: zoneAType.id, serviceDate },
+    });
+    expect(foreignChapter.status).toBe(404);
+
+    const foreignServiceType = await call(zoneA.slug, "/api/tenant/giving/service-events", {
+      method: "POST",
+      body: { chapterId: chapterA, serviceTypeId: zoneBType.id, serviceDate },
+    });
+    expect(foreignServiceType.status).toBe(404);
+    const body = (await foreignServiceType.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("service_type_not_found");
+  });
+
+  it("chapter treasurers only see their chapter and zone-wide service events", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "giving-a@example.com"));
+    const [serviceType] = await db
+      .select({ id: serviceTypes.id })
+      .from(serviceTypes)
+      .where(sql`${serviceTypes.zoneId} = ${zoneA.id}`)
+      .limit(1);
+    const serviceDate = `${new Date().getUTCFullYear()}-09-03`;
+    const zoneWide = await call(zoneA.slug, "/api/tenant/giving/service-events", {
+      method: "POST",
+      body: { serviceTypeId: serviceType.id, serviceDate },
+    });
+    expect(zoneWide.status).toBe(201);
+    const chapterScoped = await call(zoneA.slug, "/api/tenant/giving/service-events", {
+      method: "POST",
+      body: { chapterId: chapterA, serviceTypeId: serviceType.id, serviceDate },
+    });
+    expect(chapterScoped.status).toBe(201);
+
+    const [otherChapter] = await db
+      .insert(chapters)
+      .values({
+        zoneId: zoneA.id,
+        referenceCode: `C${unique()}`,
+        name: "Other Chapter",
+        dateFrom: new Date().toISOString().slice(0, 10),
+      })
+      .returning({ id: chapters.id });
+    const period = await db
+      .select({ id: givingPeriods.id })
+      .from(givingPeriods)
+      .where(sql`${givingPeriods.zoneId} = ${zoneA.id} and ${givingPeriods.date} = ${serviceDate}`)
+      .limit(1);
+    await db.insert(serviceEvents).values({
+      zoneId: zoneA.id,
+      chapterId: otherChapter.id,
+      serviceTypeId: serviceType.id,
+      serviceDate,
+      givingPeriodId: period[0].id,
+    });
+
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(
+      fakeSession(chapterUserA, "giving-chapter-a@example.com"),
+    );
+    const res = await call(zoneA.slug, "/api/tenant/giving/service-events");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: Array<{ chapterId: string | null }> };
+    expect(body.items.some((item) => item.chapterId === null)).toBe(true);
+    expect(body.items.some((item) => item.chapterId === chapterA)).toBe(true);
+    expect(body.items.some((item) => item.chapterId === otherChapter.id)).toBe(false);
   });
 });
