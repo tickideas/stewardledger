@@ -24,9 +24,15 @@ async function request<T>(
   body?: unknown,
   fetchImpl: typeof fetch = fetch,
 ): Promise<T> {
+  const headers = new Headers(body ? { "content-type": "application/json" } : undefined);
+  const zoneSlug = currentZoneSlug();
+  if (zoneSlug && path.startsWith("/api/tenant/")) {
+    headers.set("x-stewardledger-zone-slug", zoneSlug);
+  }
+
   const res = await fetchImpl(`${PUBLIC_API_URL}${path}`, {
     method,
-    headers: body ? { "content-type": "application/json" } : undefined,
+    headers,
     body: body ? JSON.stringify(body) : undefined,
     credentials: "include",
   });
@@ -37,6 +43,16 @@ async function request<T>(
     throw new ApiError(res.status, err?.code ?? "unknown", err?.message ?? res.statusText);
   }
   return json as T;
+}
+
+function currentZoneSlug(): string | null {
+  if (typeof window === "undefined") return null;
+  const fromUrl = new URLSearchParams(window.location.search).get("zone");
+  if (fromUrl) {
+    localStorage.setItem("stewardledger.activeZoneSlug", fromUrl);
+    return fromUrl;
+  }
+  return localStorage.getItem("stewardledger.activeZoneSlug");
 }
 
 export const api = {

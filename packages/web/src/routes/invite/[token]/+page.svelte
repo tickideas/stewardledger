@@ -26,6 +26,7 @@
         "/api/public/invitations/accept",
         { token: data.token, name, password },
       );
+      localStorage.setItem("stewardledger.activeZoneSlug", res.zoneSlug);
       // Send the user to /onboarding/chapter on the zone subdomain (or
       // /onboarding/chapter on this host in dev).
       await goto(`/onboarding/chapter?zone=${encodeURIComponent(res.zoneSlug)}`);

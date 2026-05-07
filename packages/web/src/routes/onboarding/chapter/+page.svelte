@@ -1,11 +1,28 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
+  import { PUBLIC_API_URL } from "$lib/env";
   import { api, ApiError } from "$lib/api";
+  import { onMount } from "svelte";
 
   let name = $state("");
   let countryCode = $state("");
   let submitting = $state(false);
   let errorMsg = $state<string | null>(null);
+
+  onMount(async () => {
+    const urlZone = new URLSearchParams(window.location.search).get("zone");
+    if (urlZone || localStorage.getItem("stewardledger.activeZoneSlug")) return;
+
+    const res = await fetch(`${PUBLIC_API_URL}/api/public/session-zones`, {
+      credentials: "include",
+    });
+    if (!res.ok) return;
+    const body = (await res.json()) as { items: Array<{ slug: string }> };
+    const zoneSlug = body.items[0]?.slug;
+    if (!zoneSlug) return;
+    localStorage.setItem("stewardledger.activeZoneSlug", zoneSlug);
+    await goto(`/onboarding/chapter?zone=${encodeURIComponent(zoneSlug)}`, { replaceState: true });
+  });
 
   async function submit(e: SubmitEvent) {
     e.preventDefault();
