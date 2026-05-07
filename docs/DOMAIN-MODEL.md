@@ -477,7 +477,7 @@ contribution_lines
   contribution_id uuid not null references contributions(id) on delete cascade
   giving_type_id uuid not null references giving_types(id)
   account_id uuid null references accounts(id)
-  amount numeric(19,4) not null check (amount >= 0)
+  amount numeric(19,4) not null            -- signed; see "Sign convention" below
   currency_code text not null
   note text null
   created_at, updated_at
@@ -500,10 +500,33 @@ contribution_members                       -- multi-member contribution (oblatio
   - `contribution_lines_posted_guard` blocks any insert / update / delete on lines once the parent contribution is `posted`, and refuses lines whose `currency_code` doesn't match their parent.
 - Corrections are applied as **new** contributions with `reversal_of_contribution_id` set.
 
+### Sign convention (Phase 5)
+
+- Positive amounts are inflows / gifts; negative amounts are reversals.
+- `reverseContribution` (in `packages/api/src/services/contributions.ts`)
+  emits a corrective contribution whose `total_amount` is the negation of
+  the original's, and whose lines are the exact negation of the original's
+  lines, then flips the original to `status='reversed'`. Reports sum signed
+  amounts, so original + reversal net to zero.
+- The aggregate non-negative CHECKs that earlier sat on `contributions.total_amount`
+  and `contribution_lines.amount` are intentionally NOT applied; the service
+  layer is responsible for keeping `abs(reversal) === abs(original)` and the
+  posted-immutability triggers ensure the original is not retroactively edited.
+- Reversal contributions are posted standalone (never inside the original
+  batch); the corrective row records `parent_contribution_id` and
+  `reversal_of_contribution_id` to link back.
+
 ### Currency rule
 
-- `contribution.currency_code` defaults to the zone's `default_currency_code` but can differ when the chosen `account` has a different currency or the user explicitly sets it.
-- All `contribution_lines` of a single contribution must share the same `currency_code` as the contribution.
+- `contribution.currency_code` defaults to the zone's `default_currency_code`
+  in the service layer (`createContribution`) when callers don't supply one.
+  Callers may override when the chosen `account` has a different currency.
+- All `contribution_lines` of a single contribution must share the same
+  `currency_code` as the contribution.
+- All `contributions` attached to a `contribution_batch` must share the
+  batch's `currency_code`. Enforced in
+  `packages/api/src/services/contributions.ts` on attach and re-checked at
+  batch-post time in `services/contribution-batches.ts`.
 - Reports never mix currencies into a single number; mixed-currency totals are presented as per-currency subtotals.
 
 ---

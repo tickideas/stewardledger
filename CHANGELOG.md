@@ -8,6 +8,86 @@ follows phased releases per [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ### Added
 
+- **Phase 5 contribution + batch services** —
+  `packages/api/src/services/contributions.ts` and
+  `packages/api/src/services/contribution-batches.ts`. Cover the full
+  draft → posted → voided / reversed state machine, currency defaulting
+  from the zone, cross-tenant guards on `chapter_id` / `member_id` /
+  `giving_type_id` / `account_id` / `batch_id`, period auto-derivation,
+  `region_id` denormalization from chapter, and a defense-in-depth
+  currency cohesion re-check at batch-post time. Reversals emit a
+  corrective contribution with negated amounts and an `isReversal: true`
+  flag (insert as draft, then promote to posted because the
+  `contribution_lines_posted_guard` blocks line inserts on posted
+  parents).
+- **Tenant API for contributions and batches**
+  (`packages/api/src/routes/tenant-contributions.ts`, mounted under
+  `tenantRouter`):
+  - `GET/POST /api/tenant/contributions`,
+    `GET/PATCH/DELETE /api/tenant/contributions/:id`,
+    `POST /api/tenant/contributions/:id/{post,void,reverse}`.
+  - `GET/POST /api/tenant/contribution-batches`,
+    `GET/PATCH /api/tenant/contribution-batches/:id`,
+    `POST /api/tenant/contribution-batches/:id/{submit,approve,post,void}`.
+  - Role bundles enforce zone-owner / pastor read of zone-wide totals,
+    chapter-scoped read for chapter pastors / coordinators, treasurer +
+    finance-admin write, and treasurer + zone-owner / finance-admin post
+    (bookkeepers can draft but cannot post).
+  - `ContributionError` codes are translated to HTTP status by an
+    `ERROR_STATUS` map (validation → 400, cross-tenant / not-found →
+    404, currency-mismatch / state → 409).
+- **Service tests** (`packages/api/src/services/contributions-service.test.ts`)
+  — 15 cases: happy-path create + post + read, zone currency default,
+  currency mismatch rejection, no-lines guard, cross-tenant chapter and
+  giving-type rejection, batch currency mismatch, draft update replaces
+  lines, post / void state machine, reverse with negated amounts, draft
+  delete (cascades), batch lifecycle (`draft → submitted → approved →
+  posted` promotes embedded contributions), `voidBatch` refusal on
+  already-posted batches, and `postBatch` currency-mismatch
+  defense-in-depth.
+- **Cross-tenant route tests**
+  (`packages/api/src/routes/tenant-contributions.test.ts`) — 12 cases
+  driving the real Hono stack: owner happy path, cross-tenant chapter
+  and giving-type rejection, foreign-zone GET 404, pastor read-only,
+  bookkeeper-can-draft-but-not-post, treasurer can post, posting a
+  non-draft 409, void state machine, reverse via API, batch lifecycle,
+  and batch currency mismatch.
+- **Zod schemas** for the contribution + batch write paths in
+  `packages/shared/src/schemas.ts`: `SOURCE_TYPES`, `sourceTypeSchema`,
+  `contributionCreateSchema`, `contributionUpdateSchema`,
+  `contributionListQuerySchema`, `contributionVoidSchema`,
+  `contributionReverseSchema`, `contributionBatchCreateSchema`,
+  `contributionBatchUpdateSchema`, `contributionBatchListQuerySchema`,
+  `contributionBatchVoidSchema`. `moneyAmountSchema` is reused; negative
+  amounts are now permitted to encode reversals.
+
+### Changed
+
+- **Sign convention adopted for contribution amounts.** The non-negative
+  CHECK constraints on `contributions.total_amount` and
+  `contribution_lines.amount` were dropped
+  (`packages/db/src/schema/contributions.ts`). Sign now encodes
+  direction: positive = inflow / gift, negative = reversal. The absolute
+  amount of a reversal line must equal the original line. `AGENTS.md`
+  hard rule #1 was extended to state this explicitly.
+- **`docs/DOMAIN-MODEL.md` §6** — dropped `check (amount >= 0)` from the
+  `contribution_lines` SQL block; added a "Sign convention (Phase 5)"
+  callout; expanded the "Currency rule" paragraph to describe the
+  service-layer default from the zone and the batch-post
+  defense-in-depth re-check.
+- **`docs/ROADMAP.md` Phase 5** — service + tenant API implementation
+  notes added; state-machine and mixed-currency batch exit-checklist
+  items ticked. Phase 4 currency-default item ticked with reference to
+  `contributions-service.test.ts`.
+- **`applyContributionTriggers` now serializes via a session advisory
+  lock** (`packages/db/src/bootstrap-triggers.ts`). Three vitest test
+  files race-bootstrapped the same triggers in parallel worker threads,
+  which produced `tuple concurrently updated` (XX000) on
+  `drop trigger ... on contributions`. Wrapping the install in
+  `pg_advisory_lock(hashtext('stewardledger.applyContributionTriggers'))`
+  serializes concurrent callers without changing single-process
+  behaviour.
+
 - **Phase 5 contributions schema** — `contribution_batches`, `contributions`,
   `contribution_lines`, and `contribution_members` tables under
   `packages/db/src/schema/contributions.ts`. Each row is `zone_id`-scoped

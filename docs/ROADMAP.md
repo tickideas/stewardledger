@@ -141,7 +141,8 @@ Exit checklist:
 - [x] Seed scripts create a full year of `giving_periods` for a new zone in <5 seconds (`period-seed.test.ts` asserts the budget — picked to absorb CI-runner / cold-start variance; full-year seed runs comfortably under 1s on a warm test DB).
 - [x] Period auto-derivation works on a test set of arbitrary dates (`period-seed.test.ts` covers Jan 1, end-of-Q1 Sunday, mid-Q3 Tuesday, ISO-week-52 Sunday, and the Dec-31-belongs-to-next-ISO-year edge case).
 - [x] Account currency defaults from the zone, with override support for foreign-currency accounts (`accounts.currency_code` defaults from the zone in the API layer — `tenant-giving.test.ts`).
-- [x] Contribution + batch schema permits overriding `currency_code`, and a database trigger keeps each line aligned with its parent contribution's currency (`contributions.test.ts`). *(Service-layer default of `contribution.currency_code` from the zone is wired up in Phase 5 alongside the contribution write paths.)*
+- [x] Contribution + batch schema permits overriding `currency_code`, and a database trigger keeps each line aligned with its parent contribution's currency (`contributions.test.ts`).
+- [x] Service layer defaults `contribution.currency_code` from the zone when callers omit it; mismatched-currency contributions cannot be attached to a batch, enforced on attach and at batch-post time (`createContribution`, `postBatch`; `contributions-service.test.ts` and `tenant-contributions.test.ts`).
 
 ---
 
@@ -164,14 +165,17 @@ Deliverables:
 Implementation notes:
 
 - DB layer (`contribution_batches`, `contributions`, `contribution_lines`, `contribution_members`) is in place with composite `(zone_id, id)` cross-tenant FKs and posted-immutability triggers (`packages/db/src/schema/contributions.ts`, `packages/db/src/bootstrap-triggers.ts`). Triggers are applied via `pnpm --filter @stewardledger/db db:bootstrap`, which `test:db:push` now runs automatically.
-- Routes / UI for the treasurer flow are not yet built.
+- Service + tenant API layer for contributions and batches is in place (`packages/api/src/services/contributions.ts`, `packages/api/src/services/contribution-batches.ts`, `packages/api/src/routes/tenant-contributions.ts`). Endpoints: `GET/POST/PATCH/DELETE /api/tenant/contributions(/:id)`, `POST :id/{post,void,reverse}`, `GET/POST/PATCH /api/tenant/contribution-batches(/:id)`, `POST :id/{submit,approve,post,void}`.
+- Reversals follow the negative-amount sign convention (see `docs/DOMAIN-MODEL.md` §6 "Sign convention").
+- Treasurer SvelteKit UI and member statement preview are not yet built.
 
 Exit checklist:
 
-- [ ] A treasurer can record a Sunday batch in under 5 minutes for a 30-member service.
+- [ ] A treasurer can record a Sunday batch in under 5 minutes for a 30-member service. *(API ready; SvelteKit UI pending.)*
 - [x] Posted contributions are immutable; the immutability is enforced at the DB level (triggers `contributions_posted_guard`, `contributions_no_delete_when_posted`, `contribution_lines_posted_guard`; verified by `contributions.test.ts`).
-- [ ] Member running totals match per-member sum across all sources.
-- [ ] Mixed-currency batches are forbidden (a batch is single-currency); UI forces a clear choice. *(line-currency match enforced at the DB level; UI gate pending.)*
+- [x] Service-layer state machine: draft → posted, posted → voided / reversed; reversal emits a corrective contribution with negated amounts (`contributions-service.test.ts`, `tenant-contributions.test.ts`).
+- [ ] Member running totals match per-member sum across all sources. *(Reports land in Phase 7.)*
+- [x] Mixed-currency batches are forbidden — a batch is single-currency; the service layer rejects mismatched attaches and re-checks at batch-post time. UI gate still pending.
 
 ---
 
