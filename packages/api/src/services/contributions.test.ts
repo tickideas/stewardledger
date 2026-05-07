@@ -341,9 +341,14 @@ describe("contributions schema invariants", () => {
     );
   });
 
-  it("rejects negative totalAmount on a contribution", async () => {
-    await expectRejection(
-      db.insert(contributions).values({
+  it("accepts a negative totalAmount (reversal sign convention)", async () => {
+    // Per the sign convention documented in DOMAIN-MODEL.md §6, reversals
+    // carry a negated total_amount. The DB-level non-negative CHECK was
+    // removed in Phase 5; the service layer keeps abs(reversal) ===
+    // abs(original).
+    const [row] = await db
+      .insert(contributions)
+      .values({
         zoneId: zoneA.id,
         chapterId: zoneA.chapterId,
         memberId: zoneA.memberId,
@@ -351,25 +356,24 @@ describe("contributions schema invariants", () => {
         contributionDate: "2025-01-01",
         totalAmount: "-1.0000",
         currencyCode: zoneA.defaultCurrency,
-      }),
-      "23514",
-      /contributions_total_nonneg/,
-    );
+      })
+      .returning({ totalAmount: contributions.totalAmount });
+    expect(row.totalAmount).toBe("-1.0000");
   });
 
-  it("rejects negative amount on a contribution_line", async () => {
+  it("accepts a negative line amount (reversal sign convention)", async () => {
     const id = await makeContribution(zoneA);
-    await expectRejection(
-      db.insert(contributionLines).values({
+    const [line] = await db
+      .insert(contributionLines)
+      .values({
         zoneId: zoneA.id,
         contributionId: id,
         givingTypeId: zoneA.givingTypeId,
         amount: "-1.0000",
         currencyCode: zoneA.defaultCurrency,
-      }),
-      "23514",
-      /contribution_lines_amount_nonneg/,
-    );
+      })
+      .returning({ amount: contributionLines.amount });
+    expect(line.amount).toBe("-1.0000");
   });
 
   it("rejects a contribution that names itself as its own reversal", async () => {

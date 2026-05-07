@@ -41,7 +41,32 @@ async function installTrigger(database: Database, spec: TriggerSpec): Promise<vo
   await database.execute(sql.raw(`alter table ${spec.table} enable trigger ${spec.name};`));
 }
 
+// Stable session-advisory lock key. Anything constant is fine; just must be
+// identical across every caller. `hashtext` gives us an int4 derived from a
+// fixed string, which won't collide with the per-zone member-code lock or
+// the merge-proposal lock (those use uuid hashes) at integer level.
+const CONTRIBUTION_TRIGGER_BOOTSTRAP_LOCK_TAG = "stewardledger.applyContributionTriggers";
+
 export async function applyContributionTriggers(database: Database): Promise<void> {
+  // Concurrent callers (e.g. parallel vitest test files in different worker
+  // threads) all racing `drop trigger ... ; create trigger ...` against the
+  // same catalog row trigger Postgres' "tuple concurrently updated" (XX000).
+  // Serialize bootstraps with a session-level advisory lock; the lock
+  // auto-releases when the connection closes even if we throw between
+  // acquire and release.
+  await database.execute(
+    sql`select pg_advisory_lock(hashtext(${CONTRIBUTION_TRIGGER_BOOTSTRAP_LOCK_TAG}))`,
+  );
+  try {
+    await applyContributionTriggersUnlocked(database);
+  } finally {
+    await database.execute(
+      sql`select pg_advisory_unlock(hashtext(${CONTRIBUTION_TRIGGER_BOOTSTRAP_LOCK_TAG}))`,
+    );
+  }
+}
+
+async function applyContributionTriggersUnlocked(database: Database): Promise<void> {
   // Posted-immutability: only status/void/reverse columns and
   // updated_at/updated_by_user_id may change once status='posted'.
   // `region_id` is intentionally NOT in the allow-list — it is set at insert

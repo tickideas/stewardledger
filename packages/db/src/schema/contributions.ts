@@ -9,6 +9,13 @@
 //   • A contribution and its lines share one `currency_code`.
 //   • Every domain row carries `zone_id`; cross-tenant references are blocked
 //     by composite `(zone_id, id)` foreign keys.
+//   • Sign convention: positive amounts are inflows (gifts); negative amounts
+//     are reversals. The corrective contribution emitted by
+//     `reverseContribution` carries negated `total_amount` and line `amount`s
+//     equal to the negation of the original. Reports sum signed amounts so
+//     the original + its reversal net to zero. Aggregate non-negative CHECKs
+//     are intentionally NOT applied; the service layer is responsible for
+//     keeping abs(reversal) === abs(original).
 
 import { sql } from "drizzle-orm";
 import {
@@ -229,7 +236,6 @@ export const contributions = pgTable(
       "contributions_status_check",
       sql`${table.status} in ('draft', 'posted', 'voided', 'reversed')`,
     ),
-    check("contributions_total_nonneg", sql`${table.totalAmount} >= 0`),
     check(
       "contributions_posted_requires_timestamp",
       sql`(${table.status} <> 'posted') or (${table.postedAt} is not null)`,
@@ -288,7 +294,6 @@ export const contributionLines = pgTable(
       columns: [table.zoneId, table.accountId],
       foreignColumns: [accounts.zoneId, accounts.id],
     }).onDelete("restrict"),
-    check("contribution_lines_amount_nonneg", sql`${table.amount} >= 0`),
   ],
 );
 
