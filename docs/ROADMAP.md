@@ -56,13 +56,13 @@ Deliverables:
 
 Exit checklist:
 
-- [ ] A new zone can be created via a seed script.
-- [ ] An owner user can log in via OTP and magic link.
-- [ ] Subdomain resolution works against the dev box (`{slug}.localhost`).
-- [ ] Wildcard cert in staging.
-- [ ] Audit row written for every successful login.
-- [ ] CI runs unit tests + Drizzle migration tests.
-- [ ] Lighthouse mobile score ≥ 90 on the empty dashboard.
+- [x] A new zone can be created via a seed script.
+- [x] An owner user can log in via OTP and magic link.
+- [x] Subdomain resolution works against the dev box (`{slug}.localhost`).
+- [x] Wildcard cert in staging.
+- [x] Audit row written for every successful login.
+- [x] CI runs unit tests + Drizzle migration tests.
+- [x] Lighthouse mobile score ≥ 90 on the empty dashboard.
 
 ---
 
@@ -92,7 +92,7 @@ Exit checklist:
 - [x] Self-service signup works end-to-end (covered by `signup.test.ts`; staging deploy still pending).
 - [x] A free-text region submitted at signup appears in the platform-admin inbox (`GET /api/admin/regions/inbox`).
 - [x] Owner can add chapters and invite users (`POST /api/tenant/chapters`, `POST /api/tenant/invitations`).
-- [ ] Custom domain verification flow works against a real DNS (paid plan only).
+- [ ] Custom domain verification flow works against a real DNS (paid plan only; deferred, not blocking Phase 4).
 - [x] Two zones in the same Postgres DB cannot see each other's data (cross-tenant fuzz tests pass — 12 cases in `tenant.test.ts`).
 
 ---
@@ -119,7 +119,7 @@ Exit checklist:
 
 ---
 
-## Phase 4 — Giving setup & periods
+## Phase 4 — Giving setup & periods *(current focus)*
 
 Deliverables:
 
