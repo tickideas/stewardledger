@@ -1,7 +1,7 @@
 // packages/db/src/schema/chapters.ts
 // A chapter is a single local church/congregation. Many chapters per zone.
 
-import { date, index, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { date, index, jsonb, pgTable, text, timestamp, unique, uniqueIndex } from "drizzle-orm/pg-core";
 import { regions } from "./regions";
 import { zones } from "./zones";
 
@@ -28,6 +28,7 @@ export const chapters = pgTable(
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
   (table) => [
+    unique("chapters_zone_row_id_unique").on(table.zoneId, table.id),
     uniqueIndex("chapters_zone_reference_idx").on(table.zoneId, table.referenceCode),
     index("chapters_zone_id_idx").on(table.zoneId),
     index("chapters_region_id_idx").on(table.regionId),

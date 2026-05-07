@@ -12,6 +12,8 @@ import {
   givingPeriods,
   givingTypes,
   invitations,
+  ministryPeriods,
+  partnershipPeriods,
   paymentMethods,
   regions,
   roles,
@@ -226,6 +228,108 @@ describe("signupZone", () => {
         primaryContactEmail: `b+${unique()}@example.com`,
       }),
     ).rejects.toBeInstanceOf(SignupError);
+  });
+
+  it("rejects cross-zone Phase 4 references and invalid period dimensions", async () => {
+    const slug1 = `t-${unique()}`;
+    const slug2 = `t-${unique()}`;
+    slugs.push(slug1, slug2);
+
+    const zone1 = await signupZone(db, {
+      name: `Phase4 Guard A ${unique()}`,
+      slug: slug1,
+      countryCode: "GB",
+      timeZone: "Europe/London",
+      defaultCurrency: "GBP",
+      fiscalYearStartMonth: 1,
+      ministryYearStartMonth: 3,
+      regionNameUnverified: `URegion ${unique()}`,
+      primaryContactName: "A",
+      primaryContactEmail: `a+${unique()}@example.com`,
+    });
+    const zone2 = await signupZone(db, {
+      name: `Phase4 Guard B ${unique()}`,
+      slug: slug2,
+      countryCode: "GB",
+      timeZone: "Europe/London",
+      defaultCurrency: "GBP",
+      fiscalYearStartMonth: 1,
+      ministryYearStartMonth: 3,
+      regionNameUnverified: `URegion ${unique()}`,
+      primaryContactName: "B",
+      primaryContactEmail: `b+${unique()}@example.com`,
+    });
+
+    const [foreignCategory] = await db
+      .select({ id: givingCategories.id })
+      .from(givingCategories)
+      .where(sql`${givingCategories.zoneId} = ${zone1.zoneId}`)
+      .limit(1);
+    const [localAccount] = await db
+      .select({ id: accounts.id })
+      .from(accounts)
+      .where(sql`${accounts.zoneId} = ${zone2.zoneId}`)
+      .limit(1);
+
+    await expect(
+      db.insert(givingTypes).values({
+        zoneId: zone2.zoneId,
+        categoryId: foreignCategory.id,
+        accountId: localAccount.id,
+        name: `Cross-zone Giving ${unique()}`,
+      }),
+    ).rejects.toBeTruthy();
+
+    const [foreignFiscalPeriod] = await db
+      .select({ id: fiscalPeriods.id })
+      .from(fiscalPeriods)
+      .where(sql`${fiscalPeriods.zoneId} = ${zone1.zoneId}`)
+      .limit(1);
+    const [localMinistryPeriod] = await db
+      .select({ id: ministryPeriods.id })
+      .from(ministryPeriods)
+      .where(sql`${ministryPeriods.zoneId} = ${zone2.zoneId}`)
+      .limit(1);
+    const [localPartnershipPeriod] = await db
+      .select({ id: partnershipPeriods.id })
+      .from(partnershipPeriods)
+      .where(sql`${partnershipPeriods.zoneId} = ${zone2.zoneId}`)
+      .limit(1);
+
+    await expect(
+      db.insert(givingPeriods).values({
+        zoneId: zone2.zoneId,
+        date: "2099-01-01",
+        weekday: 1,
+        isoWeek: 1,
+        isoYear: 2099,
+        month: 1,
+        quarter: 1,
+        fiscalPeriodId: foreignFiscalPeriod.id,
+        ministryPeriodId: localMinistryPeriod.id,
+        partnershipPeriodId: localPartnershipPeriod.id,
+      }),
+    ).rejects.toBeTruthy();
+
+    const [localFiscalPeriod] = await db
+      .select({ id: fiscalPeriods.id })
+      .from(fiscalPeriods)
+      .where(sql`${fiscalPeriods.zoneId} = ${zone2.zoneId}`)
+      .limit(1);
+    await expect(
+      db.insert(givingPeriods).values({
+        zoneId: zone2.zoneId,
+        date: "2099-01-02",
+        weekday: 8,
+        isoWeek: 1,
+        isoYear: 2099,
+        month: 1,
+        quarter: 1,
+        fiscalPeriodId: localFiscalPeriod.id,
+        ministryPeriodId: localMinistryPeriod.id,
+        partnershipPeriodId: localPartnershipPeriod.id,
+      }),
+    ).rejects.toBeTruthy();
   });
 });
 
