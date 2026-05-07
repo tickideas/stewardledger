@@ -14,10 +14,10 @@
       Try the demo
     </a>
     <a
-      href="/contact"
+      href="/signup"
       class="inline-flex items-center px-5 py-3 rounded-lg border border-slate-300 text-sm font-medium hover:bg-slate-100"
     >
-      Talk to us
+      Set up a zone
     </a>
   </div>
   <p class="mt-12 text-xs text-slate-400">
