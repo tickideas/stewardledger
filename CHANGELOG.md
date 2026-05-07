@@ -16,8 +16,9 @@ follows phased releases per [`docs/ROADMAP.md`](docs/ROADMAP.md).
   `giving_type_id` / `account_id` / `batch_id`, period auto-derivation,
   `region_id` denormalization from chapter, and a defense-in-depth
   currency cohesion re-check at batch-post time. Reversals emit a
-  corrective contribution with negated amounts and an `isReversal: true`
-  flag (insert as draft, then promote to posted because the
+  corrective contribution with negated amounts and
+  `reversal_of_contribution_id` / `parent_contribution_id` set to the
+  original (insert as draft, then promote to posted because the
   `contribution_lines_posted_guard` blocks line inserts on posted
   parents).
 - **Tenant API for contributions and batches**
@@ -134,6 +135,58 @@ follows phased releases per [`docs/ROADMAP.md`](docs/ROADMAP.md).
   + batch *schema* permits currency overrides today; the service-layer
   default of `contribution.currency_code` from the zone is wired up in
   Phase 5 alongside the contribution write paths.
+
+### Fixed (Phase 5 review pass)
+
+- **Sign-convention guard rails.** Non-reversal create/update paths now
+  reject non-positive line amounts with a typed `non_positive_amount`
+  service error (HTTP 400). Reversals still flip every line and the new
+  `|reversal| == |original|` invariant has a dedicated service test.
+- **Cross-tenant FK leakage closed.** `assertReferencesInZone` and
+  `createBatch` / `updateDraftBatch` now also enforce `chapter_id`
+  cohesion on `batchId` and `serviceEventId` references inside the same
+  zone, surfacing the new `batch_chapter_mismatch` /
+  `service_event_chapter_mismatch` codes (HTTP 404). Service tests cover
+  both, including the zone-wide `service_events.chapter_id IS NULL`
+  accept path.
+- **Currency-only PATCHes are re-checked against the batch.** Patching
+  only `currencyCode` on a contribution that is attached to a batch now
+  re-runs the `batch_currency_mismatch` probe instead of trusting a
+  cached field comparison.
+- **Mass-assignment hardening.** `updateDraftContribution` and
+  `updateDraftBatch` are now driven by explicit
+  `UPDATE_DIRECT_COLUMNS` / `BATCH_UPDATE_COLUMNS` allow-lists rather
+  than `Object.entries(patch)` iteration.
+- **`pg_advisory_lock` for trigger bootstrap** — see Phase 5 notes; this
+  is the de-flaked variant that was uncovered during the review.
+- **Performance.** Five reference checks in `createContribution` /
+  `updateDraftContribution` now run via `Promise.all` against a shared
+  `_zone-scope.ts` helper. `postBatch` writes its per-row audit
+  envelopes via a single `writeAuditMany` insert and fuses the
+  mismatch-probe + draft-scan SELECT into one round-trip.
+  `reverseContribution` and `updateDraftContribution` no longer issue a
+  trailing `loadDetail` round-trip — both read their `RETURNING`
+  rows directly.
+- **Reversal date now respects the zone time zone.** `todayInZone()`
+  derives the corrective contribution's `contribution_date` from
+  `Intl.DateTimeFormat('en-CA', { timeZone })` against the zone's
+  configured `default_time_zone` instead of UTC, so reversals booked
+  near midnight no longer drift across the date line.
+- **Self-contained reversal audit.** Reversing a posted contribution
+  now writes three audit rows on the corrective contribution
+  (`contribution.reverse` on the original, `contribution.create` and
+  `contribution.post` on the new row) so the audit trail no longer
+  depends on the original transaction's audit footprint.
+- **Drizzle-everywhere in tests.** The Phase 5 service test no longer
+  uses `db.execute<T>(sql\`select ...\`)` for typed reads; lookups go
+  through `db.select(...).from(serviceTypes)` so the result type is
+  inferred from the schema rather than asserted.
+- **Stale docs / changelog claims.** `docs/DOMAIN-MODEL.md` invariant
+  #3 was rewritten to describe the signed-sum service-layer enforcement
+  (the old "amount >= 0" line was orphaned by the CHECK drop). The
+  `isReversal: true` flag claim in the prior changelog block was
+  replaced with the actual columns
+  (`reversal_of_contribution_id` / `parent_contribution_id`).
 
 ## [0.3.0] — Phase 3: Members
 
