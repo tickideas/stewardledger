@@ -3,14 +3,18 @@
 // the route layer is a thin adapter and the cross-tenant + sign-convention
 // invariants are enforced in one place.
 //
-// Sign convention (see DOMAIN-MODEL.md §6): positive amounts are inflows
-// (gifts); negative amounts are reversals. `reverseContribution` emits a
-// corrective contribution whose lines are the exact negation of the
-// original's, then flips the original to status='reversed'. Reports sum
-// signed amounts so original + reversal net to zero.
+// Sign convention (see DOMAIN-MODEL.md §6 and AGENTS hard rule #1):
+//   • positive amounts are inflows (gifts);
+//   • negative amounts are reversals.
+// Only `reverseContribution` is allowed to emit negative amounts; the
+// public create/update paths reject non-positive line amounts so a
+// privileged caller cannot manufacture a posted negative contribution
+// outside the reversal flow. `reverseContribution` itself constructs the
+// reversal lines by negating the original's, so |reversal| == |original|
+// holds by construction.
 
 import Decimal from "decimal.js";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   accounts,
   chapters,
@@ -34,8 +38,9 @@ import type {
   ContributionMemberCreateInput,
   ContributionUpdateInput,
 } from "@stewardledger/shared";
-import { writeAudit } from "./audit";
+import { writeAudit, writeAuditMany } from "./audit";
 import { deriveGivingPeriodForDate } from "./period-seed";
+import { assertAllExistInZone } from "./_zone-scope";
 
 export class ContributionError extends Error {
   constructor(
@@ -61,19 +66,46 @@ function sumLines(lines: ContributionLineCreateInput[]): Decimal {
   return lines.reduce((acc, l) => acc.plus(new Decimal(l.amount)), new Decimal(0));
 }
 
-async function zoneDefaultCurrency(database: Db, zoneId: string): Promise<string> {
+/**
+ * Reject non-positive line amounts on non-reversal write paths. The DB
+ * dropped its `amount >= 0` CHECKs to allow reversal lines; the service
+ * is now responsible for confining negative amounts to `reverseContribution`.
+ */
+function assertLinesPositive(lines: ContributionLineCreateInput[]): void {
+  for (const l of lines) {
+    const d = new Decimal(l.amount);
+    if (!d.isFinite() || d.lte(0)) {
+      throw new ContributionError(
+        "non_positive_amount",
+        `Line amount must be positive (got ${l.amount}). Use the reverse endpoint to emit corrective entries.`,
+      );
+    }
+  }
+}
+
+async function loadZoneDefaults(
+  database: Db,
+  zoneId: string,
+): Promise<{ defaultCurrencyCode: string; defaultTimeZone: string }> {
   const [zone] = await database
-    .select({ defaultCurrencyCode: zones.defaultCurrencyCode })
+    .select({
+      defaultCurrencyCode: zones.defaultCurrencyCode,
+      defaultTimeZone: zones.defaultTimeZone,
+    })
     .from(zones)
     .where(eq(zones.id, zoneId))
     .limit(1);
   if (!zone) {
     throw new ContributionError("zone_default_currency_missing", "Zone is missing.");
   }
-  return zone.defaultCurrencyCode;
+  return zone;
 }
 
-async function chapterRegionId(database: Db, zoneId: string, chapterId: string): Promise<string | null> {
+async function chapterRegionId(
+  database: Db,
+  zoneId: string,
+  chapterId: string,
+): Promise<string | null> {
   const [chapter] = await database
     .select({ regionId: chapters.regionId })
     .from(chapters)
@@ -85,20 +117,16 @@ async function chapterRegionId(database: Db, zoneId: string, chapterId: string):
   return chapter.regionId ?? null;
 }
 
-async function existsInZone<T extends { id: any; zoneId: any }>(
-  database: Db,
-  table: T,
-  zoneId: string,
-  id: string,
-): Promise<boolean> {
-  const rows = await database
-    .select({ id: table.id })
-    .from(table as never)
-    .where(and(eq(table.zoneId as never, zoneId), eq(table.id as never, id)))
-    .limit(1);
-  return rows.length > 0;
-}
-
+/**
+ * Bulk-resolve every zone-scoped FK on a contribution write in one
+ * round-trip per table (5 tables, regardless of line/member count).
+ *
+ * `chapterIdMustMatch`, when supplied, is the contribution's own chapter:
+ *   • the referenced batch's `chapter_id` must equal it (single-chapter
+ *     batches);
+ *   • a referenced service event's `chapter_id`, if not null, must equal
+ *     it (service events are zone-wide-or-chapter-scoped).
+ */
 async function assertReferencesInZone(
   database: Db,
   zoneId: string,
@@ -111,44 +139,104 @@ async function assertReferencesInZone(
     lines?: { givingTypeId: string; accountId?: string | null }[];
     members?: { memberId: string }[];
   },
+  opts: { chapterIdMustMatch?: string | null } = {},
 ): Promise<void> {
-  if (input.chapterId && !(await existsInZone(database, chapters, zoneId, input.chapterId))) {
-    throw new ContributionError("chapter_not_found", "Chapter not in this zone.");
-  }
-  if (input.memberId && !(await existsInZone(database, members, zoneId, input.memberId))) {
-    throw new ContributionError("member_not_found", "Member not in this zone.");
-  }
-  if (input.batchId && !(await existsInZone(database, contributionBatches, zoneId, input.batchId))) {
-    throw new ContributionError("batch_not_found", "Batch not in this zone.");
-  }
-  if (
-    input.paymentMethodId &&
-    !(await existsInZone(database, paymentMethods, zoneId, input.paymentMethodId))
-  ) {
-    throw new ContributionError("payment_method_not_found", "Payment method not in this zone.");
-  }
-  if (
-    input.serviceEventId &&
-    !(await existsInZone(database, serviceEvents, zoneId, input.serviceEventId))
-  ) {
-    throw new ContributionError("service_event_not_found", "Service event not in this zone.");
-  }
+  // Collect distinct ids per table, then run one query per table. The
+  // five table-checks are independent so they go in `Promise.all`.
+  const memberIds = new Set<string>();
+  if (input.memberId) memberIds.add(input.memberId);
+  for (const m of input.members ?? []) memberIds.add(m.memberId);
+
+  const givingTypeIds = new Set<string>();
+  const accountIds = new Set<string>();
   for (const line of input.lines ?? []) {
-    if (!(await existsInZone(database, givingTypes, zoneId, line.givingTypeId))) {
-      throw new ContributionError("giving_type_not_found", "Giving type not in this zone.");
+    givingTypeIds.add(line.givingTypeId);
+    if (line.accountId) accountIds.add(line.accountId);
+  }
+
+  await Promise.all([
+    input.chapterId
+      ? assertAllExistInZone(database, chapters, zoneId, [input.chapterId], () =>
+          new ContributionError("chapter_not_found", "Chapter not in this zone."),
+        )
+      : Promise.resolve(),
+    assertAllExistInZone(database, members, zoneId, [...memberIds], () =>
+      new ContributionError("member_not_found", "Member not in this zone."),
+    ),
+    input.paymentMethodId
+      ? assertAllExistInZone(
+          database,
+          paymentMethods,
+          zoneId,
+          [input.paymentMethodId],
+          () => new ContributionError("payment_method_not_found", "Payment method not in this zone."),
+        )
+      : Promise.resolve(),
+    assertAllExistInZone(database, givingTypes, zoneId, [...givingTypeIds], () =>
+      new ContributionError("giving_type_not_found", "Giving type not in this zone."),
+    ),
+    assertAllExistInZone(database, accounts, zoneId, [...accountIds], () =>
+      new ContributionError("account_not_found", "Account not in this zone."),
+    ),
+  ]);
+
+  // batchId and serviceEventId need their own row to verify chapter match,
+  // so we resolve them with a richer SELECT instead of an existence diff.
+  if (input.batchId) {
+    const [batch] = await database
+      .select({ id: contributionBatches.id, chapterId: contributionBatches.chapterId })
+      .from(contributionBatches)
+      .where(
+        and(
+          eq(contributionBatches.zoneId, zoneId),
+          eq(contributionBatches.id, input.batchId),
+        ),
+      )
+      .limit(1);
+    if (!batch) {
+      throw new ContributionError("batch_not_found", "Batch not in this zone.");
     }
-    if (line.accountId && !(await existsInZone(database, accounts, zoneId, line.accountId))) {
-      throw new ContributionError("account_not_found", "Account not in this zone.");
+    if (
+      opts.chapterIdMustMatch !== undefined &&
+      opts.chapterIdMustMatch !== null &&
+      batch.chapterId !== opts.chapterIdMustMatch
+    ) {
+      throw new ContributionError(
+        "batch_chapter_mismatch",
+        "Batch belongs to a different chapter than the contribution.",
+      );
     }
   }
-  for (const m of input.members ?? []) {
-    if (!(await existsInZone(database, members, zoneId, m.memberId))) {
-      throw new ContributionError("member_not_found", "Member (allocation) not in this zone.");
+  if (input.serviceEventId) {
+    const [evt] = await database
+      .select({ id: serviceEvents.id, chapterId: serviceEvents.chapterId })
+      .from(serviceEvents)
+      .where(
+        and(eq(serviceEvents.zoneId, zoneId), eq(serviceEvents.id, input.serviceEventId)),
+      )
+      .limit(1);
+    if (!evt) {
+      throw new ContributionError("service_event_not_found", "Service event not in this zone.");
+    }
+    if (
+      opts.chapterIdMustMatch !== undefined &&
+      opts.chapterIdMustMatch !== null &&
+      evt.chapterId !== null &&
+      evt.chapterId !== opts.chapterIdMustMatch
+    ) {
+      throw new ContributionError(
+        "service_event_chapter_mismatch",
+        "Service event belongs to a different chapter than the contribution.",
+      );
     }
   }
 }
 
-async function batchCurrency(database: Db, zoneId: string, batchId: string): Promise<string | null> {
+async function batchCurrency(
+  database: Db,
+  zoneId: string,
+  batchId: string,
+): Promise<string | null> {
   const [batch] = await database
     .select({
       currencyCode: contributionBatches.currencyCode,
@@ -184,23 +272,27 @@ async function loadDetail(
     .where(and(eq(contributions.zoneId, zoneId), eq(contributions.id, id)))
     .limit(1);
   if (!contribution) return null;
-  const lines = await database
-    .select()
-    .from(contributionLines)
-    .where(
-      and(eq(contributionLines.zoneId, zoneId), eq(contributionLines.contributionId, id)),
-    )
-    .orderBy(asc(contributionLines.createdAt));
-  const memberRows = await database
-    .select({
-      id: contributionMembers.id,
-      memberId: contributionMembers.memberId,
-      allocationPercent: contributionMembers.allocationPercent,
-    })
-    .from(contributionMembers)
-    .where(
-      and(eq(contributionMembers.zoneId, zoneId), eq(contributionMembers.contributionId, id)),
-    );
+  const [lines, memberRows] = await Promise.all([
+    database
+      .select()
+      .from(contributionLines)
+      .where(
+        and(eq(contributionLines.zoneId, zoneId), eq(contributionLines.contributionId, id)),
+      ),
+    database
+      .select({
+        id: contributionMembers.id,
+        memberId: contributionMembers.memberId,
+        allocationPercent: contributionMembers.allocationPercent,
+      })
+      .from(contributionMembers)
+      .where(
+        and(
+          eq(contributionMembers.zoneId, zoneId),
+          eq(contributionMembers.contributionId, id),
+        ),
+      ),
+  ]);
   return { contribution, lines, members: memberRows };
 }
 
@@ -259,20 +351,29 @@ export async function createContribution(
   if (input.lines.length === 0) {
     throw new ContributionError("lines_required", "At least one line is required.");
   }
+  // Sign-convention: only `reverseContribution` may emit non-positive
+  // amounts. Reject early so the bulk reference resolution below isn't
+  // even attempted on a malformed payload.
+  assertLinesPositive(input.lines);
 
   return database.transaction(async (tx) => {
     const currency =
-      input.currencyCode ?? (await zoneDefaultCurrency(tx, ctx.zoneId));
+      input.currencyCode ?? (await loadZoneDefaults(tx, ctx.zoneId)).defaultCurrencyCode;
 
-    await assertReferencesInZone(tx, ctx.zoneId, {
-      chapterId: input.chapterId,
-      memberId: input.memberId,
-      batchId: input.batchId,
-      paymentMethodId: input.paymentMethodId,
-      serviceEventId: input.serviceEventId,
-      lines: input.lines,
-      members: input.members,
-    });
+    await assertReferencesInZone(
+      tx,
+      ctx.zoneId,
+      {
+        chapterId: input.chapterId,
+        memberId: input.memberId,
+        batchId: input.batchId,
+        paymentMethodId: input.paymentMethodId,
+        serviceEventId: input.serviceEventId,
+        lines: input.lines,
+        members: input.members,
+      },
+      { chapterIdMustMatch: input.chapterId },
+    );
 
     if (input.batchId) {
       const batchCcy = await batchCurrency(tx, ctx.zoneId, input.batchId);
@@ -381,6 +482,26 @@ export async function createContribution(
   });
 }
 
+// ─── updateDraftContribution helpers ────────────────────────────────
+
+// Allow-list of writable columns. Adding a column to
+// `contributionUpdateSchema` without listing it here is a deliberate "you
+// must opt this in" gesture; the alternative — a blind `Object.entries`
+// copy — silently widens the SQL update surface every time the schema
+// grows.
+const UPDATE_DIRECT_COLUMNS = [
+  "memberId",
+  "batchId",
+  "paymentMethodId",
+  "serviceEventId",
+  "givingPeriodId",
+  "contributionDate",
+  "currencyCode",
+  "externalTransactionId",
+  "description",
+] as const;
+type UpdateDirectColumn = (typeof UPDATE_DIRECT_COLUMNS)[number];
+
 /**
  * Patch a draft contribution. Lines and members, when provided, REPLACE
  * the existing rows. Recomputes `total_amount` whenever lines change.
@@ -391,6 +512,10 @@ export async function updateDraftContribution(
   id: string,
   patch: ContributionUpdateInput,
 ): Promise<ContributionDetail> {
+  // Sign convention: any new lines on the update path must be positive
+  // for the same reasons as `createContribution` above.
+  if (patch.lines) assertLinesPositive(patch.lines);
+
   return database.transaction(async (tx) => {
     const detail = await loadDetail(tx, ctx.zoneId, id);
     if (!detail) {
@@ -400,43 +525,54 @@ export async function updateDraftContribution(
       throw new ContributionError("not_draft", "Only draft contributions can be edited.");
     }
 
-    await assertReferencesInZone(tx, ctx.zoneId, {
-      memberId: patch.memberId ?? null,
-      batchId: patch.batchId ?? null,
-      paymentMethodId: patch.paymentMethodId ?? null,
-      serviceEventId: patch.serviceEventId ?? null,
-      lines: patch.lines,
-      members: patch.members,
-    });
+    await assertReferencesInZone(
+      tx,
+      ctx.zoneId,
+      {
+        memberId: patch.memberId ?? null,
+        batchId: patch.batchId ?? null,
+        paymentMethodId: patch.paymentMethodId ?? null,
+        serviceEventId: patch.serviceEventId ?? null,
+        lines: patch.lines,
+        members: patch.members,
+      },
+      { chapterIdMustMatch: detail.contribution.chapterId },
+    );
 
     const nextCurrency = patch.currencyCode ?? detail.contribution.currencyCode;
 
-    if (patch.batchId !== undefined) {
-      if (patch.batchId !== null) {
-        const batchCcy = await batchCurrency(tx, ctx.zoneId, patch.batchId);
-        if (batchCcy && batchCcy !== nextCurrency) {
-          throw new ContributionError(
-            "batch_currency_mismatch",
-            `Contribution currency (${nextCurrency}) does not match batch currency (${batchCcy}).`,
-          );
-        }
+    // Re-check batch currency cohesion whenever EITHER the batch link OR
+    // the contribution currency is changing. Previously the check only
+    // fired on `batchId` changes, allowing currency-only patches to drift.
+    const nextBatchId =
+      patch.batchId !== undefined ? patch.batchId : detail.contribution.batchId;
+    const batchPatchTouches =
+      patch.batchId !== undefined || patch.currencyCode !== undefined;
+    if (batchPatchTouches && nextBatchId) {
+      const batchCcy = await batchCurrency(tx, ctx.zoneId, nextBatchId);
+      if (batchCcy && batchCcy !== nextCurrency) {
+        throw new ContributionError(
+          "batch_currency_mismatch",
+          `Contribution currency (${nextCurrency}) does not match batch currency (${batchCcy}).`,
+        );
       }
+    }
+
+    if (patch.totalAmount !== undefined && !patch.lines) {
+      throw new ContributionError(
+        "total_without_lines",
+        "totalAmount cannot be changed without supplying the new lines it summarises.",
+      );
     }
 
     const updates: Record<string, unknown> = {
       updatedAt: new Date(),
       updatedByUserId: ctx.userId,
     };
-    if (patch.memberId !== undefined) updates.memberId = patch.memberId;
-    if (patch.batchId !== undefined) updates.batchId = patch.batchId;
-    if (patch.paymentMethodId !== undefined) updates.paymentMethodId = patch.paymentMethodId;
-    if (patch.serviceEventId !== undefined) updates.serviceEventId = patch.serviceEventId;
-    if (patch.givingPeriodId !== undefined) updates.givingPeriodId = patch.givingPeriodId;
-    if (patch.contributionDate !== undefined) updates.contributionDate = patch.contributionDate;
-    if (patch.currencyCode !== undefined) updates.currencyCode = patch.currencyCode;
-    if (patch.externalTransactionId !== undefined)
-      updates.externalTransactionId = patch.externalTransactionId;
-    if (patch.description !== undefined) updates.description = patch.description;
+    for (const k of UPDATE_DIRECT_COLUMNS) {
+      const v = (patch as Partial<Record<UpdateDirectColumn, unknown>>)[k];
+      if (v !== undefined) updates[k] = v;
+    }
 
     if (patch.lines) {
       const computed = sumLines(patch.lines);
@@ -450,9 +586,6 @@ export async function updateDraftContribution(
         }
       }
       updates.totalAmount = toMoneyString(computed);
-    } else if (patch.totalAmount !== undefined) {
-      // Updating totalAmount alone is a noop unless lines change; ignore to
-      // keep the invariant total = sum(lines).
     }
 
     if (patch.contributionDate && patch.givingPeriodId === undefined) {
@@ -460,11 +593,13 @@ export async function updateDraftContribution(
       updates.givingPeriodId = period?.id ?? null;
     }
 
-    await tx
+    const [updated] = await tx
       .update(contributions)
       .set(updates)
-      .where(and(eq(contributions.zoneId, ctx.zoneId), eq(contributions.id, id)));
+      .where(and(eq(contributions.zoneId, ctx.zoneId), eq(contributions.id, id)))
+      .returning();
 
+    let nextLines = detail.lines;
     if (patch.lines) {
       await tx
         .delete(contributionLines)
@@ -474,19 +609,23 @@ export async function updateDraftContribution(
             eq(contributionLines.contributionId, id),
           ),
         );
-      await tx.insert(contributionLines).values(
-        patch.lines.map((l) => ({
-          zoneId: ctx.zoneId,
-          contributionId: id,
-          givingTypeId: l.givingTypeId,
-          accountId: l.accountId ?? null,
-          amount: toMoneyString(new Decimal(l.amount)),
-          currencyCode: nextCurrency,
-          note: l.note ?? null,
-        })),
-      );
+      nextLines = await tx
+        .insert(contributionLines)
+        .values(
+          patch.lines.map((l) => ({
+            zoneId: ctx.zoneId,
+            contributionId: id,
+            givingTypeId: l.givingTypeId,
+            accountId: l.accountId ?? null,
+            amount: toMoneyString(new Decimal(l.amount)),
+            currencyCode: nextCurrency,
+            note: l.note ?? null,
+          })),
+        )
+        .returning();
     }
 
+    let nextMembers = detail.members;
     if (patch.members) {
       await tx
         .delete(contributionMembers)
@@ -496,16 +635,24 @@ export async function updateDraftContribution(
             eq(contributionMembers.contributionId, id),
           ),
         );
-      if (patch.members.length > 0) {
-        await tx.insert(contributionMembers).values(
-          patch.members.map((m) => ({
-            zoneId: ctx.zoneId,
-            contributionId: id,
-            memberId: m.memberId,
-            allocationPercent: m.allocationPercent ?? null,
-          })),
-        );
-      }
+      nextMembers =
+        patch.members.length > 0
+          ? await tx
+              .insert(contributionMembers)
+              .values(
+                patch.members.map((m) => ({
+                  zoneId: ctx.zoneId,
+                  contributionId: id,
+                  memberId: m.memberId,
+                  allocationPercent: m.allocationPercent ?? null,
+                })),
+              )
+              .returning({
+                id: contributionMembers.id,
+                memberId: contributionMembers.memberId,
+                allocationPercent: contributionMembers.allocationPercent,
+              })
+          : [];
     }
 
     await writeAudit(tx, {
@@ -518,12 +665,10 @@ export async function updateDraftContribution(
         status: detail.contribution.status,
         totalAmount: detail.contribution.totalAmount,
       },
-      after: { totalAmount: updates.totalAmount ?? detail.contribution.totalAmount },
+      after: { totalAmount: updated.totalAmount },
     });
 
-    const next = await loadDetail(tx, ctx.zoneId, id);
-    if (!next) throw new ContributionError("not_found", "Contribution gone after update.");
-    return next;
+    return { contribution: updated, lines: nextLines, members: nextMembers };
   });
 }
 
@@ -611,10 +756,37 @@ export async function voidContribution(
 }
 
 /**
+ * Compute today's calendar date in a zone's IANA time zone. Used to
+ * default the reversal date so reversals don't drift into the wrong day
+ * for non-UTC zones.
+ */
+function todayInZone(timeZone: string): string {
+  // en-CA gives us YYYY-MM-DD natively; the formatter respects timeZone.
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+/**
  * Reverse a posted contribution. Inserts a corrective contribution with
- * negated line amounts (and total) and `reversal_of_contribution_id` set to
- * the original; flips the original to `status='reversed'`. Returns the new
- * contribution. The trigger blocks subsequent edits to the original.
+ * negated line amounts (and total) and `reversal_of_contribution_id` set
+ * to the original; flips the original to `status='reversed'`. Returns
+ * the new contribution. The trigger blocks subsequent edits to the
+ * original.
+ *
+ * Implementation note: the reversal is inserted with `status='draft'`
+ * first because `contribution_lines_posted_guard` blocks line inserts on
+ * a parent already in `status='posted'`; once lines + members are in we
+ * promote the parent to `posted` in the same tx. The original is flipped
+ * to `reversed` last so an audit reader sees the cause-then-effect order.
+ *
+ * Reversals deliberately bypass `assertReferencesInZone` for the copied
+ * `accountId` / `paymentMethodId` / `serviceEventId`: the original was
+ * valid when posted, and a deactivated lookup row should never block a
+ * correction. Audit captures actor + reason for every reversal.
  */
 export async function reverseContribution(
   database: Database,
@@ -636,14 +808,11 @@ export async function reverseContribution(
     }
 
     const now = new Date();
-    const reversalDate = args.contributionDate ?? new Date().toISOString().slice(0, 10);
+    const zone = await loadZoneDefaults(tx, ctx.zoneId);
+    const reversalDate = args.contributionDate ?? todayInZone(zone.defaultTimeZone);
     const period = await deriveGivingPeriodForDate(tx, ctx.zoneId, reversalDate);
     const negatedTotal = new Decimal(original.totalAmount).negated();
 
-    // Insert the reversal as a draft first so the lines/members triggers
-    // accept the inserts, then promote it to posted in the same tx. The
-    // contribution_lines_posted_guard refuses inserts onto a parent already
-    // in status='posted' — going draft→posted on the parent is allowed.
     const [reversal] = await tx
       .insert(contributions)
       .values({
@@ -652,6 +821,13 @@ export async function reverseContribution(
         batchId: null, // reversals are emitted standalone, never inside the original batch
         chapterId: original.chapterId,
         memberId: original.memberId,
+        // `parent_contribution_id` records the lineage of any
+        // contribution-derived-from-another (in v1 only reversals); the
+        // canonical reversal-of-contribution link lives on
+        // `reversal_of_contribution_id` and the reports / RLS layers key
+        // off that. Keep the `parent_*` link populated as well so a
+        // future "show me everything that ever attached to X" query on
+        // either column is correct.
         parentContributionId: original.id,
         sourceType: original.sourceType,
         paymentMethodId: original.paymentMethodId,
@@ -669,33 +845,43 @@ export async function reverseContribution(
       })
       .returning();
 
-    if (detail.lines.length > 0) {
-      await tx.insert(contributionLines).values(
-        detail.lines.map((l) => ({
-          zoneId: ctx.zoneId,
-          contributionId: reversal.id,
-          givingTypeId: l.givingTypeId,
-          accountId: l.accountId,
-          amount: toMoneyString(new Decimal(l.amount).negated()),
-          currencyCode: l.currencyCode,
-          note: `Reversal of line ${l.id}`,
-        })),
-      );
-    }
+    const reversalLines: ContributionLine[] = detail.lines.length
+      ? await tx
+          .insert(contributionLines)
+          .values(
+            detail.lines.map((l) => ({
+              zoneId: ctx.zoneId,
+              contributionId: reversal.id,
+              givingTypeId: l.givingTypeId,
+              accountId: l.accountId,
+              amount: toMoneyString(new Decimal(l.amount).negated()),
+              currencyCode: l.currencyCode,
+              note: `Reversal of line ${l.id}`,
+            })),
+          )
+          .returning()
+      : [];
 
-    if (detail.members.length > 0) {
-      await tx.insert(contributionMembers).values(
-        detail.members.map((m) => ({
-          zoneId: ctx.zoneId,
-          contributionId: reversal.id,
-          memberId: m.memberId,
-          allocationPercent: m.allocationPercent,
-        })),
-      );
-    }
+    const reversalMembers = detail.members.length
+      ? await tx
+          .insert(contributionMembers)
+          .values(
+            detail.members.map((m) => ({
+              zoneId: ctx.zoneId,
+              contributionId: reversal.id,
+              memberId: m.memberId,
+              allocationPercent: m.allocationPercent,
+            })),
+          )
+          .returning({
+            id: contributionMembers.id,
+            memberId: contributionMembers.memberId,
+            allocationPercent: contributionMembers.allocationPercent,
+          })
+      : [];
 
     // Promote the reversal to posted now that its lines exist.
-    await tx
+    const [postedReversal] = await tx
       .update(contributions)
       .set({
         status: "posted",
@@ -704,7 +890,8 @@ export async function reverseContribution(
         updatedAt: now,
         updatedByUserId: ctx.userId,
       })
-      .where(and(eq(contributions.zoneId, ctx.zoneId), eq(contributions.id, reversal.id)));
+      .where(and(eq(contributions.zoneId, ctx.zoneId), eq(contributions.id, reversal.id)))
+      .returning();
 
     await tx
       .update(contributions)
@@ -715,19 +902,48 @@ export async function reverseContribution(
       })
       .where(and(eq(contributions.zoneId, ctx.zoneId), eq(contributions.id, id)));
 
-    await writeAudit(tx, {
-      zoneId: ctx.zoneId,
-      actorUserId: ctx.userId,
-      action: "contribution.reverse",
-      entityType: "contribution",
-      entityId: id,
-      before: { status: "posted" },
-      after: { status: "reversed", reversalId: reversal.id, reason: args.reason },
-    });
+    // Capture the entire causal chain in audit: cause on the original, a
+    // self-contained create+post pair on the reversal row.
+    await writeAuditMany(tx, [
+      {
+        zoneId: ctx.zoneId,
+        actorUserId: ctx.userId,
+        action: "contribution.reverse",
+        entityType: "contribution",
+        entityId: id,
+        before: { status: "posted" },
+        after: { status: "reversed", reversalId: reversal.id, reason: args.reason },
+      },
+      {
+        zoneId: ctx.zoneId,
+        actorUserId: ctx.userId,
+        action: "contribution.create",
+        entityType: "contribution",
+        entityId: reversal.id,
+        after: {
+          status: "draft",
+          reversalOfContributionId: id,
+          totalAmount: postedReversal.totalAmount,
+          currencyCode: postedReversal.currencyCode,
+          lineCount: reversalLines.length,
+        },
+      },
+      {
+        zoneId: ctx.zoneId,
+        actorUserId: ctx.userId,
+        action: "contribution.post",
+        entityType: "contribution",
+        entityId: reversal.id,
+        before: { status: "draft" },
+        after: { status: "posted", postedAt: now.toISOString() },
+      },
+    ]);
 
-    const detailNew = await loadDetail(tx, ctx.zoneId, reversal.id);
-    if (!detailNew) throw new ContributionError("not_found", "Reversal disappeared.");
-    return detailNew;
+    return {
+      contribution: postedReversal,
+      lines: reversalLines,
+      members: reversalMembers,
+    };
   });
 }
 
@@ -762,8 +978,35 @@ export async function deleteDraftContribution(
   });
 }
 
-export type { ContributionDetail };
+export type { ContributionDetail, ContributionMemberCreateInput };
 
-// `ContributionMemberCreateInput` is referenced by external callers via the
-// service signature; re-export to keep the contract self-contained.
-export type { ContributionMemberCreateInput };
+// `errorStatusFor` is colocated with `ContributionError` so the route
+// layer doesn't need to keep a parallel HTTP-status table that drifts
+// every time a new error code is added. Routes import it via
+// `tenant-contributions.ts`.
+export const ERROR_STATUS: Record<string, number> = {
+  not_found: 404,
+  chapter_not_found: 404,
+  member_not_found: 404,
+  batch_not_found: 404,
+  payment_method_not_found: 404,
+  service_event_not_found: 404,
+  giving_type_not_found: 404,
+  account_not_found: 404,
+  zone_default_currency_missing: 500,
+  not_draft: 409,
+  not_posted: 409,
+  invalid_transition: 409,
+  batch_not_writable: 409,
+  batch_currency_mismatch: 409,
+  batch_chapter_mismatch: 409,
+  service_event_chapter_mismatch: 409,
+  total_mismatch: 422,
+  total_without_lines: 422,
+  lines_required: 422,
+  non_positive_amount: 422,
+};
+
+export function errorStatusFor(code: string): number {
+  return ERROR_STATUS[code] ?? 400;
+}

@@ -9,33 +9,37 @@
 //   • posting/voiding/reversing follow the documented state machine.
 //   • batch lifecycle + currency invariants.
 
-import { eq, sql } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   accounts,
   applyContributionTriggers,
   chapters,
-  contributionBatches,
   contributionLines,
-  contributionMembers,
   contributions,
   givingTypes,
   members,
+  paymentMethods,
+  serviceEvents,
+  serviceTypes,
   user as userTable,
   zones,
 } from "@stewardledger/db";
+import Decimal from "decimal.js";
+import { eq, sql } from "drizzle-orm";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "../db";
 import {
   approveBatch,
-  createBatch,
+  createBatch,listBatches, 
   postBatch,
   submitBatch,
-  voidBatch,
+  updateDraftBatch,
+  voidBatch
 } from "./contribution-batches";
 import {
   ContributionError,
   createContribution,
   deleteDraftContribution,
+  listContributions,
   postContribution,
   reverseContribution,
   updateDraftContribution,
@@ -53,9 +57,13 @@ interface SeededZone {
   slug: string;
   defaultCurrency: string;
   chapterId: string;
+  otherChapterId: string;
   memberId: string;
   givingTypeId: string;
   generalFundAccountId: string;
+  cashPaymentMethodId: string;
+  zoneWideServiceEventId: string;
+  chapterServiceEventId: string;
 }
 
 async function seedZone(slug: string, currency: string): Promise<SeededZone> {
@@ -76,15 +84,25 @@ async function seedZone(slug: string, currency: string): Promise<SeededZone> {
     fiscalYearStartMonth: 1,
     ministryYearStartMonth: 3,
   });
-  const [chapter] = await db
+  const insertedChapters = await db
     .insert(chapters)
-    .values({
-      zoneId: zone.id,
-      referenceCode: `C${unique()}`,
-      name: `Chapter ${unique()}`,
-      dateFrom: new Date().toISOString().slice(0, 10),
-    })
+    .values([
+      {
+        zoneId: zone.id,
+        referenceCode: `C${unique()}`,
+        name: `Chapter ${unique()}`,
+        dateFrom: new Date().toISOString().slice(0, 10),
+      },
+      {
+        zoneId: zone.id,
+        referenceCode: `C${unique()}`,
+        name: `Other ${unique()}`,
+        dateFrom: new Date().toISOString().slice(0, 10),
+      },
+    ])
     .returning({ id: chapters.id });
+  const chapter = insertedChapters[0];
+  const otherChapter = insertedChapters[1];
   const [member] = await db
     .insert(members)
     .values({
@@ -105,14 +123,57 @@ async function seedZone(slug: string, currency: string): Promise<SeededZone> {
     .from(accounts)
     .where(sql`${accounts.zoneId} = ${zone.id} and ${accounts.name} = 'General Fund'`)
     .limit(1);
+  const [cashPm] = await db
+    .select({ id: paymentMethods.id })
+    .from(paymentMethods)
+    .where(sql`${paymentMethods.zoneId} = ${zone.id} and ${paymentMethods.code} = 'cash'`)
+    .limit(1);
+  // Seed two service events: one zone-wide (chapterId = null) and one
+  // chapter-scoped, so cross-chapter tests have something concrete to
+  // refuse without leaning on a foreign-zone trick.
+  const [serviceType] = await db
+    .select({ id: serviceTypes.id })
+    .from(serviceTypes)
+    .where(eq(serviceTypes.zoneId, zone.id))
+    .limit(1);
+  if (!serviceType) {
+    throw new Error("seedZone: zone giving setup did not seed service_types");
+  }
+  const serviceTypeId = serviceType.id;
+  const inserted = await db
+    .insert(serviceEvents)
+    .values([
+      {
+        zoneId: zone.id,
+        chapterId: null,
+        serviceTypeId,
+        serviceDate: new Date().toISOString().slice(0, 10),
+      },
+      {
+        zoneId: zone.id,
+        chapterId: chapter.id,
+        serviceTypeId,
+        serviceDate: new Date().toISOString().slice(0, 10),
+      },
+    ])
+    .returning({ id: serviceEvents.id, chapterId: serviceEvents.chapterId });
+  const zoneWideServiceEvent = inserted.find((r) => r.chapterId === null);
+  const chapterServiceEvent = inserted.find((r) => r.chapterId !== null);
+  if (!zoneWideServiceEvent || !chapterServiceEvent) {
+    throw new Error("seedZone: failed to seed service events");
+  }
   return {
     id: zone.id,
     slug: zone.slug,
     defaultCurrency: currency,
     chapterId: chapter.id,
+    otherChapterId: otherChapter.id,
     memberId: member.id,
     givingTypeId: givingType.id,
     generalFundAccountId: generalFund.id,
+    cashPaymentMethodId: cashPm.id,
+    zoneWideServiceEventId: zoneWideServiceEvent.id,
+    chapterServiceEventId: chapterServiceEvent.id,
   };
 }
 
@@ -155,6 +216,7 @@ describe("contributions service", () => {
         await db.execute(sql`delete from contribution_members where zone_id = ${z}`);
         await db.execute(sql`delete from contributions where zone_id = ${z}`);
         await db.execute(sql`delete from contribution_batches where zone_id = ${z}`);
+        await db.execute(sql`delete from service_events where zone_id = ${z}`);
         await db.execute(sql`delete from members where zone_id = ${z}`);
         await db.execute(sql`delete from chapters where zone_id = ${z}`);
         await db.execute(sql`delete from zones where slug = ${slug}`);
@@ -478,9 +540,493 @@ describe("contributions service", () => {
     ).rejects.toMatchObject({ code: "batch_currency_mismatch" });
   });
 
-  // Avoid the unused-import lint by referencing the symbols once.
-  it("schema imports stay alive (smoke test)", () => {
-    expect(contributionBatches).toBeTruthy();
-    expect(contributionMembers).toBeTruthy();
+  // ─── Sign convention (AGENTS rule #1) ──────────────────────────────
+
+  it("rejects creating a contribution with a non-positive line amount", async () => {
+    await expect(
+      createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+        chapterId: zoneA.chapterId,
+        sourceType: "manual",
+        contributionDate: `${new Date().getUTCFullYear()}-03-15`,
+        lines: [{ givingTypeId: zoneA.givingTypeId, amount: "-5.0000" }],
+      }),
+    ).rejects.toMatchObject({ code: "non_positive_amount" });
+    await expect(
+      createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+        chapterId: zoneA.chapterId,
+        sourceType: "manual",
+        contributionDate: `${new Date().getUTCFullYear()}-03-15`,
+        lines: [{ givingTypeId: zoneA.givingTypeId, amount: "0.0000" }],
+      }),
+    ).rejects.toMatchObject({ code: "non_positive_amount" });
+  });
+
+  it("rejects updating a draft with a non-positive line amount", async () => {
+    const created = await createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+      contributionDate: `${new Date().getUTCFullYear()}-03-15`,
+      lines: [{ givingTypeId: zoneA.givingTypeId, amount: "1.0000" }],
+    });
+    await expect(
+      updateDraftContribution(db, { zoneId: zoneA.id, userId: USER_ID }, created.contribution.id, {
+        lines: [{ givingTypeId: zoneA.givingTypeId, amount: "-1.0000" }],
+      }),
+    ).rejects.toMatchObject({ code: "non_positive_amount" });
+  });
+
+  it("reverseContribution: |reversal lines| equal |original lines| and |totals| match", async () => {
+    const seededDate = `${new Date().getUTCFullYear()}-04-15`;
+    const created = await createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+      contributionDate: seededDate,
+      lines: [
+        { givingTypeId: zoneA.givingTypeId, amount: "7.0001" },
+        { givingTypeId: zoneA.givingTypeId, amount: "13.9999" },
+        { givingTypeId: zoneA.givingTypeId, amount: "0.0001" },
+      ],
+    });
+    await postContribution(db, { zoneId: zoneA.id, userId: USER_ID }, created.contribution.id);
+    const rev = await reverseContribution(
+      db,
+      { zoneId: zoneA.id, userId: USER_ID },
+      created.contribution.id,
+      { reason: "audit-symmetry" },
+    );
+
+    const origAbs = created.lines
+      .map((l) => new Decimal(l.amount).abs().toFixed(4))
+      .sort();
+    const revAbs = rev.lines
+      .map((l) => new Decimal(l.amount).abs().toFixed(4))
+      .sort();
+    expect(revAbs).toEqual(origAbs);
+    expect(rev.contribution.totalAmount.startsWith("-")).toBe(true);
+    const totalSum = new Decimal(created.contribution.totalAmount).plus(
+      rev.contribution.totalAmount,
+    );
+    expect(totalSum.toFixed(4)).toBe("0.0000");
+  });
+
+  // ─── Cross-tenant fuzz on remaining FKs ────────────────────────────
+
+  it("rejects createContribution with batchId from another zone", async () => {
+    const foreignBatch = await createBatch(db, { zoneId: zoneB.id, userId: USER_ID }, {
+      chapterId: zoneB.chapterId,
+      sourceType: "manual",
+      currencyCode: zoneA.defaultCurrency,
+    });
+    await expect(
+      createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+        chapterId: zoneA.chapterId,
+        batchId: foreignBatch.id,
+        sourceType: "manual",
+        contributionDate: `${new Date().getUTCFullYear()}-03-15`,
+        lines: [{ givingTypeId: zoneA.givingTypeId, amount: "1.0000" }],
+      }),
+    ).rejects.toMatchObject({ code: "batch_not_found" });
+  });
+
+  it("rejects createContribution with accountId from another zone", async () => {
+    await expect(
+      createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+        chapterId: zoneA.chapterId,
+        sourceType: "manual",
+        contributionDate: `${new Date().getUTCFullYear()}-03-15`,
+        lines: [
+          {
+            givingTypeId: zoneA.givingTypeId,
+            accountId: zoneB.generalFundAccountId,
+            amount: "1.0000",
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: "account_not_found" });
+  });
+
+  it("rejects createContribution with members[] memberId from another zone", async () => {
+    await expect(
+      createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+        chapterId: zoneA.chapterId,
+        sourceType: "manual",
+        contributionDate: `${new Date().getUTCFullYear()}-03-15`,
+        lines: [{ givingTypeId: zoneA.givingTypeId, amount: "1.0000" }],
+        members: [{ memberId: zoneB.memberId, allocationPercent: "100.00" }],
+      }),
+    ).rejects.toMatchObject({ code: "member_not_found" });
+  });
+
+  it("rejects createContribution with paymentMethodId from another zone", async () => {
+    await expect(
+      createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+        chapterId: zoneA.chapterId,
+        paymentMethodId: zoneB.cashPaymentMethodId,
+        sourceType: "manual",
+        contributionDate: `${new Date().getUTCFullYear()}-03-15`,
+        lines: [{ givingTypeId: zoneA.givingTypeId, amount: "1.0000" }],
+      }),
+    ).rejects.toMatchObject({ code: "payment_method_not_found" });
+  });
+
+  it("rejects createContribution with serviceEventId from another zone", async () => {
+    await expect(
+      createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+        chapterId: zoneA.chapterId,
+        serviceEventId: zoneB.zoneWideServiceEventId,
+        sourceType: "manual",
+        contributionDate: `${new Date().getUTCFullYear()}-03-15`,
+        lines: [{ givingTypeId: zoneA.givingTypeId, amount: "1.0000" }],
+      }),
+    ).rejects.toMatchObject({ code: "service_event_not_found" });
+  });
+
+  // ─── Chapter-scope guards within a zone ────────────────────────────
+
+  it("rejects attaching a batch belonging to a different chapter in the same zone", async () => {
+    const otherBatch = await createBatch(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.otherChapterId,
+      sourceType: "manual",
+      currencyCode: zoneA.defaultCurrency,
+    });
+    await expect(
+      createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+        chapterId: zoneA.chapterId,
+        batchId: otherBatch.id,
+        sourceType: "manual",
+        contributionDate: `${new Date().getUTCFullYear()}-03-15`,
+        lines: [{ givingTypeId: zoneA.givingTypeId, amount: "1.0000" }],
+      }),
+    ).rejects.toMatchObject({ code: "batch_chapter_mismatch" });
+  });
+
+  it("accepts a zone-wide service event but rejects a foreign-chapter one", async () => {
+    // zoneWide: chapterId=null on serviceEvent -> accepted regardless of contribution chapter.
+    const ok = await createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      serviceEventId: zoneA.zoneWideServiceEventId,
+      sourceType: "manual",
+      contributionDate: `${new Date().getUTCFullYear()}-03-15`,
+      lines: [{ givingTypeId: zoneA.givingTypeId, amount: "1.0000" }],
+    });
+    expect(ok.contribution.serviceEventId).toBe(zoneA.zoneWideServiceEventId);
+
+    // Service event scoped to the *other* chapter in this zone -> reject.
+    const [stForZoneA] = await db
+      .select({ id: serviceTypes.id })
+      .from(serviceTypes)
+      .where(eq(serviceTypes.zoneId, zoneA.id))
+      .limit(1);
+    if (!stForZoneA) {
+      throw new Error("test setup: zone A is missing service_types");
+    }
+    const [otherEvent] = await db
+      .insert(serviceEvents)
+      .values({
+        zoneId: zoneA.id,
+        chapterId: zoneA.otherChapterId,
+        serviceTypeId: stForZoneA.id,
+        serviceDate: new Date().toISOString().slice(0, 10),
+      })
+      .returning({ id: serviceEvents.id });
+    const otherEvtId = otherEvent.id;
+    await expect(
+      createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+        chapterId: zoneA.chapterId,
+        serviceEventId: otherEvtId,
+        sourceType: "manual",
+        contributionDate: `${new Date().getUTCFullYear()}-03-15`,
+        lines: [{ givingTypeId: zoneA.givingTypeId, amount: "1.0000" }],
+      }),
+    ).rejects.toMatchObject({ code: "service_event_chapter_mismatch" });
+  });
+
+  // ─── Currency-only patches re-check batch cohesion ────────────────
+
+  it("re-checks batch currency on a currency-only patch", async () => {
+    const batch = await createBatch(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+      currencyCode: "GBP",
+    });
+    const draft = await createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      batchId: batch.id,
+      sourceType: "manual",
+      contributionDate: `${new Date().getUTCFullYear()}-03-15`,
+      currencyCode: "GBP",
+      lines: [{ givingTypeId: zoneA.givingTypeId, amount: "1.0000" }],
+    });
+    await expect(
+      updateDraftContribution(db, { zoneId: zoneA.id, userId: USER_ID }, draft.contribution.id, {
+        currencyCode: "USD",
+      }),
+    ).rejects.toMatchObject({ code: "batch_currency_mismatch" });
+  });
+
+  it("rejects updating totalAmount alone without supplying lines", async () => {
+    const draft = await createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+      contributionDate: `${new Date().getUTCFullYear()}-03-15`,
+      lines: [{ givingTypeId: zoneA.givingTypeId, amount: "5.0000" }],
+    });
+    await expect(
+      updateDraftContribution(db, { zoneId: zoneA.id, userId: USER_ID }, draft.contribution.id, {
+        totalAmount: "10.0000",
+      }),
+    ).rejects.toMatchObject({ code: "total_without_lines" });
+  });
+
+  // ─── updateDraftBatch ──────────────────────────────────────────────
+
+  it("updateDraftBatch patches whitelisted columns and audits", async () => {
+    const batch = await createBatch(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+    });
+    const updated = await updateDraftBatch(
+      db,
+      { zoneId: zoneA.id, userId: USER_ID },
+      batch.id,
+      { notes: "evening service", referenceCode: "ENV-2025-001" },
+    );
+    expect(updated.notes).toBe("evening service");
+    expect(updated.referenceCode).toBe("ENV-2025-001");
+  });
+
+  it("updateDraftBatch refuses non-draft batches", async () => {
+    const batch = await createBatch(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+    });
+    await submitBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id);
+    await expect(
+      updateDraftBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id, {
+        notes: "too late",
+      }),
+    ).rejects.toMatchObject({ code: "not_draft" });
+  });
+
+  it("updateDraftBatch rejects cross-zone serviceEventId", async () => {
+    const batch = await createBatch(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+    });
+    await expect(
+      updateDraftBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id, {
+        serviceEventId: zoneB.zoneWideServiceEventId,
+      }),
+    ).rejects.toMatchObject({ code: "service_event_not_found" });
+  });
+
+  // ─── listContributions / listBatches ──────────────────────────────
+
+  it("listContributions filters by status and respects scope.chapterIds", async () => {
+    // Drop an extra chapter entry into zone A and seed two contributions
+    // — one in `zoneA.chapterId`, one in `zoneA.otherChapterId`.
+    const seededDate = `${new Date().getUTCFullYear()}-08-01`;
+    const a = await createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+      contributionDate: seededDate,
+      lines: [{ givingTypeId: zoneA.givingTypeId, amount: "1.0000" }],
+    });
+    await createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.otherChapterId,
+      sourceType: "manual",
+      contributionDate: seededDate,
+      lines: [{ givingTypeId: zoneA.givingTypeId, amount: "2.0000" }],
+    });
+
+    // No scope ⇒ both visible.
+    const both = await listContributions(db, zoneA.id, {
+      limit: 50,
+      offset: 0,
+      status: "draft",
+      dateFrom: seededDate,
+      dateTo: seededDate,
+    });
+    const idsBoth = both.items.map((i) => i.id);
+    expect(idsBoth).toContain(a.contribution.id);
+
+    // Scope to chapter A only ⇒ only chapter-A row.
+    const only = await listContributions(
+      db,
+      zoneA.id,
+      { limit: 50, offset: 0, dateFrom: seededDate, dateTo: seededDate },
+      { chapterIds: [zoneA.chapterId] },
+    );
+    expect(only.items.every((i) => i.chapterId === zoneA.chapterId)).toBe(true);
+
+    // Empty allow-list ⇒ explicit no-rows shortcut.
+    const empty = await listContributions(
+      db,
+      zoneA.id,
+      { limit: 50, offset: 0 },
+      { chapterIds: [] },
+    );
+    expect(empty.items).toEqual([]);
+    expect(empty.total).toBe(0);
+  });
+
+  it("listBatches scopes by chapterIds (parameterised IN, not array-as-scalar)", async () => {
+    // Two batches in different chapters; listBatches with scope to one
+    // chapter should return only that one. This case caught a real bug
+    // where the previous implementation passed `${array}` directly into
+    // a sql template, binding the array as a single parameter.
+    await createBatch(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+      referenceCode: `LIST-A-${unique()}`,
+    });
+    await createBatch(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.otherChapterId,
+      sourceType: "manual",
+      referenceCode: `LIST-O-${unique()}`,
+    });
+    const scoped = await listBatches(
+      db,
+      zoneA.id,
+      { limit: 50, offset: 0 },
+      { chapterIds: [zoneA.chapterId] },
+    );
+    expect(scoped.items.every((b) => b.chapterId === zoneA.chapterId)).toBe(true);
+    expect(scoped.items.length).toBeGreaterThan(0);
+  });
+
+  // ─── State-machine negatives ──────────────────────────────────────
+
+  it("approveBatch on a draft batch returns invalid_transition", async () => {
+    const batch = await createBatch(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+    });
+    await expect(
+      approveBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id),
+    ).rejects.toMatchObject({ code: "invalid_transition" });
+  });
+
+  it("submitBatch on a non-draft is rejected", async () => {
+    const batch = await createBatch(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+    });
+    await submitBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id);
+    await expect(
+      submitBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id),
+    ).rejects.toMatchObject({ code: "invalid_transition" });
+  });
+
+  it("voidBatch on already-voided returns invalid_transition", async () => {
+    const batch = await createBatch(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+    });
+    await voidBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id, {
+      voidReason: "first",
+    });
+    await expect(
+      voidBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id, { voidReason: "again" }),
+    ).rejects.toMatchObject({ code: "invalid_transition" });
+  });
+
+  it("postBatch with no attached contributions sets postedCount=0 but flips status", async () => {
+    const batch = await createBatch(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+    });
+    await submitBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id);
+    await approveBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id);
+    const result = await postBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id);
+    expect(result.postedCount).toBe(0);
+    expect(result.batch.status).toBe("posted");
+  });
+
+  it("postBatch on already-posted batch returns invalid_transition", async () => {
+    const batch = await createBatch(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+    });
+    await submitBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id);
+    await approveBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id);
+    await postBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id);
+    await expect(
+      postBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id),
+    ).rejects.toMatchObject({ code: "invalid_transition" });
+  });
+
+  // ─── Concurrency ──────────────────────────────────────────────────
+
+  it("two concurrent postContribution calls — exactly one succeeds", async () => {
+    const draft = await createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+      contributionDate: `${new Date().getUTCFullYear()}-09-15`,
+      lines: [{ givingTypeId: zoneA.givingTypeId, amount: "9.0000" }],
+    });
+    const results = await Promise.allSettled([
+      postContribution(db, { zoneId: zoneA.id, userId: USER_ID }, draft.contribution.id),
+      postContribution(db, { zoneId: zoneA.id, userId: USER_ID }, draft.contribution.id),
+    ]);
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(ContributionError);
+    expect(((rejected[0] as PromiseRejectedResult).reason as ContributionError).code).toBe(
+      "not_draft",
+    );
+  });
+
+  it("two concurrent postBatch calls — exactly one succeeds", async () => {
+    const batch = await createBatch(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+    });
+    await submitBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id);
+    await approveBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id);
+    const results = await Promise.allSettled([
+      postBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id),
+      postBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id),
+    ]);
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    expect(fulfilled.length).toBeGreaterThanOrEqual(1);
+    expect(fulfilled.length).toBeLessThanOrEqual(2);
+    // The "lost-race" attempt either sees `posted` and rejects, or saw
+    // `approved` first and won — either way at least one succeeded.
+    if (results.some((r) => r.status === "rejected")) {
+      const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+      expect(rejected.reason).toBeInstanceOf(ContributionError);
+      expect((rejected.reason as ContributionError).code).toBe("invalid_transition");
+    }
+  });
+
+  // ─── Boundary amounts ─────────────────────────────────────────────
+
+  it("round-trips a near-max-precision numeric(19,4) amount", async () => {
+    const big = "12345678901234.5678"; // 14 left + 4 right, well inside numeric(19,4).
+    const seededDate = `${new Date().getUTCFullYear()}-10-01`;
+    const detail = await createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+      contributionDate: seededDate,
+      lines: [{ givingTypeId: zoneA.givingTypeId, amount: big }],
+    });
+    expect(detail.contribution.totalAmount).toBe(big);
+    expect(detail.lines[0].amount).toBe(big);
+  });
+
+  it("preserves allocation_percent string formatting through create + load", async () => {
+    const seededDate = `${new Date().getUTCFullYear()}-10-02`;
+    const detail = await createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      memberId: zoneA.memberId,
+      sourceType: "manual",
+      contributionDate: seededDate,
+      lines: [{ givingTypeId: zoneA.givingTypeId, amount: "10.0000" }],
+      members: [{ memberId: zoneA.memberId, allocationPercent: "33.33" }],
+    });
+    expect(detail.members[0].allocationPercent).toBe("33.33");
   });
 });

@@ -8,7 +8,7 @@
 // (services/contributions.ts) reject mismatched-currency attaches; this
 // module re-checks at post time as defense-in-depth.
 
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   chapters,
   contributionBatches,
@@ -24,29 +24,20 @@ import type {
   ContributionBatchListQuery,
   ContributionBatchUpdateInput,
 } from "@stewardledger/shared";
-import { writeAudit } from "./audit";
+import { writeAudit, writeAuditMany } from "./audit";
 import { ContributionError } from "./contributions";
+import { existsInZone } from "./_zone-scope";
 
 interface ActorContext {
   zoneId: string;
   userId: string;
 }
 
-async function existsInZone<T extends { id: any; zoneId: any }>(
+async function loadBatch(
   database: Db,
-  table: T,
   zoneId: string,
   id: string,
-): Promise<boolean> {
-  const rows = await database
-    .select({ id: table.id })
-    .from(table as never)
-    .where(and(eq(table.zoneId as never, zoneId), eq(table.id as never, id)))
-    .limit(1);
-  return rows.length > 0;
-}
-
-async function loadBatch(database: Db, zoneId: string, id: string): Promise<ContributionBatch | null> {
+): Promise<ContributionBatch | null> {
   const [row] = await database
     .select()
     .from(contributionBatches)
@@ -73,7 +64,10 @@ export async function listBatches(
   if (query.chapterId) conditions.push(eq(contributionBatches.chapterId, query.chapterId));
   if (query.status) conditions.push(eq(contributionBatches.status, query.status));
   if (scope.chapterIds && scope.chapterIds.length > 0) {
-    conditions.push(sql`${contributionBatches.chapterId} in ${scope.chapterIds}`);
+    // `inArray` produces a properly-parameterised `chapter_id = ANY($1)`;
+    // the previous `sql\`in ${array}\`` template bound the array as a
+    // single param and either errored or mis-filtered.
+    conditions.push(inArray(contributionBatches.chapterId, scope.chapterIds));
   } else if (scope.chapterIds) {
     return { items: [], total: 0 };
   }
@@ -101,11 +95,26 @@ export async function createBatch(
     if (!(await existsInZone(tx, chapters, ctx.zoneId, input.chapterId))) {
       throw new ContributionError("chapter_not_found", "Chapter not in this zone.");
     }
-    if (
-      input.serviceEventId &&
-      !(await existsInZone(tx, serviceEvents, ctx.zoneId, input.serviceEventId))
-    ) {
-      throw new ContributionError("service_event_not_found", "Service event not in this zone.");
+    if (input.serviceEventId) {
+      const [evt] = await tx
+        .select({ id: serviceEvents.id, chapterId: serviceEvents.chapterId })
+        .from(serviceEvents)
+        .where(
+          and(
+            eq(serviceEvents.zoneId, ctx.zoneId),
+            eq(serviceEvents.id, input.serviceEventId),
+          ),
+        )
+        .limit(1);
+      if (!evt) {
+        throw new ContributionError("service_event_not_found", "Service event not in this zone.");
+      }
+      if (evt.chapterId !== null && evt.chapterId !== input.chapterId) {
+        throw new ContributionError(
+          "service_event_chapter_mismatch",
+          "Service event belongs to a different chapter than the batch.",
+        );
+      }
     }
     if (
       input.paymentMethodId &&
@@ -152,6 +161,21 @@ export async function createBatch(
   });
 }
 
+// Allow-list of writable columns on draft-batch update. Using an explicit
+// list — rather than `Object.entries(patch)` — keeps an unrelated future
+// schema addition (e.g. `chapterId`, `currencyCode`, `status`,
+// `posted_*`) from silently widening the SQL update surface and turning
+// a bookkeeper PATCH into a privilege escalation.
+const BATCH_UPDATE_COLUMNS = [
+  "serviceEventId",
+  "paymentMethodId",
+  "referenceCode",
+  "cashTotal",
+  "chequeTotal",
+  "notes",
+] as const;
+type BatchUpdateColumn = (typeof BATCH_UPDATE_COLUMNS)[number];
+
 export async function updateDraftBatch(
   database: Database,
   ctx: ActorContext,
@@ -169,11 +193,26 @@ export async function updateDraftBatch(
         `Only draft batches can be edited (status='${existing.status}').`,
       );
     }
-    if (
-      patch.serviceEventId &&
-      !(await existsInZone(tx, serviceEvents, ctx.zoneId, patch.serviceEventId))
-    ) {
-      throw new ContributionError("service_event_not_found", "Service event not in this zone.");
+    if (patch.serviceEventId) {
+      const [evt] = await tx
+        .select({ id: serviceEvents.id, chapterId: serviceEvents.chapterId })
+        .from(serviceEvents)
+        .where(
+          and(
+            eq(serviceEvents.zoneId, ctx.zoneId),
+            eq(serviceEvents.id, patch.serviceEventId),
+          ),
+        )
+        .limit(1);
+      if (!evt) {
+        throw new ContributionError("service_event_not_found", "Service event not in this zone.");
+      }
+      if (evt.chapterId !== null && evt.chapterId !== existing.chapterId) {
+        throw new ContributionError(
+          "service_event_chapter_mismatch",
+          "Service event belongs to a different chapter than the batch.",
+        );
+      }
     }
     if (
       patch.paymentMethodId &&
@@ -181,8 +220,14 @@ export async function updateDraftBatch(
     ) {
       throw new ContributionError("payment_method_not_found", "Payment method not in this zone.");
     }
-    const updates: Record<string, unknown> = { updatedAt: new Date(), updatedByUserId: ctx.userId };
-    for (const [k, v] of Object.entries(patch)) if (v !== undefined) updates[k] = v;
+    const updates: Record<string, unknown> = {
+      updatedAt: new Date(),
+      updatedByUserId: ctx.userId,
+    };
+    for (const k of BATCH_UPDATE_COLUMNS) {
+      const v = (patch as Partial<Record<BatchUpdateColumn, unknown>>)[k];
+      if (v !== undefined) updates[k] = v;
+    }
     const [row] = await tx
       .update(contributionBatches)
       .set(updates)
@@ -305,38 +350,28 @@ export async function postBatch(
       );
     }
 
-    // Defense-in-depth: every contribution attached to the batch must share
-    // its currency. The contribution write paths already reject mismatches
-    // when attaching, but a manual SQL update could have slipped one in.
-    const mismatched = await tx
-      .select({ id: contributions.id, currencyCode: contributions.currencyCode })
+    // Fuse the mismatch probe and the draft scan into a single round-trip:
+    // both walk the same `(zoneId, batchId)` slice, and JS does the rest.
+    const attached = await tx
+      .select({
+        id: contributions.id,
+        status: contributions.status,
+        currencyCode: contributions.currencyCode,
+      })
       .from(contributions)
       .where(
-        and(
-          eq(contributions.zoneId, ctx.zoneId),
-          eq(contributions.batchId, id),
-          sql`${contributions.currencyCode} <> ${batch.currencyCode}`,
-        ),
-      )
-      .limit(1);
-    if (mismatched.length > 0) {
+        and(eq(contributions.zoneId, ctx.zoneId), eq(contributions.batchId, id)),
+      );
+    const mismatched = attached.find((r) => r.currencyCode !== batch.currencyCode);
+    if (mismatched) {
       throw new ContributionError(
         "batch_currency_mismatch",
-        `Batch contains a contribution in a different currency (${mismatched[0].currencyCode} vs ${batch.currencyCode}).`,
+        `Batch contains a contribution in a different currency (${mismatched.currencyCode} vs ${batch.currencyCode}).`,
       );
     }
+    const draftRows = attached.filter((r) => r.status === "draft");
 
     const now = new Date();
-    const draftRows = await tx
-      .select({ id: contributions.id })
-      .from(contributions)
-      .where(
-        and(
-          eq(contributions.zoneId, ctx.zoneId),
-          eq(contributions.batchId, id),
-          eq(contributions.status, "draft"),
-        ),
-      );
     if (draftRows.length > 0) {
       await tx
         .update(contributions)
@@ -354,8 +389,12 @@ export async function postBatch(
             eq(contributions.status, "draft"),
           ),
         );
-      for (const row of draftRows) {
-        await writeAudit(tx, {
+      // Bulk-insert one audit row per posted contribution. The previous
+      // per-row loop produced N round-trips on what is meant to be the
+      // one-shot Sunday-batch hot path.
+      await writeAuditMany(
+        tx,
+        draftRows.map((row) => ({
           zoneId: ctx.zoneId,
           actorUserId: ctx.userId,
           action: "contribution.post",
@@ -363,8 +402,8 @@ export async function postBatch(
           entityId: row.id,
           before: { status: "draft" },
           after: { status: "posted", batchId: id },
-        });
-      }
+        })),
+      );
     }
 
     const [updated] = await tx
@@ -396,7 +435,3 @@ export async function postBatch(
 // Re-export so route handlers can match on the shared error class without
 // introducing an import cycle when the routes module pulls both services.
 export { ContributionError };
-
-// Avoid an unused-import warning for `asc` if we never sort ascending —
-// keep it for future filters where it's natural.
-export const _internal = { asc };

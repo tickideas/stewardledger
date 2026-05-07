@@ -20,8 +20,8 @@ export interface AuditWrite {
   requestId?: string | null;
 }
 
-export async function writeAudit(database: Db, evt: AuditWrite): Promise<void> {
-  await database.insert(auditEvents).values({
+function toRow(evt: AuditWrite) {
+  return {
     zoneId: evt.zoneId,
     actorUserId: evt.actorUserId ?? null,
     actorRoleCode: evt.actorRoleCode ?? null,
@@ -34,5 +34,19 @@ export async function writeAudit(database: Db, evt: AuditWrite): Promise<void> {
     ipAddress: evt.ipAddress ?? null,
     userAgent: evt.userAgent ?? null,
     requestId: evt.requestId ?? null,
-  });
+  };
+}
+
+export async function writeAudit(database: Db, evt: AuditWrite): Promise<void> {
+  await database.insert(auditEvents).values(toRow(evt));
+}
+
+/**
+ * Append many audit rows in a single INSERT. Use whenever a service
+ * touches N rows in one transition so the audit trail doesn't grow into
+ * an N+1 round-trip on the hot path (e.g. batch posting).
+ */
+export async function writeAuditMany(database: Db, evts: AuditWrite[]): Promise<void> {
+  if (evts.length === 0) return;
+  await database.insert(auditEvents).values(evts.map(toRow));
 }
