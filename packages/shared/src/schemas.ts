@@ -128,3 +128,126 @@ export const regionTypeaheadSchema = z.object({
   limit: z.number().int().min(1).max(50).default(10),
 });
 export type RegionTypeaheadInput = z.infer<typeof regionTypeaheadSchema>;
+
+// ─── Members ──────────────────────────────────────────────────────────
+
+const genderSchema = z.enum(["M", "F", "U"]);
+
+/** Member create. References to lookup ids and chapter id are tenant-checked in the route. */
+export const memberCreateSchema = z.object({
+  firstName: z.string().min(1).max(120),
+  middleNames: z.string().max(200).nullish(),
+  lastName: z.string().max(120).nullish(),
+  titleId: uuidSchema.nullish(),
+  gender: genderSchema.nullish(),
+  email: z.string().email().nullish(),
+  dateOfBirth: z.string().date().nullish(),
+  mobile: z.string().max(40).nullish(),
+  telephone: z.string().max(40).nullish(),
+  kingschatUsername: z.string().max(120).nullish(),
+  chapterId: uuidSchema.nullish(),
+  maritalStatusId: uuidSchema.nullish(),
+  memberTypeId: uuidSchema.nullish(),
+  dateJoinedMinistry: z.string().date().nullish(),
+  foundationSchoolGraduationDate: z.string().date().nullish(),
+  isCell: z.boolean().optional(),
+  isDepartment: z.boolean().optional(),
+  isActive: z.boolean().optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+export type MemberCreateInput = z.infer<typeof memberCreateSchema>;
+
+/** Member update — every field optional; route enforces tenant scoping. */
+export const memberUpdateSchema = memberCreateSchema.partial();
+export type MemberUpdateInput = z.infer<typeof memberUpdateSchema>;
+
+/** Member list/search query. */
+export const memberListQuerySchema = z.object({
+  q: z.string().max(120).optional(),
+  chapterId: uuidSchema.optional(),
+  isActive: z
+    .union([z.boolean(), z.enum(["true", "false"])])
+    .transform((v) => (typeof v === "boolean" ? v : v === "true"))
+    .optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type MemberListQuery = z.infer<typeof memberListQuerySchema>;
+
+// ─── Member addresses ─────────────────────────────────────────────────
+
+export const memberAddressCreateSchema = z
+  .object({
+    line1: z.string().max(200).nullish(),
+    line2: z.string().max(200).nullish(),
+    city: z.string().max(120).nullish(),
+    regionText: z.string().max(120).nullish(),
+    postcode: z.string().max(20).nullish(),
+    countryCode: countryCodeSchema.optional(),
+    isPrimary: z.boolean().optional(),
+    dateFrom: z.string().date().optional(),
+  })
+  .refine(
+    (v) => Boolean(v.line1 || v.line2 || v.city || v.postcode || v.countryCode),
+    { message: "address must have at least one field", path: ["line1"] },
+  );
+export type MemberAddressCreateInput = z.infer<typeof memberAddressCreateSchema>;
+
+export const memberAddressUpdateSchema = z.object({
+  line1: z.string().max(200).nullish(),
+  line2: z.string().max(200).nullish(),
+  city: z.string().max(120).nullish(),
+  regionText: z.string().max(120).nullish(),
+  postcode: z.string().max(20).nullish(),
+  countryCode: countryCodeSchema.optional(),
+  isPrimary: z.boolean().optional(),
+  dateTo: z.string().date().nullish(),
+});
+export type MemberAddressUpdateInput = z.infer<typeof memberAddressUpdateSchema>;
+
+// ─── Lookup tables (titles, marital_statuses, member_types) ───────────
+
+export const lookupCreateSchema = z.object({
+  name: z.string().min(1).max(80),
+  ordinal: z.number().int().min(0).max(1000).optional(),
+  isActive: z.boolean().optional(),
+});
+export type LookupCreateInput = z.infer<typeof lookupCreateSchema>;
+
+export const lookupUpdateSchema = lookupCreateSchema.partial();
+export type LookupUpdateInput = z.infer<typeof lookupUpdateSchema>;
+
+/** Title-specific create accepts an optional gender hint. */
+export const titleCreateSchema = lookupCreateSchema.extend({
+  gender: z.enum(["M", "F"]).nullish(),
+});
+export type TitleCreateInput = z.infer<typeof titleCreateSchema>;
+
+export const titleUpdateSchema = titleCreateSchema.partial();
+export type TitleUpdateInput = z.infer<typeof titleUpdateSchema>;
+
+// ─── Member merge proposal ────────────────────────────────────────────
+
+export const memberMergeProposeSchema = z
+  .object({
+    primaryMemberId: uuidSchema,
+    duplicateMemberId: uuidSchema,
+    notes: z.string().max(2000).optional(),
+  })
+  .refine((v) => v.primaryMemberId !== v.duplicateMemberId, {
+    message: "primary and duplicate must differ",
+    path: ["duplicateMemberId"],
+  });
+export type MemberMergeProposeInput = z.infer<typeof memberMergeProposeSchema>;
+
+export const memberMergeApplySchema = z.object({
+  proposalId: uuidSchema,
+});
+export type MemberMergeApplyInput = z.infer<typeof memberMergeApplySchema>;
+
+export const memberMergeProposalListQuerySchema = z.object({
+  status: z.enum(["pending", "approved", "rejected", "applied"]).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type MemberMergeProposalListQuery = z.infer<typeof memberMergeProposalListQuerySchema>;

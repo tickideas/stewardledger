@@ -23,10 +23,14 @@ import {
 } from "../services/invitations";
 import { brandedEmailHtml, escapeHtml, sendEmail } from "../services/email";
 import { env } from "../env";
+import { tenantMembersRouter } from "./tenant-members";
 
 export const tenantRouter = new Hono();
 
 tenantRouter.use("*", tenantMiddleware, requireSession, requireTenantAuth);
+
+// Member-domain routes live in their own module to keep this file small.
+tenantRouter.route("/", tenantMembersRouter);
 
 /** Current user's authorization context for the resolved zone. */
 tenantRouter.get("/me", async (c) => {

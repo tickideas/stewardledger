@@ -11,6 +11,7 @@ import type { Database } from "@stewardledger/db";
 import { env } from "../env";
 import { brandedEmailHtml, escapeHtml, sendEmail } from "./email";
 import { createInvitation } from "./invitations";
+import { seedZoneLookups } from "./lookup-seed";
 import { assertNameAvailable, NameTakenError } from "./names";
 import { seedZoneRoles } from "./role-seed";
 
@@ -87,6 +88,7 @@ export async function signupZone(
       .returning({ id: zones.id });
 
     await seedZoneRoles(tx, zone.id);
+    await seedZoneLookups(tx, zone.id);
 
     const invitation = await createInvitation(tx, {
       zoneId: zone.id,
