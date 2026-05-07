@@ -3,6 +3,7 @@
 
 import { z } from "zod";
 import { currencyCodeSchema } from "./money";
+import { CHAPTER_ROLES, ZONE_ROLES } from "./roles";
 
 /** UUID v4 / v7 schema. */
 export const uuidSchema = z.string().uuid();
@@ -60,6 +61,31 @@ export const regionCreateSchema = z.object({
 });
 export type RegionCreateInput = z.infer<typeof regionCreateSchema>;
 
+/** Region update (platform admin). */
+export const regionUpdateSchema = regionCreateSchema.partial().extend({
+  isActive: z.boolean().optional(),
+});
+export type RegionUpdateInput = z.infer<typeof regionUpdateSchema>;
+
+/**
+ * Promote one or more zones currently on `region_name_unverified` onto a real
+ * region. The region either already exists (`regionId`) or is created from
+ * `regionDraft` in the same request.
+ */
+export const regionPromoteSchema = z
+  .object({
+    zoneIds: z.array(uuidSchema).min(1),
+    regionId: uuidSchema.optional(),
+    regionDraft: regionCreateSchema.optional(),
+  })
+  .refine(
+    (v) =>
+      (v.regionId !== undefined && v.regionDraft === undefined) ||
+      (v.regionId === undefined && v.regionDraft !== undefined),
+    { message: "Provide either regionId or regionDraft, not both", path: ["regionId"] },
+  );
+export type RegionPromoteInput = z.infer<typeof regionPromoteSchema>;
+
 /** Chapter creation. */
 export const chapterCreateSchema = z.object({
   name: z.string().min(2).max(120),
@@ -67,3 +93,38 @@ export const chapterCreateSchema = z.object({
   dateFrom: z.string().date().optional(),
 });
 export type ChapterCreateInput = z.infer<typeof chapterCreateSchema>;
+
+/** Role codes that may be granted via an invitation (no platform roles). */
+export const invitableRoleSchema = z.enum([
+  ...(Object.values(ZONE_ROLES) as [string, ...string[]]),
+  ...(Object.values(CHAPTER_ROLES) as [string, ...string[]]),
+]);
+
+/** Create an invitation. chapterId required for chapter_* roles, forbidden otherwise. */
+export const invitationCreateSchema = z
+  .object({
+    email: z.string().email(),
+    roleCode: invitableRoleSchema,
+    chapterId: uuidSchema.optional(),
+  })
+  .refine(
+    (v) =>
+      v.roleCode.startsWith("chapter_") ? v.chapterId !== undefined : v.chapterId === undefined,
+    { message: "chapterId required for chapter roles, forbidden otherwise", path: ["chapterId"] },
+  );
+export type InvitationCreateInput = z.infer<typeof invitationCreateSchema>;
+
+/** Accepting an invitation — the token comes from the URL, body is the new user's identity. */
+export const invitationAcceptSchema = z.object({
+  token: z.string().min(20).max(200),
+  name: z.string().min(2).max(120),
+  password: z.string().min(12).max(200),
+});
+export type InvitationAcceptInput = z.infer<typeof invitationAcceptSchema>;
+
+/** Public regions typeahead query. */
+export const regionTypeaheadSchema = z.object({
+  q: z.string().min(1).max(120),
+  limit: z.number().int().min(1).max(50).default(10),
+});
+export type RegionTypeaheadInput = z.infer<typeof regionTypeaheadSchema>;

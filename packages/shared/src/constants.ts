@@ -31,6 +31,12 @@ export const DEFAULT_MINISTRY_YEAR_START_MONTH = 3;
 export const DEFAULT_MEMBER_REFERENCE_PREFIX = "M";
 export const DEFAULT_CHAPTER_REFERENCE_PREFIX = "C";
 
+/** Invitation token length, raw bytes (URL-safe base64-encoded in the email link). */
+export const INVITATION_TOKEN_BYTES = 32;
+
+/** Invitation validity, hours. Owner invites and team invites both default here. */
+export const INVITATION_VALIDITY_HOURS = 168; // 7 days
+
 /** Money precision: numeric(19,4). Display rounded to 2 dp. */
 export const MONEY_PRECISION = 4;
 export const MONEY_DISPLAY_DECIMALS = 2;
