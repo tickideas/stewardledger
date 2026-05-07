@@ -8,6 +8,87 @@ follows phased releases per [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ### Added
 
+- **Phase 5 contribution + batch services** —
+  `packages/api/src/services/contributions.ts` and
+  `packages/api/src/services/contribution-batches.ts`. Cover the full
+  draft → posted → voided / reversed state machine, currency defaulting
+  from the zone, cross-tenant guards on `chapter_id` / `member_id` /
+  `giving_type_id` / `account_id` / `batch_id`, period auto-derivation,
+  `region_id` denormalization from chapter, and a defense-in-depth
+  currency cohesion re-check at batch-post time. Reversals emit a
+  corrective contribution with negated amounts and
+  `reversal_of_contribution_id` / `parent_contribution_id` set to the
+  original (insert as draft, then promote to posted because the
+  `contribution_lines_posted_guard` blocks line inserts on posted
+  parents).
+- **Tenant API for contributions and batches**
+  (`packages/api/src/routes/tenant-contributions.ts`, mounted under
+  `tenantRouter`):
+  - `GET/POST /api/tenant/contributions`,
+    `GET/PATCH/DELETE /api/tenant/contributions/:id`,
+    `POST /api/tenant/contributions/:id/{post,void,reverse}`.
+  - `GET/POST /api/tenant/contribution-batches`,
+    `GET/PATCH /api/tenant/contribution-batches/:id`,
+    `POST /api/tenant/contribution-batches/:id/{submit,approve,post,void}`.
+  - Role bundles enforce zone-owner / pastor read of zone-wide totals,
+    chapter-scoped read for chapter pastors / coordinators, treasurer +
+    finance-admin write, and treasurer + zone-owner / finance-admin post
+    (bookkeepers can draft but cannot post).
+  - `ContributionError` codes are translated to HTTP status by an
+    `ERROR_STATUS` map (validation → 400, cross-tenant / not-found →
+    404, currency-mismatch / state → 409).
+- **Service tests** (`packages/api/src/services/contributions-service.test.ts`)
+  — 15 cases: happy-path create + post + read, zone currency default,
+  currency mismatch rejection, no-lines guard, cross-tenant chapter and
+  giving-type rejection, batch currency mismatch, draft update replaces
+  lines, post / void state machine, reverse with negated amounts, draft
+  delete (cascades), batch lifecycle (`draft → submitted → approved →
+  posted` promotes embedded contributions), `voidBatch` refusal on
+  already-posted batches, and `postBatch` currency-mismatch
+  defense-in-depth.
+- **Cross-tenant route tests**
+  (`packages/api/src/routes/tenant-contributions.test.ts`) — 12 cases
+  driving the real Hono stack: owner happy path, cross-tenant chapter
+  and giving-type rejection, foreign-zone GET 404, pastor read-only,
+  bookkeeper-can-draft-but-not-post, treasurer can post, posting a
+  non-draft 409, void state machine, reverse via API, batch lifecycle,
+  and batch currency mismatch.
+- **Zod schemas** for the contribution + batch write paths in
+  `packages/shared/src/schemas.ts`: `SOURCE_TYPES`, `sourceTypeSchema`,
+  `contributionCreateSchema`, `contributionUpdateSchema`,
+  `contributionListQuerySchema`, `contributionVoidSchema`,
+  `contributionReverseSchema`, `contributionBatchCreateSchema`,
+  `contributionBatchUpdateSchema`, `contributionBatchListQuerySchema`,
+  `contributionBatchVoidSchema`. `moneyAmountSchema` is reused; negative
+  amounts are now permitted to encode reversals.
+
+### Changed
+
+- **Sign convention adopted for contribution amounts.** The non-negative
+  CHECK constraints on `contributions.total_amount` and
+  `contribution_lines.amount` were dropped
+  (`packages/db/src/schema/contributions.ts`). Sign now encodes
+  direction: positive = inflow / gift, negative = reversal. The absolute
+  amount of a reversal line must equal the original line. `AGENTS.md`
+  hard rule #1 was extended to state this explicitly.
+- **`docs/DOMAIN-MODEL.md` §6** — dropped `check (amount >= 0)` from the
+  `contribution_lines` SQL block; added a "Sign convention (Phase 5)"
+  callout; expanded the "Currency rule" paragraph to describe the
+  service-layer default from the zone and the batch-post
+  defense-in-depth re-check.
+- **`docs/ROADMAP.md` Phase 5** — service + tenant API implementation
+  notes added; state-machine and mixed-currency batch exit-checklist
+  items ticked. Phase 4 currency-default item ticked with reference to
+  `contributions-service.test.ts`.
+- **`applyContributionTriggers` now serializes via a session advisory
+  lock** (`packages/db/src/bootstrap-triggers.ts`). Three vitest test
+  files race-bootstrapped the same triggers in parallel worker threads,
+  which produced `tuple concurrently updated` (XX000) on
+  `drop trigger ... on contributions`. Wrapping the install in
+  `pg_advisory_lock(hashtext('stewardledger.applyContributionTriggers'))`
+  serializes concurrent callers without changing single-process
+  behaviour.
+
 - **Phase 5 contributions schema** — `contribution_batches`, `contributions`,
   `contribution_lines`, and `contribution_members` tables under
   `packages/db/src/schema/contributions.ts`. Each row is `zone_id`-scoped
@@ -54,6 +135,58 @@ follows phased releases per [`docs/ROADMAP.md`](docs/ROADMAP.md).
   + batch *schema* permits currency overrides today; the service-layer
   default of `contribution.currency_code` from the zone is wired up in
   Phase 5 alongside the contribution write paths.
+
+### Fixed (Phase 5 review pass)
+
+- **Sign-convention guard rails.** Non-reversal create/update paths now
+  reject non-positive line amounts with a typed `non_positive_amount`
+  service error (HTTP 400). Reversals still flip every line and the new
+  `|reversal| == |original|` invariant has a dedicated service test.
+- **Cross-tenant FK leakage closed.** `assertReferencesInZone` and
+  `createBatch` / `updateDraftBatch` now also enforce `chapter_id`
+  cohesion on `batchId` and `serviceEventId` references inside the same
+  zone, surfacing the new `batch_chapter_mismatch` /
+  `service_event_chapter_mismatch` codes (HTTP 404). Service tests cover
+  both, including the zone-wide `service_events.chapter_id IS NULL`
+  accept path.
+- **Currency-only PATCHes are re-checked against the batch.** Patching
+  only `currencyCode` on a contribution that is attached to a batch now
+  re-runs the `batch_currency_mismatch` probe instead of trusting a
+  cached field comparison.
+- **Mass-assignment hardening.** `updateDraftContribution` and
+  `updateDraftBatch` are now driven by explicit
+  `UPDATE_DIRECT_COLUMNS` / `BATCH_UPDATE_COLUMNS` allow-lists rather
+  than `Object.entries(patch)` iteration.
+- **`pg_advisory_lock` for trigger bootstrap** — see Phase 5 notes; this
+  is the de-flaked variant that was uncovered during the review.
+- **Performance.** Five reference checks in `createContribution` /
+  `updateDraftContribution` now run via `Promise.all` against a shared
+  `_zone-scope.ts` helper. `postBatch` writes its per-row audit
+  envelopes via a single `writeAuditMany` insert and fuses the
+  mismatch-probe + draft-scan SELECT into one round-trip.
+  `reverseContribution` and `updateDraftContribution` no longer issue a
+  trailing `loadDetail` round-trip — both read their `RETURNING`
+  rows directly.
+- **Reversal date now respects the zone time zone.** `todayInZone()`
+  derives the corrective contribution's `contribution_date` from
+  `Intl.DateTimeFormat('en-CA', { timeZone })` against the zone's
+  configured `default_time_zone` instead of UTC, so reversals booked
+  near midnight no longer drift across the date line.
+- **Self-contained reversal audit.** Reversing a posted contribution
+  now writes three audit rows on the corrective contribution
+  (`contribution.reverse` on the original, `contribution.create` and
+  `contribution.post` on the new row) so the audit trail no longer
+  depends on the original transaction's audit footprint.
+- **Drizzle-everywhere in tests.** The Phase 5 service test no longer
+  uses `db.execute<T>(sql\`select ...\`)` for typed reads; lookups go
+  through `db.select(...).from(serviceTypes)` so the result type is
+  inferred from the schema rather than asserted.
+- **Stale docs / changelog claims.** `docs/DOMAIN-MODEL.md` invariant
+  #3 was rewritten to describe the signed-sum service-layer enforcement
+  (the old "amount >= 0" line was orphaned by the CHECK drop). The
+  `isReversal: true` flag claim in the prior changelog block was
+  replaced with the actual columns
+  (`reversal_of_contribution_id` / `parent_contribution_id`).
 
 ## [0.3.0] — Phase 3: Members
 

@@ -477,7 +477,7 @@ contribution_lines
   contribution_id uuid not null references contributions(id) on delete cascade
   giving_type_id uuid not null references giving_types(id)
   account_id uuid null references accounts(id)
-  amount numeric(19,4) not null check (amount >= 0)
+  amount numeric(19,4) not null            -- signed; see "Sign convention" below
   currency_code text not null
   note text null
   created_at, updated_at
@@ -498,12 +498,46 @@ contribution_members                       -- multi-member contribution (oblatio
   - `contributions_posted_guard` permits only the void/reverse + bookkeeping columns to change once `status = 'posted'`; any other column change raises a `check_violation`.
   - `contributions_no_delete_when_posted` blocks deletes of `posted` rows.
   - `contribution_lines_posted_guard` blocks any insert / update / delete on lines once the parent contribution is `posted`, and refuses lines whose `currency_code` doesn't match their parent.
+- Bootstrap is serialized by a session-level `pg_advisory_lock(hashtext('stewardledger.applyContributionTriggers'))` so concurrent test workers don't race the `drop trigger / create trigger` pair into a `tuple concurrently updated` error.
 - Corrections are applied as **new** contributions with `reversal_of_contribution_id` set.
+
+### Sign convention (Phase 5)
+
+- Positive amounts are inflows / gifts; negative amounts are reversals.
+- `reverseContribution` (in `packages/api/src/services/contributions.ts`)
+  emits a corrective contribution whose `total_amount` is the negation of
+  the original's, and whose lines are the exact negation of the original's
+  lines, then flips the original to `status='reversed'`. Reports sum signed
+  amounts, so original + reversal net to zero.
+- The aggregate non-negative CHECKs that earlier sat on `contributions.total_amount`
+  and `contribution_lines.amount` are intentionally NOT applied. Negative
+  amounts are confined to the reversal flow: `createContribution` and
+  `updateDraftContribution` reject non-positive line amounts (raising
+  `non_positive_amount`); `reverseContribution` is the only path that
+  emits them, and it constructs them by negating the original lines so
+  `abs(reversal) === abs(original)` holds by construction. The
+  posted-immutability triggers ensure the original is not retroactively edited.
+  `contribution_batches.cash_total` / `cheque_total` retain their non-negative
+  CHECKs — they are physical bag totals, never reversals.
+- Reversal contributions are posted standalone (never inside the original
+  batch); the corrective row records `parent_contribution_id` and
+  `reversal_of_contribution_id` to link back.
+- Implementation note: the corrective row is inserted with
+  `status='draft'` first so the lines pass `contribution_lines_posted_guard`,
+  then promoted to `posted` in the same tx; the original is flipped to
+  `reversed` last so an audit reader sees cause-then-effect order.
 
 ### Currency rule
 
-- `contribution.currency_code` defaults to the zone's `default_currency_code` but can differ when the chosen `account` has a different currency or the user explicitly sets it.
-- All `contribution_lines` of a single contribution must share the same `currency_code` as the contribution.
+- `contribution.currency_code` defaults to the zone's `default_currency_code`
+  in the service layer (`createContribution`) when callers don't supply one.
+  Callers may override when the chosen `account` has a different currency.
+- All `contribution_lines` of a single contribution must share the same
+  `currency_code` as the contribution.
+- All `contributions` attached to a `contribution_batch` must share the
+  batch's `currency_code`. Enforced in
+  `packages/api/src/services/contributions.ts` on attach and re-checked at
+  batch-post time in `services/contribution-batches.ts`.
 - Reports never mix currencies into a single number; mixed-currency totals are presented as per-currency subtotals.
 
 ---
@@ -710,7 +744,7 @@ A billing party owning multiple zones holds one subscription per zone. There is 
 
 1. Every domain row has `zone_id`. Application middleware enforces it.
 2. `contributions` rows in `posted` are immutable except for void/reversal flow.
-3. `contribution_lines.amount >= 0`. The `total_amount` on `contributions` equals the sum of its lines (DB constraint via trigger or check).
+3. `contribution_lines.amount` is signed: positive on inflow contributions, negative on reversals. Service-layer write paths reject non-positive amounts on every endpoint other than `reverseContribution`, which is the only place that emits negatives. The `total_amount` on `contributions` equals the signed sum of its lines; this invariant is enforced by the service layer (`createContribution` / `updateDraftContribution`), not by a DB constraint. See §6 "Sign convention (Phase 5)".
 4. All `contribution_lines` of a contribution share its `currency_code`.
 5. `import_jobs.status = 'committed'` ⇒ every `import_rows` row in that job has `validation_status = 'valid'` and points to a `contribution_id`.
 6. Audit event rows are never updated or deleted by application code.

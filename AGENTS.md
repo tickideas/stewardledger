@@ -26,7 +26,7 @@ Every cross-cutting decision lives in `docs/`. If you change behaviour, update t
 
 ## Hard rules
 
-1. **Money is always `numeric(19,4)` paired with `currency_code`.** Never `float`, never JS `number` for arithmetic. Use `decimal.js` (already in `@stewardledger/shared`).
+1. **Money is always `numeric(19,4)` paired with `currency_code`.** Never `float`, never JS `number` for arithmetic. Use `decimal.js` (already in `@stewardledger/shared`). Sign encodes direction: positive = inflow / gift, negative = reversal. The absolute amount of a reversal line must equal the original line.
 2. **Every domain table has `zone_id NOT NULL`.** The zone is the tenant boundary. No exceptions for v1.
 3. **Posted contributions are immutable.** Corrections are reversals (`reversal_of_contribution_id`), never silent updates.
 4. **No stored-proc business logic.** Triggers exist only for (a) audit capture, (b) posted-record immutability, and (c) cross-row invariants that a CHECK constraint cannot express — currently the contribution↔line currency-cohesion check and the TRUNCATE guards on `contributions` / `contribution_lines`.

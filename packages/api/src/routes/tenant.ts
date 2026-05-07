@@ -22,6 +22,7 @@ import {
 } from "../services/invitations";
 import { brandedEmailHtml, escapeHtml, sendEmail } from "../services/email";
 import { env } from "../env";
+import { tenantContributionsRouter } from "./tenant-contributions";
 import { tenantGivingEventsRouter } from "./tenant-giving-events";
 import { tenantGivingMethodsRouter } from "./tenant-giving-methods";
 import { tenantGivingRouter } from "./tenant-giving";
@@ -36,6 +37,7 @@ tenantRouter.route("/", tenantMembersRouter);
 tenantRouter.route("/", tenantGivingRouter);
 tenantRouter.route("/", tenantGivingMethodsRouter);
 tenantRouter.route("/", tenantGivingEventsRouter);
+tenantRouter.route("/", tenantContributionsRouter);
 
 /** Current user's authorization context for the resolved zone. */
 tenantRouter.get("/me", async (c) => {
