@@ -92,6 +92,8 @@ custom_domains
 
 Constraint: exactly one of `region_id` or `region_name_unverified` is set on a zone. Once a curator approves an unverified region, the zone is updated atomically: `region_id` set, `region_name_unverified` cleared, denormalized `region_id` columns updated across the zone's data.
 
+**Region/zone name disjointness**: `regions.name` and `zones.name` share a single global, case-insensitive namespace — no region and zone may have the same name, and no two regions or two zones may collide. AGENTS rule 4 (no business logic in triggers) keeps this in the service layer (`assertNameAvailable` in `packages/api/src/services/names.ts`); per-table case-insensitive unique indexes (`lower(name)`) backstop accidental duplicates inside each table.
+
 ### 2.4 Chapters (the local church)
 
 ```sql
@@ -153,6 +155,30 @@ platform_role_bindings
   granted_by_user_id uuid null
   granted_at, revoked_at
 ```
+
+### 2.6 Invitations
+
+```sql
+invitations
+  id uuid pk
+  zone_id uuid not null references zones(id) on delete cascade
+  chapter_id uuid null references chapters(id) on delete cascade   -- required for chapter_* roles, forbidden otherwise (CHECK)
+  email text not null                       -- always stored lowercase
+  role_code text not null                   -- one of ZONE_ROLES | CHAPTER_ROLES
+  token_hash text not null unique           -- sha256 of 32-byte url-safe token; raw token only in the email URL
+  expires_at timestamptz not null           -- default 7 days from creation
+  created_by_user_id uuid null              -- null for the bootstrap zone_owner invite at signup
+  created_at timestamptz default now()
+  accepted_at timestamptz null
+  accepted_by_user_id uuid null
+  revoked_at timestamptz null
+  revoked_by_user_id uuid null
+  unique (zone_id, email, chapter_id, role_code) where accepted_at is null and revoked_at is null
+```
+
+- A successful **public signup** writes one invitation for the primary contact email pinned to `zone_owner` and emails them a magic-link-style accept URL. No Better Auth user is created at signup.
+- On accept (`POST /api/public/invitations/accept`): Better Auth `signUpEmail` runs with the email pinned by the invitation, then `applyAcceptedInvitation` writes a `user_role_bindings` row, marks the invite accepted, and — for `zone_owner` invites — promotes the zone from `pending_setup` to `active`.
+- Team invitations follow the same shape but are created via `POST /api/tenant/invitations` (zone_owner / zone_admin only); the API forbids inviting a second `zone_owner`.
 
 ---
 

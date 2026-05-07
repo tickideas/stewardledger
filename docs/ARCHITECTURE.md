@@ -292,6 +292,31 @@ s3://steward-prod/
 - Session expiring banner triggered 5 minutes before expiry.
 - Sign-in is global (one user, many zones). After authenticating, if the user has bindings in multiple zones, they pick one to enter.
 
+### 12.1 Middleware stack
+
+Four Hono middlewares compose every request, in this order:
+
+| Middleware | Sets `c.var.` | Used by |
+|---|---|---|
+| `tenantMiddleware` | `tenant: { zoneId, zoneSlug, regionId }` resolved from Host (subdomain or custom domain) | tenant routes only |
+| `requireSession` | `user: { id, email, isSuperAdmin }` from Better Auth | tenant + admin routes |
+| `requireTenantAuth` | `auth: AuthorizedContext` (union of role codes + chapter ids in this zone) | tenant routes |
+| `requirePlatformRole(...)` | (asserts only) | admin routes |
+
+Route groups:
+
+- `/api/public/*` — no session, no tenant. Signup, regions typeahead, invitation lookup/accept.
+- `/api/tenant/*` — `tenantMiddleware → requireSession → requireTenantAuth`.
+- `/api/admin/*` — `requireSession → requirePlatformRole(super_admin, region_curator, ...)`. Cross-zone reads are allowed here and only here.
+
+### 12.2 Invitations
+
+All user onboarding goes through the `invitations` table (see DOMAIN-MODEL.md §2.6):
+
+- **Public signup** writes a `zone_owner` invitation pinned to the primary contact email and emails an opaque 32-byte URL-safe token. The raw token only appears in the email; the DB stores its SHA-256 hash.
+- **Team invitations** are issued by zone owners/admins via `POST /api/tenant/invitations` and follow the same accept flow.
+- **Acceptance** runs Better Auth `signUpEmail` with the email pinned by the invitation, then writes the role binding atomically. A `zone_owner` accept also flips the zone from `pending_setup` to `active` and sets `users.default_zone_id`.
+
 ---
 
 ## 13. Audit

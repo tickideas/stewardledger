@@ -89,9 +89,9 @@ Deliverables:
 
 Exit checklist:
 
-- [ ] Self-service signup works end-to-end on staging.
-- [ ] A free-text region submitted at signup appears in the platform-admin inbox.
-- [ ] Owner can add chapters and invite users.
+- [x] Self-service signup works end-to-end (covered by `signup.test.ts`; staging deploy still pending).
+- [x] A free-text region submitted at signup appears in the platform-admin inbox (`GET /api/admin/regions/inbox`).
+- [x] Owner can add chapters and invite users (`POST /api/tenant/chapters`, `POST /api/tenant/invitations`).
 - [ ] Custom domain verification flow works against a real DNS (paid plan only).
 - [ ] Two zones in the same Postgres DB cannot see each other's data (cross-tenant fuzz tests pass).
 
