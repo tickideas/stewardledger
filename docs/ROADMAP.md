@@ -138,9 +138,10 @@ Implementation notes:
 
 Exit checklist:
 
-- [x] Seed scripts create a full year of `giving_periods` for a new zone in <2 seconds (`period-seed.test.ts` asserts the budget; full-year seed runs comfortably under 1s on the test DB).
+- [x] Seed scripts create a full year of `giving_periods` for a new zone in <5 seconds (`period-seed.test.ts` asserts the budget — picked to absorb CI-runner / cold-start variance; full-year seed runs comfortably under 1s on a warm test DB).
 - [x] Period auto-derivation works on a test set of arbitrary dates (`period-seed.test.ts` covers Jan 1, end-of-Q1 Sunday, mid-Q3 Tuesday, ISO-week-52 Sunday, and the Dec-31-belongs-to-next-ISO-year edge case).
-- [x] Currency on a new contribution defaults from zone, can be overridden if account currency differs (`accounts.currency_code` defaults from the zone in the API layer — `tenant-giving.test.ts`; the contribution + batch schema lets callers override `currency_code` and the per-line currency-match trigger keeps lines aligned with their parent — `contributions.test.ts`).
+- [x] Account currency defaults from the zone, with override support for foreign-currency accounts (`accounts.currency_code` defaults from the zone in the API layer — `tenant-giving.test.ts`).
+- [x] Contribution + batch schema permits overriding `currency_code`, and a database trigger keeps each line aligned with its parent contribution's currency (`contributions.test.ts`). *(Service-layer default of `contribution.currency_code` from the zone is wired up in Phase 5 alongside the contribution write paths.)*
 
 ---
 

@@ -6,6 +6,55 @@ follows phased releases per [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## [Unreleased]
 
+### Added
+
+- **Phase 5 contributions schema** — `contribution_batches`, `contributions`,
+  `contribution_lines`, and `contribution_members` tables under
+  `packages/db/src/schema/contributions.ts`. Each row is `zone_id`-scoped
+  with composite `(zone_id, *)` foreign keys so cross-tenant references are
+  rejected at the database. CHECK constraints cover non-negative money,
+  posted-requires-postedAt, voided-requires-voidedAt, allocation percent
+  range, and anti-self-reference on `reversal_of_contribution_id` /
+  `parent_contribution_id`.
+- **Posted-immutability + currency-cohesion + TRUNCATE-guard triggers**
+  (`packages/db/src/bootstrap-triggers.ts`) applied idempotently by a new
+  `pnpm --filter @stewardledger/db db:bootstrap` script. Triggers raise
+  SQLSTATE `23514` so callers can match on the code rather than message
+  text. The bootstrap script restricts `ENV_FILE` resolution to the repo
+  root, closes its DB connection on exit, and re-`enable trigger`s after
+  recreating each function so a crashed test run that left a trigger
+  disabled self-heals on the next bootstrap.
+- **DB-level invariant tests** (`packages/api/src/services/contributions.test.ts`)
+  — 22 cases covering cross-tenant FK rejection (line→contribution,
+  giving_type, account, member, reversal/parent), CHECK constraints
+  (negative totals, posted-without-postedAt, voided-without-voidedAt,
+  self-reversal, allocation 0/100/101), currency cohesion on INSERT and
+  UPDATE, posted→voided / posted→reversed happy paths, posted→draft
+  rejection, posted-row delete + line CRUD rejection, TRUNCATE rejection,
+  cascade delete of draft contributions, and zone-default vs override
+  currency on batches.
+
+### Changed
+
+- **`AGENTS.md` hard rule #4** broadened to permit triggers for cross-row
+  invariants that a CHECK cannot express, currently the contribution↔line
+  currency-cohesion check and the `contributions` / `contribution_lines`
+  TRUNCATE guards.
+- **Policy delta** — posted contributions are immutable except for
+  `status` transitions to `voided` / `reversed` and the void/reverse
+  bookkeeping columns (`voided_at`, `voided_by_user_id`, `void_reason`,
+  `updated_at`, `updated_by_user_id`). `region_id` is treated as
+  write-once after posting; fan-out region updates run against draft rows
+  only.
+- **`docs/DOMAIN-MODEL.md` §6** — `contribution_batches` SQL block now
+  lists the `submitted_*`, `approved_*`, `voided_*`, `void_reason`
+  columns; `contribution_members` block lists `zone_id` and the
+  allocation-percent CHECK that the Drizzle schema already declared.
+- **`docs/ROADMAP.md` Phase 4** currency tick narrowed: the contribution
+  + batch *schema* permits currency overrides today; the service-layer
+  default of `contribution.currency_code` from the zone is wired up in
+  Phase 5 alongside the contribution write paths.
+
 ## [0.3.0] — Phase 3: Members
 
 Adds the people layer: members, addresses, the three zone-scoped lookup
