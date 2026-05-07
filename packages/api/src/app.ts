@@ -5,7 +5,10 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { auth } from "./auth";
 import { env } from "./env";
+import { adminRouter } from "./routes/admin";
 import { healthRouter } from "./routes/health";
+import { publicRouter } from "./routes/public";
+import { tenantRouter } from "./routes/tenant";
 
 export function createApp() {
   const app = new Hono();
@@ -25,6 +28,9 @@ export function createApp() {
   );
 
   app.route("/health", healthRouter);
+  app.route("/api/public", publicRouter);
+  app.route("/api/tenant", tenantRouter);
+  app.route("/api/admin", adminRouter);
 
   app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 
