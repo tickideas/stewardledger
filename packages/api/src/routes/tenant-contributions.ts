@@ -24,6 +24,7 @@ import {
   ContributionError,
   createContribution,
   deleteDraftContribution,
+  errorStatusFor,
   getContribution,
   listContributions,
   postContribution,
@@ -126,29 +127,9 @@ function forbidden(c: { json: (b: unknown, s: number) => Response }, msg = "Insu
   return c.json({ error: { code: "forbidden", message: msg } }, 403);
 }
 
-const ERROR_STATUS: Record<string, number> = {
-  not_found: 404,
-  chapter_not_found: 404,
-  member_not_found: 404,
-  batch_not_found: 404,
-  payment_method_not_found: 404,
-  service_event_not_found: 404,
-  giving_type_not_found: 404,
-  account_not_found: 404,
-  zone_default_currency_missing: 500,
-  not_draft: 409,
-  not_posted: 409,
-  invalid_transition: 409,
-  batch_not_writable: 409,
-  batch_currency_mismatch: 409,
-  total_mismatch: 422,
-  lines_required: 422,
-};
-
 function handleError(c: { json: (b: unknown, s: number) => Response }, err: unknown): Response {
   if (err instanceof ContributionError) {
-    const status = ERROR_STATUS[err.code] ?? 400;
-    return c.json({ error: { code: err.code, message: err.message } }, status);
+    return c.json({ error: { code: err.code, message: err.message } }, errorStatusFor(err.code));
   }
   throw err;
 }

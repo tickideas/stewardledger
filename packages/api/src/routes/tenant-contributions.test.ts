@@ -285,9 +285,11 @@ describe("tenant contribution routes", () => {
         lines: [{ givingTypeId: zoneA.givingTypeId, amount: "1.0000" }],
       },
     });
-    // Service detects cross-tenant via chapter check first → 403 because the
-    // role check runs first and the user lacks a binding for zoneB's chapter.
-    expect([403, 404]).toContain(res.status);
+    // ownerA has zone-wide write on zoneA so role gating passes; the
+    // service-layer in-zone reference check rejects with chapter_not_found.
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("chapter_not_found");
   });
 
   it("rejects creating a contribution with a giving_type from another zone", async () => {
@@ -318,10 +320,10 @@ describe("tenant contribution routes", () => {
       },
     });
     const { contribution } = (await create.json()) as { contribution: { id: string } };
-    // Same id, different (zoneB) tenant slug — should be 404.
+    // Same id, different (zoneB) tenant slug. ownerA's session is valid but
+    // they have no role binding in zoneB → requireTenantAuth → 403 forbidden.
     const res = await call(zoneB.slug, `/api/tenant/contributions/${contribution.id}`);
-    // zoneB user has no session — middleware first; expect 401/403/404.
-    expect([401, 403, 404]).toContain(res.status);
+    expect(res.status).toBe(403);
   });
 
   // ─── Role gating ───────────────────────────────────────────────────
@@ -534,5 +536,181 @@ describe("tenant contribution routes", () => {
     expect(create.status).toBe(409);
     const body = (await create.json()) as { error: { code: string } };
     expect(body.error.code).toBe("batch_currency_mismatch");
+  });
+
+  // ─── PATCH / DELETE / batch list+get+void ─────────────────────────
+
+  it("PATCH /contributions/:id rewrites a draft and rejects on a posted record", async () => {
+    asUser(ownerA, "owner@example.com");
+    const create = await call(zoneA.slug, "/api/tenant/contributions", {
+      method: "POST",
+      body: {
+        chapterId: zoneA.chapterId,
+        sourceType: "manual",
+        contributionDate: seededDate,
+        lines: [{ givingTypeId: zoneA.givingTypeId, amount: "1.0000" }],
+      },
+    });
+    const { contribution } = (await create.json()) as { contribution: { id: string } };
+
+    const patch = await call(zoneA.slug, `/api/tenant/contributions/${contribution.id}`, {
+      method: "PATCH",
+      body: {
+        description: "patched",
+        lines: [{ givingTypeId: zoneA.givingTypeId, amount: "9.0000" }],
+      },
+    });
+    expect(patch.status).toBe(200);
+    const patched = (await patch.json()) as {
+      contribution: { description: string | null; totalAmount: string };
+      lines: Array<{ amount: string }>;
+    };
+    expect(patched.contribution.description).toBe("patched");
+    expect(patched.contribution.totalAmount).toBe("9.0000");
+    expect(patched.lines[0].amount).toBe("9.0000");
+
+    await call(zoneA.slug, `/api/tenant/contributions/${contribution.id}/post`, {
+      method: "POST",
+    });
+    const patchPosted = await call(zoneA.slug, `/api/tenant/contributions/${contribution.id}`, {
+      method: "PATCH",
+      body: { description: "no-go" },
+    });
+    expect(patchPosted.status).toBe(409);
+    const body = (await patchPosted.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("not_draft");
+  });
+
+  it("DELETE /contributions/:id removes a draft and refuses on posted", async () => {
+    asUser(ownerA, "owner@example.com");
+    const create = await call(zoneA.slug, "/api/tenant/contributions", {
+      method: "POST",
+      body: {
+        chapterId: zoneA.chapterId,
+        sourceType: "manual",
+        contributionDate: seededDate,
+        lines: [{ givingTypeId: zoneA.givingTypeId, amount: "1.0000" }],
+      },
+    });
+    const { contribution } = (await create.json()) as { contribution: { id: string } };
+    const del = await call(zoneA.slug, `/api/tenant/contributions/${contribution.id}`, {
+      method: "DELETE",
+    });
+    expect(del.status).toBe(200);
+    const get = await call(zoneA.slug, `/api/tenant/contributions/${contribution.id}`);
+    expect(get.status).toBe(404);
+
+    // Now post one and try to delete: must be rejected.
+    const create2 = await call(zoneA.slug, "/api/tenant/contributions", {
+      method: "POST",
+      body: {
+        chapterId: zoneA.chapterId,
+        sourceType: "manual",
+        contributionDate: seededDate,
+        lines: [{ givingTypeId: zoneA.givingTypeId, amount: "1.0000" }],
+      },
+    });
+    const { contribution: c2 } = (await create2.json()) as { contribution: { id: string } };
+    await call(zoneA.slug, `/api/tenant/contributions/${c2.id}/post`, { method: "POST" });
+    const delPosted = await call(zoneA.slug, `/api/tenant/contributions/${c2.id}`, {
+      method: "DELETE",
+    });
+    expect(delPosted.status).toBe(409);
+    const body = (await delPosted.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("not_draft");
+  });
+
+  it("PATCH /contribution-batches/:id updates a draft and rejects on submitted", async () => {
+    asUser(ownerA, "owner@example.com");
+    const createBatch = await call(zoneA.slug, "/api/tenant/contribution-batches", {
+      method: "POST",
+      body: { chapterId: zoneA.chapterId, sourceType: "envelope" },
+    });
+    const { batch } = (await createBatch.json()) as { batch: { id: string } };
+
+    const patch = await call(zoneA.slug, `/api/tenant/contribution-batches/${batch.id}`, {
+      method: "PATCH",
+      body: { notes: "morning service" },
+    });
+    expect(patch.status).toBe(200);
+    const patched = (await patch.json()) as { batch: { notes: string | null; status: string } };
+    expect(patched.batch.notes).toBe("morning service");
+    expect(patched.batch.status).toBe("draft");
+
+    await call(zoneA.slug, `/api/tenant/contribution-batches/${batch.id}/submit`, {
+      method: "POST",
+    });
+    const patchSubmitted = await call(
+      zoneA.slug,
+      `/api/tenant/contribution-batches/${batch.id}`,
+      { method: "PATCH", body: { notes: "too late" } },
+    );
+    expect(patchSubmitted.status).toBe(409);
+    const body = (await patchSubmitted.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("not_draft");
+  });
+
+  it("GET /contribution-batches lists scoped batches and refuses cross-zone reads", async () => {
+    asUser(ownerA, "owner@example.com");
+    const createBatch = await call(zoneA.slug, "/api/tenant/contribution-batches", {
+      method: "POST",
+      body: { chapterId: zoneA.chapterId, sourceType: "manual" },
+    });
+    const { batch } = (await createBatch.json()) as { batch: { id: string } };
+
+    const list = await call(zoneA.slug, "/api/tenant/contribution-batches");
+    expect(list.status).toBe(200);
+    const listBody = (await list.json()) as { items: Array<{ id: string }>; total: number };
+    expect(listBody.items.some((r) => r.id === batch.id)).toBe(true);
+
+    const get = await call(zoneA.slug, `/api/tenant/contribution-batches/${batch.id}`);
+    expect(get.status).toBe(200);
+
+    // Cross-zone GET via zoneB slug: ownerA has no binding in zoneB.
+    const cross = await call(zoneB.slug, `/api/tenant/contribution-batches/${batch.id}`);
+    expect(cross.status).toBe(403);
+  });
+
+  it("voiding a draft batch succeeds; voiding twice is rejected", async () => {
+    asUser(ownerA, "owner@example.com");
+    const createBatch = await call(zoneA.slug, "/api/tenant/contribution-batches", {
+      method: "POST",
+      body: { chapterId: zoneA.chapterId, sourceType: "manual" },
+    });
+    const { batch } = (await createBatch.json()) as { batch: { id: string } };
+    const voided = await call(zoneA.slug, `/api/tenant/contribution-batches/${batch.id}/void`, {
+      method: "POST",
+      body: { voidReason: "abandon" },
+    });
+    expect(voided.status).toBe(200);
+    const again = await call(zoneA.slug, `/api/tenant/contribution-batches/${batch.id}/void`, {
+      method: "POST",
+      body: { voidReason: "again" },
+    });
+    expect(again.status).toBe(409);
+    const body = (await again.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("invalid_transition");
+  });
+
+  it("chapter pastor (read-only) can GET a contribution but cannot DELETE it", async () => {
+    asUser(ownerA, "owner@example.com");
+    const create = await call(zoneA.slug, "/api/tenant/contributions", {
+      method: "POST",
+      body: {
+        chapterId: zoneA.chapterId,
+        sourceType: "manual",
+        contributionDate: seededDate,
+        lines: [{ givingTypeId: zoneA.givingTypeId, amount: "1.0000" }],
+      },
+    });
+    const { contribution } = (await create.json()) as { contribution: { id: string } };
+
+    asUser(pastorA, "pastor@example.com");
+    const get = await call(zoneA.slug, `/api/tenant/contributions/${contribution.id}`);
+    expect(get.status).toBe(200);
+    const del = await call(zoneA.slug, `/api/tenant/contributions/${contribution.id}`, {
+      method: "DELETE",
+    });
+    expect(del.status).toBe(403);
   });
 });
