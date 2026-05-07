@@ -6,6 +6,121 @@ follows phased releases per [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## [Unreleased]
 
+## [0.3.0] — Phase 3: Members
+
+Adds the people layer: members, addresses, the three zone-scoped lookup
+tables (titles, marital statuses, member types), and the manual
+member-merge flow. Per-zone seed data is created at signup. Bulk import,
+bulk export, and auto-detected duplicates land in Phase 6 alongside the
+flagship import pipeline.
+
+### Added
+
+- **Schema** — 6 new tables under `packages/db/src/schema/`:
+  - `members` (zone-scoped, soft-deleteable, generated `full_name` from
+    immutable string ops, gender CHECK, denormalized `region_id`).
+  - `member_addresses` (one-to-many, `is_primary` + `date_to` lifecycle,
+    partial unique index enforcing a single primary-active address per
+    member).
+  - `titles`, `marital_statuses`, `member_types` (per-zone lookups with
+    case-insensitive unique on name).
+  - `member_merge_proposals` (status: pending / approved / rejected /
+    applied; partial unique on open pairs; primary ≠ duplicate CHECK).
+- **Tenant API** under `tenantRouter`, mounted from
+  `routes/tenant-members.ts`:
+  - `GET/POST /api/tenant/members`, `GET/PATCH/DELETE /api/tenant/members/:id`
+    (DELETE soft-deletes only; AGENTS forbids hard-delete of members).
+  - `GET/POST /api/tenant/members/:id/addresses`,
+    `PATCH/DELETE /api/tenant/members/:memberId/addresses/:addressId`
+    (DELETE archives via `date_to`).
+  - `GET/POST /api/tenant/lookups/titles`,
+    `PATCH /api/tenant/lookups/titles/:id`.
+  - `GET/POST /api/tenant/lookups/marital-statuses`,
+    `PATCH /api/tenant/lookups/marital-statuses/:id`.
+  - `GET/POST /api/tenant/lookups/member-types`,
+    `PATCH /api/tenant/lookups/member-types/:id`.
+  - `GET/POST /api/tenant/members/merge/proposals`,
+    `POST /api/tenant/members/merge/apply`.
+- **Member reference codes** — `services/member-codes.ts`. Default
+  `M0000001`; per-zone branding override-aware (`branding.memberCode`).
+- **Per-zone lookup seeds** — `services/lookup-seed.ts` runs inside the
+  signup transaction. Seeds 11 titles, 5 marital statuses, 5 member types.
+- **Merge apply** — `services/members.ts` rewrites `member_addresses`
+  references, collapses any duplicate primary addresses on the survivor,
+  soft-deletes the absorbed member, marks the proposal applied, and
+  audits the operation. Future phases (contributions, imports, targets)
+  must extend this function as those tables land.
+- **Shared zod schemas** — `memberCreateSchema`, `memberUpdateSchema`,
+  `memberListQuerySchema`, `memberAddressCreateSchema`,
+  `memberAddressUpdateSchema`, `lookupCreateSchema`, `lookupUpdateSchema`,
+  `titleCreateSchema`, `titleUpdateSchema`, `memberMergeProposeSchema`,
+  `memberMergeApplySchema`.
+- **Web pages** (SvelteKit 2):
+  - `/members` — list + search + chapter filter + inline create.
+  - `/members/[id]` — full edit form + addresses panel + soft-delete.
+  - `/members/lookups` — add/disable titles, marital statuses, member types.
+  - `/members/merge` — manual propose-and-apply queue.
+  - `api.delete()` helper added to `packages/web/src/lib/api.ts`.
+
+### Changed
+
+- `signupZone` now also calls `seedZoneLookups` so every new zone arrives
+  with the lookup defaults already populated.
+
+### Decisions
+
+- **Dedup**: schema + manual apply land in Phase 3; auto-detection job
+  and proposal queue UI deferred to Phase 6 alongside the import pipeline.
+- **Reference-code default**: `M` prefix, 7-digit pad. Branding-override
+  takes the same shape as chapters (`branding.memberCode.prefix/pad`).
+  Generation takes a transaction-scoped per-zone advisory lock before
+  counting, so concurrent member creates do not collide on reference code.
+- **`full_name`**: stored generated column built from `coalesce(...) || ' '
+  || ...` + `regexp_replace(..., '\s+', ' ', 'g')` rather than
+  `concat_ws`. Postgres flags `concat_ws` as STABLE, which is rejected by
+  `GENERATED ALWAYS AS ... STORED`.
+- **Addresses**: always soft-archived via `date_to`; never hard-deleted.
+  At most one primary-active address per member, enforced both by service
+  helper (`clearOtherPrimaryAddresses`) and a partial unique index.
+
+### Documentation
+
+- `docs/ROADMAP.md` Phase 3 exit checklist — model + manual merge ticked;
+  bulk import row-throughput and dup heuristics carry into Phase 6.
+
+### Tests
+
+- `@stewardledger/api`: 27 → 52 passing.
+  - `routes/tenant-members.test.ts` — 25 cross-tenant fuzz cases driving
+    the real Hono stack via `app.fetch`. Coverage:
+    - listing isolation (members)
+    - cross-zone fetch by id (404)
+    - chapter-scoped role isolation for list, fetch, update, and create
+    - id-smuggling on create (foreign chapter / title → 404)
+    - cross-zone update + delete attempts (404)
+    - reference-code generator format + concurrent-create uniqueness
+    - address tenancy (foreign member → 404, soft-deleted parent → 404)
+    - primary-address invariant under repeated isPrimary inserts
+    - lookup tenancy (titles list isolation, foreign-zone PATCH → 404 for
+      marital statuses + member types, duplicate lookup names → 409)
+    - per-zone lookup seed parity (same names, distinct ids)
+    - cross-zone duplicate-id in merge propose (404)
+    - duplicate open merge proposals → 409
+    - concurrent merge apply serializes to one success + one conflict
+    - paginated merge proposal listing
+    - end-to-end propose → apply: address rewrite, primary-address collision
+      resolution, reassignment audit, soft-delete, status flip
+    - cross-zone proposal apply (404)
+    - DELETE /members/:id soft-deletes (no row removal)
+
+### Open / deferred (carried into later phases)
+
+- Bulk member import + export (Phase 6 with the import pipeline).
+- Auto duplicate-detection heuristics (Phase 6).
+- Member dashboard widgets (counts by chapter / by status / new joiners) —
+  the list page covers v1; richer dashboards land with the contributions
+  views in Phase 5.
+
 ## [0.2.0] — Phase 2: Onboarding & tenancy
 
 Implements the public sign-up flow, the invitation lifecycle, the first

@@ -14,9 +14,10 @@ build/
 # Turbo
 .turbo/
 
-# IDE
+# IDE / local agent state
 .vscode/
 .idea/
+.pi/
 *.swp
 *.swo
 

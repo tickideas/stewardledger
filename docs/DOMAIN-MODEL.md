@@ -196,7 +196,12 @@ members
   middle_names text null
   last_name text null
   full_name text generated always as (
-    trim(both ' ' from concat_ws(' ', first_name, middle_names, last_name))
+    -- concat_ws is STABLE in Postgres so it cannot power a generated column;
+    -- this expression is the equivalent built from immutable string ops.
+    trim(both ' ' from regexp_replace(
+      coalesce(first_name, '') || ' ' || coalesce(middle_names, '') || ' ' || coalesce(last_name, ''),
+      '\s+', ' ', 'g'
+    ))
   ) stored
   gender text null                          -- "M" | "F" | "U"
   email citext null

@@ -112,10 +112,10 @@ Deliverables:
 
 Exit checklist:
 
-- [ ] Bulk import 5000 rows under 60 seconds.
-- [ ] Duplicate detection finds the same dups as a hand-curated test dataset.
-- [ ] Merge applies and audit log shows every reassignment.
-- [ ] No member can be hard-deleted.
+- [ ] Bulk import 5000 rows under 60 seconds (deferred to Phase 6 alongside the flagship import pipeline).
+- [ ] Duplicate detection finds the same dups as a hand-curated test dataset (deferred to Phase 6; the schema and apply-merge flow are in place).
+- [x] Merge applies and audit log shows every reassignment (manual proposals via `/api/tenant/members/merge/{proposals,apply}`, address-reassignment + soft-delete + audit verified by `tenant-members.test.ts`).
+- [x] No member can be hard-deleted (`DELETE /api/tenant/members/:id` soft-deletes via `deleted_at`; merge apply soft-deletes the absorbed row; route layer never issues a SQL `DELETE` against `members`).
 
 ---
 

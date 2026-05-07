@@ -10,4 +10,6 @@ export * from "./zones";
 export * from "./chapters";
 export * from "./roles";
 export * from "./invitations";
+export * from "./lookups";
+export * from "./members";
 export * from "./audit";

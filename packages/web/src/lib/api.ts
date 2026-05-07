@@ -45,4 +45,6 @@ export const api = {
     request<T>("POST", path, body, fetchImpl),
   patch: <T>(path: string, body: unknown, fetchImpl?: typeof fetch) =>
     request<T>("PATCH", path, body, fetchImpl),
+  delete: <T>(path: string, fetchImpl?: typeof fetch) =>
+    request<T>("DELETE", path, undefined, fetchImpl),
 };
