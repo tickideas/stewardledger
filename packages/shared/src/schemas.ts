@@ -347,3 +347,147 @@ export type ServiceEventCreateInput = z.infer<typeof serviceEventCreateSchema>;
 
 export const serviceEventUpdateSchema = serviceEventCreateSchema.partial();
 export type ServiceEventUpdateInput = z.infer<typeof serviceEventUpdateSchema>;
+
+// ─── Contributions (Phase 5) ─────────────────────────────────────────
+
+/**
+ * Decimal money amount on the wire as a string with up to 4dp.
+ * Negative values are permitted: positive = inflow / gift, negative =
+ * reversal. The service layer is responsible for keeping
+ * abs(reversal) === abs(original).
+ */
+const moneyAmountSchema = z
+  .string()
+  .regex(/^-?\d+(\.\d{1,4})?$/, "amount must be a decimal with up to 4 dp");
+
+export const SOURCE_TYPES = [
+  "envelope",
+  "online",
+  "bank_import",
+  "oblation",
+  "manual",
+] as const;
+
+export const sourceTypeSchema = z.enum(SOURCE_TYPES);
+
+const contributionLineCreateSchema = z.object({
+  givingTypeId: uuidSchema,
+  accountId: uuidSchema.nullish(),
+  amount: moneyAmountSchema,
+  note: z.string().max(2000).nullish(),
+});
+export type ContributionLineCreateInput = z.infer<typeof contributionLineCreateSchema>;
+
+const contributionMemberCreateSchema = z.object({
+  memberId: uuidSchema,
+  allocationPercent: z
+    .union([z.number(), z.string().regex(/^\d+(\.\d{1,2})?$/)])
+    .transform((v) => (typeof v === "number" ? v.toFixed(2) : v))
+    .nullish(),
+});
+export type ContributionMemberCreateInput = z.infer<typeof contributionMemberCreateSchema>;
+
+/**
+ * Create a draft contribution. `currencyCode` defaults to the zone's
+ * `default_currency_code` when omitted. `givingPeriodId` is auto-derived
+ * from `contributionDate` when omitted. `totalAmount`, when supplied, must
+ * equal the sum of `lines[].amount`; the service computes it otherwise.
+ */
+export const contributionCreateSchema = z.object({
+  chapterId: uuidSchema,
+  memberId: uuidSchema.nullish(),
+  batchId: uuidSchema.nullish(),
+  sourceType: sourceTypeSchema,
+  paymentMethodId: uuidSchema.nullish(),
+  serviceEventId: uuidSchema.nullish(),
+  givingPeriodId: uuidSchema.nullish(),
+  contributionDate: z.string().date(),
+  currencyCode: currencyCodeSchema.optional(),
+  totalAmount: moneyAmountSchema.optional(),
+  externalTransactionId: z.string().max(120).nullish(),
+  description: z.string().max(2000).nullish(),
+  lines: z.array(contributionLineCreateSchema).min(1, "at least one line is required"),
+  members: z.array(contributionMemberCreateSchema).optional(),
+});
+export type ContributionCreateInput = z.infer<typeof contributionCreateSchema>;
+
+/**
+ * Patch a draft contribution. `lines` and `members`, when present, REPLACE
+ * the existing rows atomically (the service issues delete + insert in a tx).
+ */
+export const contributionUpdateSchema = z.object({
+  memberId: uuidSchema.nullish(),
+  batchId: uuidSchema.nullish(),
+  paymentMethodId: uuidSchema.nullish(),
+  serviceEventId: uuidSchema.nullish(),
+  givingPeriodId: uuidSchema.nullish(),
+  contributionDate: z.string().date().optional(),
+  currencyCode: currencyCodeSchema.optional(),
+  totalAmount: moneyAmountSchema.optional(),
+  externalTransactionId: z.string().max(120).nullish(),
+  description: z.string().max(2000).nullish(),
+  lines: z.array(contributionLineCreateSchema).min(1).optional(),
+  members: z.array(contributionMemberCreateSchema).optional(),
+});
+export type ContributionUpdateInput = z.infer<typeof contributionUpdateSchema>;
+
+export const contributionListQuerySchema = z.object({
+  chapterId: uuidSchema.optional(),
+  memberId: uuidSchema.optional(),
+  batchId: uuidSchema.optional(),
+  status: z.enum(["draft", "posted", "voided", "reversed"]).optional(),
+  dateFrom: z.string().date().optional(),
+  dateTo: z.string().date().optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type ContributionListQuery = z.infer<typeof contributionListQuerySchema>;
+
+export const contributionVoidSchema = z.object({
+  voidReason: z.string().min(1).max(2000),
+});
+export type ContributionVoidInput = z.infer<typeof contributionVoidSchema>;
+
+export const contributionReverseSchema = z.object({
+  reason: z.string().min(1).max(2000),
+  contributionDate: z.string().date().optional(),
+});
+export type ContributionReverseInput = z.infer<typeof contributionReverseSchema>;
+
+// ─── Contribution batches ────────────────────────────────────────────
+
+export const contributionBatchCreateSchema = z.object({
+  chapterId: uuidSchema,
+  serviceEventId: uuidSchema.nullish(),
+  paymentMethodId: uuidSchema.nullish(),
+  sourceType: sourceTypeSchema,
+  referenceCode: z.string().max(80).nullish(),
+  cashTotal: moneyAmountSchema.nullish(),
+  chequeTotal: moneyAmountSchema.nullish(),
+  currencyCode: currencyCodeSchema.optional(),
+  notes: z.string().max(4000).nullish(),
+});
+export type ContributionBatchCreateInput = z.infer<typeof contributionBatchCreateSchema>;
+
+export const contributionBatchUpdateSchema = z.object({
+  serviceEventId: uuidSchema.nullish(),
+  paymentMethodId: uuidSchema.nullish(),
+  referenceCode: z.string().max(80).nullish(),
+  cashTotal: moneyAmountSchema.nullish(),
+  chequeTotal: moneyAmountSchema.nullish(),
+  notes: z.string().max(4000).nullish(),
+});
+export type ContributionBatchUpdateInput = z.infer<typeof contributionBatchUpdateSchema>;
+
+export const contributionBatchListQuerySchema = z.object({
+  chapterId: uuidSchema.optional(),
+  status: z.enum(["draft", "submitted", "approved", "posted", "voided"]).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type ContributionBatchListQuery = z.infer<typeof contributionBatchListQuerySchema>;
+
+export const contributionBatchVoidSchema = z.object({
+  voidReason: z.string().min(1).max(2000),
+});
+export type ContributionBatchVoidInput = z.infer<typeof contributionBatchVoidSchema>;
