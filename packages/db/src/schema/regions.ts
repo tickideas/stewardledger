@@ -3,6 +3,7 @@
 // A zone selects a region during signup or submits an unverified region name.
 // Platform admins (region_curator) maintain this table.
 
+import { sql } from "drizzle-orm";
 import { boolean, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { user } from "./auth";
 
@@ -21,7 +22,7 @@ export const regions = pgTable(
     createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
   },
   (table) => [
-    uniqueIndex("regions_name_idx").on(table.name),
+    uniqueIndex("regions_name_lower_idx").on(sql`lower(${table.name})`),
     uniqueIndex("regions_short_code_idx").on(table.shortCode),
   ],
 );

@@ -2,7 +2,17 @@
 // The zone is the SaaS tenant. Every domain table elsewhere references zones.id
 // via a `zone_id NOT NULL` column. See docs/DOMAIN-MODEL.md §2.3.
 
-import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import {
+  check,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
 import { regions } from "./regions";
 import { user } from "./auth";
 
@@ -37,8 +47,19 @@ export const zones = pgTable(
   },
   (table) => [
     uniqueIndex("zones_slug_idx").on(table.slug),
+    uniqueIndex("zones_name_lower_idx").on(sql`lower(${table.name})`),
     index("zones_region_id_idx").on(table.regionId),
     index("zones_status_idx").on(table.status),
+    /** Inbox: zones still on a free-text region. */
+    index("zones_unverified_region_idx")
+      .on(table.createdAt)
+      .where(sql`region_id is null and region_name_unverified is not null`),
+    /** Exactly one of region_id or region_name_unverified must be set. */
+    check(
+      "zones_region_xor_unverified",
+      sql`(region_id is not null and region_name_unverified is null)
+          or (region_id is null and region_name_unverified is not null)`,
+    ),
   ],
 );
 

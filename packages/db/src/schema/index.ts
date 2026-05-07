@@ -9,4 +9,5 @@ export * from "./regions";
 export * from "./zones";
 export * from "./chapters";
 export * from "./roles";
+export * from "./invitations";
 export * from "./audit";
