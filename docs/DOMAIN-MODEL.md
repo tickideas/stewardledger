@@ -432,7 +432,16 @@ contribution_batches
   cheque_total numeric(19,4) null
   currency_code text not null
   notes text null
-  created_at, created_by_user_id, updated_at, updated_by_user_id, posted_at, posted_by_user_id
+  created_at, created_by_user_id, updated_at, updated_by_user_id
+  submitted_at timestamptz null
+  submitted_by_user_id uuid null
+  approved_at timestamptz null
+  approved_by_user_id uuid null
+  posted_at timestamptz null
+  posted_by_user_id uuid null
+  voided_at timestamptz null
+  voided_by_user_id uuid null
+  void_reason text null
 
 contributions
   id uuid pk
@@ -475,18 +484,20 @@ contribution_lines
 
 contribution_members                       -- multi-member contribution (oblation-style)
   id uuid pk
-  contribution_id uuid not null references contributions(id)
+  zone_id uuid not null
+  contribution_id uuid not null references contributions(id) on delete cascade
   member_id uuid not null references members(id)
-  allocation_percent numeric(5,2) null
+  allocation_percent numeric(5,2) null check (allocation_percent is null or (allocation_percent between 0 and 100))
   created_at
 ```
 
 ### Posted-immutability
 
 - `contributions` and `contribution_lines` rows in `posted` status cannot be updated or deleted.
-- A database trigger enforces this; it can only allow:
-  - status transitions to `voided` or `reversed`
-  - cosmetic fields (e.g. `description`, `notes`) appended via an audit-logged update path
+- Database triggers enforce this (defined in `packages/db/src/bootstrap-triggers.ts`, applied by `pnpm --filter @stewardledger/db db:bootstrap`):
+  - `contributions_posted_guard` permits only the void/reverse + bookkeeping columns to change once `status = 'posted'`; any other column change raises a `check_violation`.
+  - `contributions_no_delete_when_posted` blocks deletes of `posted` rows.
+  - `contribution_lines_posted_guard` blocks any insert / update / delete on lines once the parent contribution is `posted`, and refuses lines whose `currency_code` doesn't match their parent.
 - Corrections are applied as **new** contributions with `reversal_of_contribution_id` set.
 
 ### Currency rule

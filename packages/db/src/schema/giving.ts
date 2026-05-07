@@ -231,6 +231,7 @@ export const serviceEvents = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    unique("service_events_zone_id_unique").on(table.zoneId, table.id),
     index("service_events_zone_date_idx").on(table.zoneId, table.serviceDate),
     index("service_events_chapter_date_idx").on(table.chapterId, table.serviceDate),
     index("service_events_type_idx").on(table.serviceTypeId),
