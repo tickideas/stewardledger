@@ -90,7 +90,15 @@ pnpm db:push      # Push schema directly to dev DB
 
 ## Status
 
-**Phase 1 — foundations.** Auth, tenancy resolution, regions/zones/chapters/roles schema, audit log, health endpoints, and the empty SvelteKit shell. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full plan.
+**Phase 5 — contributions.** Phases 1–4 are closed (foundations,
+tenancy/onboarding, members, giving setup & periods). Phase 5 ships the
+draft → posted → voided/reversed state machine end-to-end: services,
+tenant API, posted-immutability triggers, full role bundles, and the
+treasurer SvelteKit UI for the Sunday close (batch list, new-batch form,
+batch detail with inline add-row, contribution detail, and a member
+statement preview). Bulk import / dup-detection (Phase 6) and full
+reports (Phase 7) come next. See [`docs/ROADMAP.md`](docs/ROADMAP.md)
+and [`CHANGELOG.md`](CHANGELOG.md) for the full plan.
 
 ## License
 

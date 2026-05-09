@@ -18,11 +18,21 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Per-call options. Pages running long-lived effects (typeahead, list
+ * filters, member-statement reloads) should pass `signal` so an in-flight
+ * request can be aborted on unmount or when a newer request supersedes it.
+ */
+export interface RequestOptions {
+  signal?: AbortSignal;
+  fetchImpl?: typeof fetch;
+}
+
 async function request<T>(
   method: string,
   path: string,
   body?: unknown,
-  fetchImpl: typeof fetch = fetch,
+  opts: RequestOptions = {},
 ): Promise<T> {
   const headers = new Headers(body ? { "content-type": "application/json" } : undefined);
   const zoneSlug = currentZoneSlug();
@@ -30,11 +40,13 @@ async function request<T>(
     headers.set("x-stewardledger-zone-slug", zoneSlug);
   }
 
+  const fetchImpl = opts.fetchImpl ?? fetch;
   const res = await fetchImpl(`${PUBLIC_API_URL}${path}`, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
     credentials: "include",
+    signal: opts.signal,
   });
   const text = await res.text();
   const json = text ? (JSON.parse(text) as unknown) : null;
@@ -55,12 +67,29 @@ function currentZoneSlug(): string | null {
   return localStorage.getItem("stewardledger.activeZoneSlug");
 }
 
+/**
+ * `true` when the rejection came from `signal.abort()` — callers usually
+ * want to ignore that and not surface an error to the user.
+ */
+export function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
+}
+
+// Backwards-compatible signatures: previously `api.get(path, fetchImpl?)`.
+// New shape accepts either an `AbortSignal` or a `RequestOptions` bag, so
+// existing callers keep working while new callers can opt into aborts.
+function asOpts(arg: AbortSignal | RequestOptions | typeof fetch | undefined): RequestOptions {
+  if (!arg) return {};
+  if (typeof arg === "function") return { fetchImpl: arg as typeof fetch };
+  if (arg instanceof AbortSignal) return { signal: arg };
+  return arg;
+}
+
+type Arg = AbortSignal | RequestOptions | typeof fetch | undefined;
+
 export const api = {
-  get: <T>(path: string, fetchImpl?: typeof fetch) => request<T>("GET", path, undefined, fetchImpl),
-  post: <T>(path: string, body: unknown, fetchImpl?: typeof fetch) =>
-    request<T>("POST", path, body, fetchImpl),
-  patch: <T>(path: string, body: unknown, fetchImpl?: typeof fetch) =>
-    request<T>("PATCH", path, body, fetchImpl),
-  delete: <T>(path: string, fetchImpl?: typeof fetch) =>
-    request<T>("DELETE", path, undefined, fetchImpl),
+  get: <T>(path: string, arg?: Arg) => request<T>("GET", path, undefined, asOpts(arg)),
+  post: <T>(path: string, body: unknown, arg?: Arg) => request<T>("POST", path, body, asOpts(arg)),
+  patch: <T>(path: string, body: unknown, arg?: Arg) => request<T>("PATCH", path, body, asOpts(arg)),
+  delete: <T>(path: string, arg?: Arg) => request<T>("DELETE", path, undefined, asOpts(arg)),
 };
