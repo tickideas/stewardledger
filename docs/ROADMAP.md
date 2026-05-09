@@ -167,15 +167,15 @@ Implementation notes:
 - DB layer (`contribution_batches`, `contributions`, `contribution_lines`, `contribution_members`) is in place with composite `(zone_id, id)` cross-tenant FKs and posted-immutability triggers (`packages/db/src/schema/contributions.ts`, `packages/db/src/bootstrap-triggers.ts`). Triggers are applied via `pnpm --filter @stewardledger/db db:bootstrap`, which `test:db:push` now runs automatically.
 - Service + tenant API layer for contributions and batches is in place (`packages/api/src/services/contributions.ts`, `packages/api/src/services/contribution-batches.ts`, `packages/api/src/routes/tenant-contributions.ts`). Endpoints: `GET/POST/PATCH/DELETE /api/tenant/contributions(/:id)`, `POST :id/{post,void,reverse}`, `GET/POST/PATCH /api/tenant/contribution-batches(/:id)`, `POST :id/{submit,approve,post,void}`.
 - Reversals follow the negative-amount sign convention (see `docs/DOMAIN-MODEL.md` §6 "Sign convention").
-- Treasurer SvelteKit UI and member statement preview are not yet built.
+- Treasurer SvelteKit UI is in place under `/contributions` (`packages/web/src/routes/contributions/`): batches list with chapter + status filters, new-batch form (chapter / service event / payment method / source), batch detail with inline add-row form (member typeahead, multi-line giving-type splits, cash + cheque totals) and submit / approve / post / void actions, contribution detail with post / void / reverse / delete-draft, and a member statement preview at `/members/[id]/statement` (per-currency totals; reuses `GET /api/tenant/contributions?memberId=…&dateFrom=…&dateTo=…`).
 
 Exit checklist:
 
-- [ ] A treasurer can record a Sunday batch in under 5 minutes for a 30-member service. *(API ready; SvelteKit UI pending.)*
+- [ ] A treasurer can record a Sunday batch in under 5 minutes for a 30-member service. *(SvelteKit UI in `packages/web/src/routes/contributions/batches/[id]/+page.svelte` is built — server-side member typeahead with stale-result protection, multi-line splits, persistent date/source, Tab + Enter row submission, sign-convention guards. Member-resolution rules are unit-tested in `packages/web/src/lib/contributions/member-selection.test.ts` (9 cases). Still pending before this can be ticked: a Playwright happy-path spec covering new-batch → add 30 rows → submit → approve → post, plus a real 30-member timed run on staging.)*
 - [x] Posted contributions are immutable; the immutability is enforced at the DB level (triggers `contributions_posted_guard`, `contributions_no_delete_when_posted`, `contribution_lines_posted_guard`; verified by `contributions.test.ts`).
 - [x] Service-layer state machine: draft → posted, posted → voided / reversed; reversal emits a corrective contribution with negated amounts (`contributions-service.test.ts`, `tenant-contributions.test.ts`).
-- [ ] Member running totals match per-member sum across all sources. *(Reports land in Phase 7.)*
-- [x] Mixed-currency batches are forbidden — a batch is single-currency; the service layer rejects mismatched attaches and re-checks at batch-post time. UI gate still pending.
+- [ ] Member running totals match per-member sum across all sources. *(Reports land in Phase 7. The Phase 5 statement preview at `/members/[id]/statement` already groups posted contributions by currency over a date window.)*
+- [x] Mixed-currency batches are forbidden — a batch is single-currency; the service layer rejects mismatched attaches and re-checks at batch-post time. The UI inherits the single-currency invariant by inserting every row at the batch's `currencyCode`.
 
 ---
 

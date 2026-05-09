@@ -8,6 +8,93 @@ follows phased releases per [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ### Added
 
+- **Phase 5 treasurer UI — round-2 hardening:**
+  - **`packages/web/src/lib/contributions/member-selection.ts`** — pure
+    resolution helper extracted from the batch detail's add-row flow.
+    Closes a hot-path data-quality bug: typing "John Smith", overtyping
+    to "John Smit Jr", and submitting within the 150ms debounce no
+    longer auto-attributes the row to John Smith. Results carry the
+    `resultsForQuery` tag they were produced for; the helper rejects
+    auto-pick when the tag has drifted from the trimmed query.
+    Multi-match errors now name the first three candidates so the
+    treasurer can disambiguate without re-opening the dropdown.
+  - **`member-selection.test.ts`** — 9 Vitest cases covering empty
+    query, explicit pick, stale results, no match, exactly-one
+    auto-pick, ambiguous-match (with first-three names + ellipsis),
+    and whitespace trimming. Web package gets vitest wired up
+    (`packages/web/vitest.config.ts`, `pnpm --filter @stewardledger/web test`).
+  - **Component split** — the 751-line batch-detail page splits into
+    `MemberTypeahead.svelte` (debounced server-side `?q=` lookups,
+    AbortController cleanup), `BatchTotalsCard.svelte` (cash + cheque
+    editor with safe Decimal parse), `BatchLifecycleCard.svelte` (submit
+    / approve / post / void), and `BatchRowsTable.svelte` (read-only
+    rows + per-row delete affordance). The orchestrator parent drops
+    to ~565 lines.
+  - **AbortController plumbing** — `packages/web/src/lib/api.ts` now
+    accepts `RequestOptions { signal, fetchImpl }` (back-compatible: the
+    old `(path, fetchImpl)` shape still works). Every page-level
+    `$effect` returns a cleanup that aborts in-flight loads, and the
+    typeahead aborts the previous request whenever the user types
+    again. New `isAbortError(err)` exported so callers can ignore
+    user-cancellations.
+  - **Members list endpoint returns `total`** —
+    `packages/api/src/routes/tenant-members.ts` mirrors
+    `listContributions` with a `count(*)::int` query in the same round
+    trip, so the typeahead's "Showing recent members. Type to search
+    the full directory." hint actually fires. Previously
+    `mRes.total > mRes.items.length` was always `false` (undefined > N).
+  - **Statement page debounce** — the date pickers were issuing one
+    request per arrow click during year-by-year nav. 250ms debounce
+    +  AbortController cleanup turns that into a single round trip per
+    deliberate change.
+  - **Contribution-detail member fetch** — inlined into the main load
+    so the cause-then-effect ordering is obvious; same race token
+    guards both queries.
+  - **Contributions list chapter-load errors** — surfaces an amber
+    notice instead of swallowing them silently.
+  - **`packages/web/src/lib/contributions/types.ts`** — canonical wire
+    shapes for `Contribution`, `ContributionLine`, `ContributionBatch`,
+    `MemberSummary`. Phase 6 will replace these with a thin
+    `@stewardledger/shared/wire` module derived from the same
+    Drizzle types as the API responses; for now the per-page aliases
+    stay until that lands.
+  - **Soft sanity prompt removed.** The `LARGE_AMOUNT_WARN = 50_000`
+    threshold from round 1 was currency-blind (USD 50k ≠ NGN 50k
+    ≠ JPY 50k) and would have either spammed legitimate USD gifts or
+    silently miss NGN typos. Per-zone configurable thresholds belong
+    with Phase 8 partnership targets; v1 doesn't pretend to guess.
+  - **Tab + Enter on the amount field submits the row.** Saves the
+    treasurer one Tab + click on every entry on the Sunday hot path.
+
+- **Phase 5 treasurer UI** (`packages/web/src/routes/contributions/`):
+  - `/contributions` — batches list (default tab) and all-contributions tab,
+    filtered by chapter and status, with per-row status badges and a
+    `New batch` CTA. Header nav (`packages/web/src/routes/+layout.svelte`)
+    now exposes Members and Contributions.
+  - `/contributions/batches/new` — chapter / service event / payment
+    method / source / reference / notes form. Service events are scoped
+    to the chosen chapter via
+    `GET /api/tenant/giving/service-events?chapterId=…`.
+  - `/contributions/batches/[id]` — the Sunday-close hot path.
+    Inline member typeahead (search by name or reference code), default
+    line pre-filled with the first active giving type so a one-line row
+    is one Tab + Enter, multi-line splits via `+ Split across another
+    giving type`, persistent date + source between rows, and editable
+    cash / cheque totals on the batch itself. Submit / approve / post /
+    void buttons gate on `batch.status` and disable Submit until at
+    least one live row is captured. Posted batches and rows go
+    read-only client-side; the DB triggers remain the source of truth.
+  - `/contributions/[id]` — contribution detail with lines table,
+    per-status action set (post / delete-draft for drafts; void /
+    reverse for posted), batch back-link, and reversal lineage display
+    (`reversal_of_contribution_id`).
+  - `/members/[id]/statement` — Phase 5 statement preview. Driven
+    entirely off `GET /api/tenant/contributions?memberId=…&dateFrom=…&dateTo=…`,
+    so no new endpoint. Defaults to year-to-date, hides voided / reversed
+    by default but can show them so the running total ties out, totals
+    grouped by currency to honour the v1 "no silent FX" rule. Phase 7
+    will own the branded PDF / Excel export.
+
 - **Phase 5 contribution + batch services** —
   `packages/api/src/services/contributions.ts` and
   `packages/api/src/services/contribution-batches.ts`. Cover the full
