@@ -211,27 +211,31 @@ tenantMembersRouter.get(
       );
     }
 
-    const rows = await db
-      .select({
-        id: members.id,
-        referenceCode: members.referenceCode,
-        firstName: members.firstName,
-        middleNames: members.middleNames,
-        lastName: members.lastName,
-        fullName: members.fullName,
-        gender: members.gender,
-        email: members.email,
-        mobile: members.mobile,
-        chapterId: members.chapterId,
-        isActive: members.isActive,
-        createdAt: members.createdAt,
-      })
-      .from(members)
-      .where(and(...conditions))
-      .orderBy(asc(members.referenceCode))
-      .limit(q.limit)
-      .offset(q.offset);
-    return c.json({ items: rows, limit: q.limit, offset: q.offset });
+    const where = and(...conditions);
+    const [rows, [{ total }]] = await Promise.all([
+      db
+        .select({
+          id: members.id,
+          referenceCode: members.referenceCode,
+          firstName: members.firstName,
+          middleNames: members.middleNames,
+          lastName: members.lastName,
+          fullName: members.fullName,
+          gender: members.gender,
+          email: members.email,
+          mobile: members.mobile,
+          chapterId: members.chapterId,
+          isActive: members.isActive,
+          createdAt: members.createdAt,
+        })
+        .from(members)
+        .where(where)
+        .orderBy(asc(members.referenceCode))
+        .limit(q.limit)
+        .offset(q.offset),
+      db.select({ total: sql<number>`count(*)::int` }).from(members).where(where),
+    ]);
+    return c.json({ items: rows, total, limit: q.limit, offset: q.offset });
   },
 );
 
