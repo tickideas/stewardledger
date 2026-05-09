@@ -8,6 +8,8 @@
     <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
       <a href="/" class="text-xl font-semibold tracking-tight">StewardLedger</a>
       <nav class="text-sm text-slate-600 flex gap-4">
+        <a href="/members" class="hover:text-slate-900">Members</a>
+        <a href="/contributions" class="hover:text-slate-900">Contributions</a>
         <a href="/signup" class="hover:text-slate-900">Set up a zone</a>
         <a href="/login" class="hover:text-slate-900">Sign in</a>
       </nav>
