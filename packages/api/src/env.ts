@@ -6,7 +6,8 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const defaultEnvPath = resolve(__dirname, "../../../.env");
+const repoRoot = resolve(__dirname, "../../../");
+const defaultEnvPath = resolve(repoRoot, ".env");
 const envPath = process.env.ENV_FILE
   ? resolve(process.cwd(), process.env.ENV_FILE)
   : defaultEnvPath;
@@ -35,4 +36,12 @@ export const env = {
   PUBLIC_TENANT_DOMAIN: optional("PUBLIC_TENANT_DOMAIN", "localhost").toLowerCase(),
   USESEND_API_KEY: optional("USESEND_API_KEY", ""),
   USESEND_API_URL: optional("USESEND_API_URL", ""),
+  // Local filesystem root for the import-file object store. Replace with
+  // S3 in production via the storage adapter in services/storage.ts.
+  //
+  // Anchored to the repo root so `pnpm --filter @stewardledger/api dev`
+  // and `pnpm test` don't scatter `.stewardledger-storage/` folders
+  // wherever the per-package cwd happens to be. Absolute STORAGE_ROOT
+  // values pass through untouched.
+  STORAGE_ROOT: resolve(repoRoot, optional("STORAGE_ROOT", ".stewardledger-storage")),
 };
