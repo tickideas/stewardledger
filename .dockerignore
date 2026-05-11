@@ -1,0 +1,34 @@
+# Git and local editor state
+.git
+.gitignore
+.vscode
+.idea
+
+# Dependencies and package-manager caches
+node_modules
+**/node_modules
+.pnpm-store
+
+# Build and tool outputs
+.turbo
+**/.turbo
+.svelte-kit
+**/.svelte-kit
+**/dist
+**/build
+coverage
+
+# Local env, logs, and runtime storage
+.env
+.env.*
+!.env.example
+*.log
+npm-debug.log*
+pnpm-debug.log*
+.stewardledger-storage
+
+# Documentation and planning artifacts are not needed in image build contexts
+docs
+CHANGELOG.md
+README.md
+AGENTS.md

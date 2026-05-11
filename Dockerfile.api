@@ -35,6 +35,7 @@ COPY --from=builder /app/packages/api/dist packages/api/dist
 # Drizzle needs schema source + migration files at runtime so the
 # entrypoint can run `drizzle-kit migrate` against production.
 COPY packages/db/src packages/db/src
+COPY packages/db/drizzle packages/db/drizzle
 COPY packages/db/drizzle.config.ts packages/db/drizzle.config.ts
 COPY tsconfig.base.json ./
 

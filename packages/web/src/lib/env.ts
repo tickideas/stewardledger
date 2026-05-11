@@ -1,7 +1,6 @@
 // packages/web/src/lib/env.ts
-// SvelteKit-side environment. Vite exposes anything starting with `VITE_`.
-// Server-only secrets must NOT live here \u2014 add them to $env/static/private.
+// SvelteKit-side public runtime environment. Server-only secrets must NOT live here.
 
-export const PUBLIC_API_URL =
-  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ||
-  "http://localhost:3000";
+import { env } from "$env/dynamic/public";
+
+export const PUBLIC_API_URL = env.PUBLIC_API_URL || "http://localhost:3000";

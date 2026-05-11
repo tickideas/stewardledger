@@ -8,11 +8,12 @@
 
 1. **[`PRD.md`](PRD.md)** — what we are building, for whom, why, scope/non-scope of v1.
 2. **[`ARCHITECTURE.md`](ARCHITECTURE.md)** — stack, repo layout, multi-tenancy, deployment.
-3. **[`DOMAIN-MODEL.md`](DOMAIN-MODEL.md)** — full target schema (tables, columns, invariants).
-4. **[`DOMAIN-REFERENCE.md`](DOMAIN-REFERENCE.md)** — lessons distilled from the legacy Church Plus app, used as design reference only.
-5. **[`REPORTS.md`](REPORTS.md)** — full report inventory and rebuild specs.
-6. **[`ROADMAP.md`](ROADMAP.md)** — phased build plan with exit checklists.
-7. **[`BRAND.md`](BRAND.md)** — normative naming, casing, and wordmark rules.
+3. **[`DEPLOYMENT.md`](DEPLOYMENT.md)** — Dokploy deployment and operations guide.
+4. **[`DOMAIN-MODEL.md`](DOMAIN-MODEL.md)** — full target schema (tables, columns, invariants).
+5. **[`DOMAIN-REFERENCE.md`](DOMAIN-REFERENCE.md)** — lessons distilled from the legacy Church Plus app, used as design reference only.
+6. **[`REPORTS.md`](REPORTS.md)** — full report inventory and rebuild specs.
+7. **[`ROADMAP.md`](ROADMAP.md)** — phased build plan with exit checklists.
+8. **[`BRAND.md`](BRAND.md)** — normative naming, casing, and wordmark rules.
 
 ## Decisions locked in
 
