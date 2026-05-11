@@ -46,9 +46,12 @@ export const members = pgTable(
      * is only STABLE in Postgres and so cannot power a generated column.
      */
     fullName: text("full_name").generatedAlwaysAs(
+      // NOTE: \s must be double-escaped — drizzle's `sql` template tag uses cooked
+      // strings, so a single `\s` is consumed by JS and becomes a literal `s` in
+      // the emitted SQL. We need Postgres to see `\s+`.
       sql`trim(both ' ' from regexp_replace(
         coalesce(first_name, '') || ' ' || coalesce(middle_names, '') || ' ' || coalesce(last_name, ''),
-        '\s+', ' ', 'g'
+        '\\s+', ' ', 'g'
       ))`,
     ),
     /** "M" | "F" | "U" | null. */

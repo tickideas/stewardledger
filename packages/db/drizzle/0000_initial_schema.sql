@@ -247,7 +247,7 @@ CREATE TABLE "members" (
 	"last_name" text,
 	"full_name" text GENERATED ALWAYS AS (trim(both ' ' from regexp_replace(
         coalesce(first_name, '') || ' ' || coalesce(middle_names, '') || ' ' || coalesce(last_name, ''),
-        's+', ' ', 'g'
+        '\s+', ' ', 'g'
       ))) STORED,
 	"gender" text,
 	"email" text,

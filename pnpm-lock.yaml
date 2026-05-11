@@ -125,9 +125,6 @@ importers:
 
   packages/web:
     dependencies:
-      '@stewardledger/api':
-        specifier: workspace:*
-        version: link:../api
       '@stewardledger/shared':
         specifier: workspace:*
         version: link:../shared

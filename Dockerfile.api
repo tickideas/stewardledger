@@ -23,6 +23,8 @@ RUN pnpm --filter @stewardledger/api build
 
 # ─── Production image ──────────────────────────────
 FROM base AS runner
+# NOTE: node_modules intentionally includes devDeps so the same image can run
+# `drizzle-kit migrate` from the stewardledger-api-migrate one-shot service.
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml /app/.npmrc ./
 COPY --from=deps /app/packages/shared/package.json packages/shared/package.json
@@ -38,6 +40,11 @@ COPY packages/db/src packages/db/src
 COPY packages/db/drizzle packages/db/drizzle
 COPY packages/db/drizzle.config.ts packages/db/drizzle.config.ts
 COPY tsconfig.base.json ./
+
+# Pre-create the storage mount point so the named volume inherits `node`
+# ownership (Docker copies image-path ownership onto an empty named volume).
+RUN mkdir -p /data/storage && chown -R node:node /app /data
+USER node
 
 ENV NODE_ENV=production
 EXPOSE 3000

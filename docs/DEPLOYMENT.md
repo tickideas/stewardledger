@@ -23,15 +23,23 @@ Do not add `container_name`; let Dokploy/Compose namespace containers, networks,
 
 Set secrets and runtime configuration in Dokploy, not in the repository.
 
-Required secrets:
+All of the following are **required** — `docker-compose.prod.yml` refuses to start if any are missing:
 
 ```dotenv
 DATABASE_URL=postgresql://stewardledger:<replace-in-dokploy>@stewardledger-postgres:5432/stewardledger
 POSTGRES_PASSWORD=<replace-in-dokploy>
 AUTH_SECRET=<32-byte-random-string>
+PUBLIC_APP_URL=https://app.example.invalid
+PUBLIC_API_URL=https://api.example.invalid
+PUBLIC_APP_DOMAIN=app.example.invalid
+PUBLIC_TENANT_DOMAIN=example.invalid
 ```
 
 The password embedded in `DATABASE_URL` must match `POSTGRES_PASSWORD`; if you change `POSTGRES_USER` or `POSTGRES_DB`, update `DATABASE_URL` to match.
+
+`PUBLIC_APP_URL`, `PUBLIC_APP_DOMAIN`, and `PUBLIC_TENANT_DOMAIN` are used by the API for invitation links, trusted origins, and tenant host resolution. The web service sets `ORIGIN` from `PUBLIC_APP_URL` and trusts `x-forwarded-proto`/`x-forwarded-host` so SvelteKit adapter-node reconstructs the public HTTPS URL correctly behind Dokploy/Traefik.
+
+Replace the `*.example.invalid` placeholders with the actual app and API domains before deploying.
 
 Recommended non-secret runtime values:
 
@@ -39,15 +47,20 @@ Recommended non-secret runtime values:
 COMPOSE_PROJECT_NAME=stewardledger-prod
 POSTGRES_USER=stewardledger
 POSTGRES_DB=stewardledger
-PUBLIC_APP_URL=https://app.example.invalid
-PUBLIC_API_URL=https://api.example.invalid
-PUBLIC_APP_DOMAIN=app.example.invalid
-PUBLIC_TENANT_DOMAIN=example.invalid
 LOG_LEVEL=info
 NODE_ENV=production
 ```
 
-Replace `https://app.example.invalid` and `https://api.example.invalid` in Dokploy with the actual app and API domains for the environment. `PUBLIC_APP_URL`, `PUBLIC_APP_DOMAIN`, and `PUBLIC_TENANT_DOMAIN` are used by the API for invitation links, trusted origins, and tenant host resolution. The web service sets `ORIGIN` from `PUBLIC_APP_URL` so SvelteKit adapter-node can validate proxied requests behind Dokploy/Traefik.
+### Transactional email (useSend)
+
+The API logs magic-link and invitation emails to stdout when `USESEND_API_KEY` is empty — **no email is delivered**. For any non-experimental environment, set:
+
+```dotenv
+USESEND_API_KEY=<replace-in-dokploy>
+USESEND_API_URL=<useSend-endpoint>
+```
+
+Until these are set, invitation flows and magic-link sign-ins will silently fail for users.
 
 ## First deployment
 
@@ -91,9 +104,24 @@ The production Compose stack uses these persistent volumes:
 
 Do not delete these volumes during redeploys unless you intentionally want to remove the environment's data.
 
-## Backups
+## Backups and rollback
 
 Back up `pgdata` before deploying schema changes and on a regular production schedule. At minimum, use `pg_dump` against the `stewardledger-postgres` service and store the dump outside the Dokploy host.
+
+Example (run from the Dokploy host shell, with `<project>` matching `COMPOSE_PROJECT_NAME`):
+
+```bash
+docker compose -p <project> -f docker-compose.prod.yml \
+  exec stewardledger-postgres \
+  pg_dump -U stewardledger -d stewardledger -Fc -f /tmp/stewardledger.dump
+docker cp <project>-stewardledger-postgres-1:/tmp/stewardledger.dump ./stewardledger-$(date +%F).dump
+```
+
+Restoring is the only "rollback" path — Drizzle migrations are forward-only. To roll back a bad deploy:
+
+1. Stop the API and web services (leave Postgres running).
+2. `pg_restore --clean --if-exists -U stewardledger -d stewardledger` from the most recent pre-deploy dump.
+3. Redeploy the previous Git revision so application code matches the restored schema.
 
 Also back up `app_storage` if the environment stores uploaded import files or generated report artifacts locally.
 
@@ -105,7 +133,7 @@ The API service exposes these health endpoints:
 - `/health/ready` — readiness, including a database check.
 - `/health/db` — database latency check.
 
-The Compose healthcheck for `stewardledger-api` uses `/health/ready`. The `stewardledger-web` healthcheck requests `/` on its internal port.
+The Compose healthcheck for `stewardledger-api` uses `/health/ready`. The `stewardledger-web` healthcheck requests `/healthz` on its internal port — a lightweight liveness route that does no DB or auth work.
 
 ## Troubleshooting
 

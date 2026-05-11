@@ -15,7 +15,6 @@
     "clean": "rm -rf .svelte-kit build"
   },
   "dependencies": {
-    "@stewardledger/api": "workspace:*",
     "@stewardledger/shared": "workspace:*",
     "better-auth": "^1.6.9",
     "hono": "^4.7.7",
