@@ -28,6 +28,7 @@ import { tenantGivingMethodsRouter } from "./tenant-giving-methods";
 import { tenantGivingRouter } from "./tenant-giving";
 import { tenantImportsRouter } from "./tenant-imports";
 import { tenantMembersRouter } from "./tenant-members";
+import { tenantReportsRouter } from "./tenant-reports";
 
 export const tenantRouter = new Hono();
 
@@ -40,6 +41,7 @@ tenantRouter.route("/", tenantGivingMethodsRouter);
 tenantRouter.route("/", tenantGivingEventsRouter);
 tenantRouter.route("/", tenantContributionsRouter);
 tenantRouter.route("/", tenantImportsRouter);
+tenantRouter.route("/", tenantReportsRouter);
 
 /** Current user's authorization context for the resolved zone. */
 tenantRouter.get("/me", async (c) => {

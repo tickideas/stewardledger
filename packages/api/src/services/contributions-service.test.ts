@@ -201,34 +201,42 @@ describe("contributions service", () => {
   });
 
   afterAll(async () => {
+    // Wrap the disable / delete / re-enable in one transaction so the
+    // pool can't route the DELETE to a different connection where the
+    // trigger is still active. The advisory lock serialises against
+    // any parallel suite calling `applyContributionTriggers` in its
+    // own bootstrap. Mirrors the safe pattern in imports.test.ts.
     const guards = [
       ["contributions", "contributions_posted_guard"],
       ["contributions", "contributions_no_delete_when_posted"],
       ["contribution_lines", "contribution_lines_posted_guard"],
     ] as const;
-    for (const [t, n] of guards) {
-      await db.execute(sql.raw(`alter table ${t} disable trigger ${n}`));
-    }
-    try {
+    const TRIGGER_BOOTSTRAP_LOCK_TAG = "stewardledger.applyContributionTriggers";
+    await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtext(${TRIGGER_BOOTSTRAP_LOCK_TAG}))`,
+      );
+      for (const [t, n] of guards) {
+        await tx.execute(sql.raw(`alter table ${t} disable trigger ${n}`));
+      }
       for (const slug of cleanupSlugs) {
         const z = sql`(select id from zones where slug = ${slug})`;
-        await db.execute(sql`delete from contribution_lines where zone_id = ${z}`);
-        await db.execute(sql`delete from contribution_members where zone_id = ${z}`);
-        await db.execute(sql`delete from contributions where zone_id = ${z}`);
-        await db.execute(sql`delete from contribution_batches where zone_id = ${z}`);
-        await db.execute(sql`delete from service_events where zone_id = ${z}`);
-        await db.execute(sql`delete from members where zone_id = ${z}`);
-        await db.execute(sql`delete from chapters where zone_id = ${z}`);
-        await db.execute(sql`delete from zones where slug = ${slug}`);
+        await tx.execute(sql`delete from contribution_lines where zone_id = ${z}`);
+        await tx.execute(sql`delete from contribution_members where zone_id = ${z}`);
+        await tx.execute(sql`delete from contributions where zone_id = ${z}`);
+        await tx.execute(sql`delete from contribution_batches where zone_id = ${z}`);
+        await tx.execute(sql`delete from service_events where zone_id = ${z}`);
+        await tx.execute(sql`delete from members where zone_id = ${z}`);
+        await tx.execute(sql`delete from chapters where zone_id = ${z}`);
+        await tx.execute(sql`delete from zones where slug = ${slug}`);
       }
       for (const id of cleanupUserIds) {
-        await db.execute(sql`delete from "user" where id = ${id}`);
+        await tx.execute(sql`delete from "user" where id = ${id}`);
       }
-    } finally {
       for (const [t, n] of guards) {
-        await db.execute(sql.raw(`alter table ${t} enable trigger ${n}`));
+        await tx.execute(sql.raw(`alter table ${t} enable trigger ${n}`));
       }
-    }
+    });
   });
 
   // ─── createContribution ─────────────────────────────────────────────

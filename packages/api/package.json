@@ -24,6 +24,7 @@
     "@stewardledger/shared": "workspace:*",
     "better-auth": "^1.6.9",
     "drizzle-orm": "^0.45.2",
+    "exceljs": "^4.4.0",
     "hono": "^4.7.7",
     "papaparse": "^5.4.1",
     "pino": "^9.5.0",

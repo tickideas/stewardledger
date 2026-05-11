@@ -184,34 +184,38 @@ describe("contributions schema invariants", () => {
   });
 
   afterAll(async () => {
-    // Disable the immutability triggers for the duration of cleanup. If this
-    // suite is interrupted between disable and enable, the next run's
-    // `db:bootstrap` re-enables them via `installTrigger` in
-    // `bootstrap-triggers.ts` (it issues `enable trigger` after recreating).
+    // Wrap the disable / delete / re-enable in one transaction so the
+    // pool can't route the DELETE to a different connection where the
+    // trigger is still active. The advisory lock serialises against
+    // any parallel suite calling `applyContributionTriggers` in its
+    // own bootstrap. Mirrors the safe pattern in imports.test.ts.
     const guards = [
       ["contributions", "contributions_posted_guard"],
       ["contributions", "contributions_no_delete_when_posted"],
       ["contribution_lines", "contribution_lines_posted_guard"],
     ] as const;
-    for (const [table, name] of guards) {
-      await db.execute(sql.raw(`alter table ${table} disable trigger ${name}`));
-    }
-    try {
+    const TRIGGER_BOOTSTRAP_LOCK_TAG = "stewardledger.applyContributionTriggers";
+    await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtext(${TRIGGER_BOOTSTRAP_LOCK_TAG}))`,
+      );
+      for (const [table, name] of guards) {
+        await tx.execute(sql.raw(`alter table ${table} disable trigger ${name}`));
+      }
       for (const slug of cleanupSlugs) {
         const zoneIdSql = sql`(select id from zones where slug = ${slug})`;
-        await db.execute(sql`delete from contribution_lines where zone_id = ${zoneIdSql}`);
-        await db.execute(sql`delete from contribution_members where zone_id = ${zoneIdSql}`);
-        await db.execute(sql`delete from contributions where zone_id = ${zoneIdSql}`);
-        await db.execute(sql`delete from contribution_batches where zone_id = ${zoneIdSql}`);
-        await db.execute(sql`delete from members where zone_id = ${zoneIdSql}`);
-        await db.execute(sql`delete from chapters where zone_id = ${zoneIdSql}`);
-        await db.execute(sql`delete from zones where slug = ${slug}`);
+        await tx.execute(sql`delete from contribution_lines where zone_id = ${zoneIdSql}`);
+        await tx.execute(sql`delete from contribution_members where zone_id = ${zoneIdSql}`);
+        await tx.execute(sql`delete from contributions where zone_id = ${zoneIdSql}`);
+        await tx.execute(sql`delete from contribution_batches where zone_id = ${zoneIdSql}`);
+        await tx.execute(sql`delete from members where zone_id = ${zoneIdSql}`);
+        await tx.execute(sql`delete from chapters where zone_id = ${zoneIdSql}`);
+        await tx.execute(sql`delete from zones where slug = ${slug}`);
       }
-    } finally {
       for (const [table, name] of guards) {
-        await db.execute(sql.raw(`alter table ${table} enable trigger ${name}`));
+        await tx.execute(sql.raw(`alter table ${table} enable trigger ${name}`));
       }
-    }
+    });
   });
 
   // ─── Cross-tenant FK guards ─────────────────────────────────────────
