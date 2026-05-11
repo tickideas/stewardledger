@@ -1,0 +1,112 @@
+name: ${COMPOSE_PROJECT_NAME:-stewardledger-prod}
+
+x-api-build: &api-build
+  context: .
+  dockerfile: Dockerfile.api
+
+x-web-build: &web-build
+  context: .
+  dockerfile: Dockerfile.web
+
+# Minimum env needed by the migrate one-shot. Reused by `api-env` below.
+x-migrate-env: &migrate-env
+  DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  NODE_ENV: production
+
+x-api-env: &api-env
+  <<: *migrate-env
+  AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required}
+  PUBLIC_API_URL: ${PUBLIC_API_URL:?PUBLIC_API_URL is required}
+  PUBLIC_APP_URL: ${PUBLIC_APP_URL:?PUBLIC_APP_URL is required}
+  PUBLIC_APP_DOMAIN: ${PUBLIC_APP_DOMAIN:?PUBLIC_APP_DOMAIN is required}
+  PUBLIC_TENANT_DOMAIN: ${PUBLIC_TENANT_DOMAIN:?PUBLIC_TENANT_DOMAIN is required}
+  USESEND_API_KEY: ${USESEND_API_KEY:-}
+  USESEND_API_URL: ${USESEND_API_URL:-}
+  STORAGE_ROOT: /data/storage
+
+services:
+  stewardledger-postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-stewardledger}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-stewardledger}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  stewardledger-api-migrate:
+    build: *api-build
+    restart: "no"
+    depends_on:
+      stewardledger-postgres:
+        condition: service_healthy
+    environment:
+      <<: *migrate-env
+    command: >
+      sh -c "pnpm --filter @stewardledger/db db:migrate &&
+             pnpm --filter @stewardledger/db db:bootstrap"
+
+  stewardledger-api:
+    build: *api-build
+    restart: unless-stopped
+    depends_on:
+      stewardledger-api-migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *api-env
+      PORT: 3000
+    volumes:
+      - app_storage:/data/storage
+    expose:
+      - "3000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3000/health/ready').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  stewardledger-web:
+    build: *web-build
+    restart: unless-stopped
+    depends_on:
+      stewardledger-api:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      ORIGIN: ${PUBLIC_APP_URL:?PUBLIC_APP_URL is required}
+      PUBLIC_API_URL: ${PUBLIC_API_URL:?PUBLIC_API_URL is required}
+      # SvelteKit adapter-node must trust Dokploy/Traefik's forwarded headers so
+      # event.url reflects the public HTTPS URL (not the internal http://...:3000).
+      PROTOCOL_HEADER: x-forwarded-proto
+      HOST_HEADER: x-forwarded-host
+    expose:
+      - "3000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3000/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  pgdata:
+  app_storage:

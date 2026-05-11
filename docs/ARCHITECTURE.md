@@ -357,18 +357,21 @@ occurred_at timestamptz default now()
 
 ## 15. Deployment
 
-- Dockerfiles mirror echurcher's:
-  - `Dockerfile.api` (Node 22 alpine, ~250MB)
-  - `Dockerfile.web` (Node 22 alpine, ~180MB)
-- `docker-compose.prod.yml` defines:
-  - `db` (Postgres 17, persistent volume)
-  - `api`
-  - `web`
-  - `worker` (background jobs; same image as `api` with a different command)
-- Dokploy:
-  - Wildcard `*.stewardledger.church` (or final brand) via Traefik file-provider DNS-01 cert.
-  - `api.stewardledger.church` certificate via Traefik.
-  - Custom domains registered per-tenant (HTTP-01 cert).
+- Production deployment uses Docker Compose on Dokploy; the operator runbook lives in [`DEPLOYMENT.md`](DEPLOYMENT.md).
+- Dockerfiles:
+  - `Dockerfile.api` builds the Hono API image and includes Drizzle schema/migration assets for migration jobs.
+  - `Dockerfile.web` builds the SvelteKit adapter-node web image.
+- `docker-compose.prod.yml` defines explicitly named StewardLedger services:
+  - `stewardledger-postgres` — bundled PostgreSQL 17 with the persistent `pgdata` volume.
+  - `stewardledger-api-migrate` — one-shot service that runs `db:migrate` and `db:bootstrap` before the API starts.
+  - `stewardledger-api` — Hono API service with `/health/ready` healthcheck and persistent `app_storage` volume.
+  - `stewardledger-web` — SvelteKit SSR service.
+- This Dokploy setup bundles Postgres in the Compose app. Future environments can switch to managed Postgres by changing `DATABASE_URL` and removing the bundled database service in a reviewed deployment change.
+- The future `worker` service is deferred until a worker entrypoint exists; background-job infrastructure remains planned for the later jobs phase.
+- Dokploy routing:
+  - Route the web domain to `stewardledger-web:3000`.
+  - Route the API domain to `stewardledger-api:3000`.
+  - Do not expose `stewardledger-postgres` publicly.
 - Deploy strategy: blue/green at the container level (Dokploy zero-downtime).
 
 ---

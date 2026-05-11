@@ -7,7 +7,6 @@
     "PUBLIC_API_URL",
     "PUBLIC_APP_DOMAIN",
     "PUBLIC_TENANT_DOMAIN",
-    "VITE_API_URL",
     "NODE_ENV"
   ],
   "tasks": {

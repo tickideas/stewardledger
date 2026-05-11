@@ -10,6 +10,7 @@ Start here:
 
 - [`docs/PRD.md`](docs/PRD.md) — what we are building, for whom, why.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — stack, layout, tenancy, deployment.
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — Dokploy deployment and operations guide.
 - [`docs/DOMAIN-MODEL.md`](docs/DOMAIN-MODEL.md) — full target schema.
 - [`docs/DOMAIN-REFERENCE.md`](docs/DOMAIN-REFERENCE.md) — lessons from the legacy Church Plus app.
 - [`docs/REPORTS.md`](docs/REPORTS.md) — every v1 report and its acceptance.
@@ -45,7 +46,8 @@ stewardledger/
 ├── docs/          # Design docs (canonical, versioned)
 ├── docker-compose.yml
 ├── Dockerfile.api
-└── Dockerfile.web    # added in a later phase
+├── Dockerfile.web
+└── docker-compose.prod.yml
 ```
 
 ## Getting started
