@@ -179,7 +179,7 @@ Exit checklist:
 
 ---
 
-## Phase 6 — Imports pipeline (flagship) *(current focus)*
+## Phase 6 — Imports pipeline (flagship)
 
 Deliverables:
 
@@ -215,28 +215,37 @@ Exit checklist:
 
 ---
 
-## Phase 7 — Reports v1
+## Phase 7 — Reports v1 *(current focus)*
 
 Deliverables (full list in [`REPORTS.md`](REPORTS.md)):
 
-- Member statement (annual, period; PDF + Excel; branded).
-- Giving by chapter / zone / period / category / giving type (PIVOT in app code).
-- Top partners, top chapters.
-- Partnership progress.
-- Weekly finance report.
-- Envelope ledger.
-- Online giving ledger.
-- Statement import reconciliation report.
-- Member list (active, by chapter, by status).
-- Saved filters.
-- Background `report.generate` jobs with email-when-ready.
+- Member statement (annual, period; PDF + Excel; branded). *(PR-1: Excel landed; PDF deferred until the Playwright/Chromium infra ships.)*
+- Giving by chapter / zone / period / category / giving type (PIVOT in app code). *(queued)*
+- Top partners, top chapters. *(queued)*
+- Partnership progress. *(queued; depends on Phase 8 targets)*
+- Weekly finance report. *(queued)*
+- Envelope ledger. *(queued)*
+- Online giving ledger. *(queued)*
+- Statement import reconciliation report. *(PR-1: Excel landed.)*
+- Member list (active, by chapter, by status). *(PR-1: Excel landed.)*
+- Saved filters. *(queued)*
+- Background `report.generate` jobs with email-when-ready. *(queued; requires pg-boss worker, Phase 7+)*
+
+Implementation notes:
+
+- The report pattern lives at `packages/api/src/services/reports/`. Each report is a `ReportSpec<F, R>` (`types.ts`) — a Zod filter schema, a `fetch` that returns rows + per-currency subtotals, a `columns()` projection used by both the screen and exports, and per-format renderers. The registry (`registry.ts`) exposes a flat list to `/api/tenant/reports`; adding a report is one spec + one registry entry.
+- Money is always grouped by currency. The `CurrencySubtotal` shape is consistent across reports, and the helper in `member-statement.ts` is the canonical pattern for new reports. No silent FX in v1 (DOMAIN-MODEL.md §6).
+- Role gating: `services/reports/access.ts` enforces read vs export tiers. Viewers (zone_auditor / zone_pastor_viewer) can READ on screen but cannot DOWNLOAD an Excel artefact; finance + treasurer roles can export. Spec-level `accessCheck` adds row-level scope (e.g. `member-statement` denies a chapter treasurer asking for a member outside their bindings).
+- Branding: `loadReportBranding` pulls the zone's name + country + default currency and `addBrandedSheet` stamps a frozen 4-row branded header onto every Excel artefact.
+- Tenant routes at `/api/tenant/reports[/:id/data|/:id/export.xlsx]` (`packages/api/src/routes/tenant-reports.ts`). Filters arrive as query params so a treasurer can bookmark a URL and re-run the same report.
+- SvelteKit UI at `/reports` (picker) and `/reports/[id]` (filter form + table + Excel download). The per-report shell is metadata-driven from `columns()` so adding a report on the API lights it up here without UI changes.
 
 Exit checklist:
 
-- [ ] Each v1 report ties out against a hand-curated test dataset.
-- [ ] All exports work in Excel and PDF.
-- [ ] Reports of >100k rows stream/paginate, never time out.
-- [ ] Multi-currency reports show per-currency subtotals (no silent FX).
+- [ ] Each v1 report ties out against a hand-curated test dataset. *(PR-1: member-statement, import-reconciliation, member-list covered in `reports.test.ts`; remaining reports queued.)*
+- [ ] All exports work in Excel and PDF. *(PR-1: Excel verified end-to-end; PDF deferred to a follow-up PR that adds the Playwright/Chromium infra per ARCHITECTURE.md §2.)*
+- [ ] Reports of >100k rows stream/paginate, never time out. *(queued; the registry shape supports paginated `fetch` already.)*
+- [x] Multi-currency reports show per-currency subtotals (no silent FX). *(`CurrencySubtotal[]` returned by every spec; reports never call `addMoney` across currencies.)*
 
 ---
 

@@ -1,0 +1,179 @@
+// packages/api/src/services/reports/branding.ts
+// Phase 7 — pull a zone's branding payload for export headers, and
+// stamp a consistent branded header onto every Excel artefact.
+//
+// The header occupies the first 4 rows and is the same shape across
+// every report:
+//
+//   Row 1: zone name (bold, 16pt)
+//   Row 2: legal name + country (if present)
+//   Row 3: report title + generated timestamp
+//   Row 4: filter summary (e.g. "Date 2025-01-01 → 2025-12-31; chapter Trinity")
+//
+// Data + column headers start at row 6 to give the title visual breathing room.
+
+import { eq } from "drizzle-orm";
+import { zones } from "@stewardledger/db/schema";
+import type { Database } from "@stewardledger/db";
+import ExcelJS from "exceljs";
+import type { ReportBranding } from "./types";
+
+export async function loadReportBranding(
+  database: Database,
+  zoneId: string,
+): Promise<ReportBranding> {
+  const [zone] = await database
+    .select({
+      slug: zones.slug,
+      name: zones.name,
+      legalName: zones.legalName,
+      countryCode: zones.countryCode,
+      defaultCurrencyCode: zones.defaultCurrencyCode,
+    })
+    .from(zones)
+    .where(eq(zones.id, zoneId))
+    .limit(1);
+  if (!zone) {
+    // Never expected — the tenant middleware would have rejected the
+    // request. We surface a developer-visible error rather than render
+    // a half-broken workbook.
+    throw new Error(`zone ${zoneId} not found while loading report branding`);
+  }
+  return {
+    zoneSlug: zone.slug,
+    zoneName: zone.name,
+    legalName: zone.legalName,
+    countryCode: zone.countryCode,
+    defaultCurrencyCode: zone.defaultCurrencyCode,
+  };
+}
+
+interface BrandedSheetArgs {
+  workbook: ExcelJS.Workbook;
+  sheetName: string;
+  branding: ReportBranding;
+  reportTitle: string;
+  filterSummary: string;
+  /** Number of columns the report uses (drives merged-cell widths). */
+  columnCount: number;
+}
+
+/**
+ * Append a sheet to `workbook` with the standard branded header at the
+ * top and a frozen header row. Returns the sheet so callers can
+ * `addRow` the columns + data. Data should begin at row 7 (column
+ * headers at row 6; left to the caller so the column kinds + cell
+ * styles are controlled by the report itself).
+ */
+export function addBrandedSheet(args: BrandedSheetArgs): ExcelJS.Worksheet {
+  const sheet = args.workbook.addWorksheet(args.sheetName, {
+    views: [{ state: "frozen", ySplit: 6 }],
+  });
+  const colCount = Math.max(args.columnCount, 1);
+  const lastColLetter = excelColumnLetter(colCount);
+
+  // Every header cell carries user-controlled text (zone name, legal
+  // name, filter summary). Escape each through `escapeExcelText` so a
+  // tenant who sets their zone name to `=HYPERLINK(...)` can't poison
+  // the workbook for downstream readers.
+  const titleCell = sheet.getCell("A1");
+  titleCell.value = escapeExcelText(args.branding.zoneName);
+  titleCell.font = { bold: true, size: 16 };
+  sheet.mergeCells(`A1:${lastColLetter}1`);
+
+  const subRow = sheet.getCell("A2");
+  const subParts: string[] = [];
+  if (args.branding.legalName) subParts.push(args.branding.legalName);
+  subParts.push(`Country: ${args.branding.countryCode}`);
+  subParts.push(`Default currency: ${args.branding.defaultCurrencyCode}`);
+  subRow.value = escapeExcelText(subParts.join("  •  "));
+  subRow.font = { color: { argb: "FF555555" }, size: 10 };
+  sheet.mergeCells(`A2:${lastColLetter}2`);
+
+  const titleRow = sheet.getCell("A3");
+  titleRow.value = escapeExcelText(
+    `${args.reportTitle} — generated ${new Date().toISOString()}`,
+  );
+  titleRow.font = { bold: true, size: 11 };
+  sheet.mergeCells(`A3:${lastColLetter}3`);
+
+  if (args.filterSummary) {
+    const filterCell = sheet.getCell("A4");
+    filterCell.value = escapeExcelText(args.filterSummary);
+    filterCell.font = { italic: true, color: { argb: "FF666666" }, size: 10 };
+    sheet.mergeCells(`A4:${lastColLetter}4`);
+  }
+
+  return sheet;
+}
+
+/**
+ * Excel column index (1-based) → letter. Caller must pass
+ * `index1Based >= 1`; we throw rather than silently returning `"A"`
+ * for zero/negative inputs so a misuse surfaces at the callsite
+ * instead of producing the wrong cell address.
+ */
+export function excelColumnLetter(index1Based: number): string {
+  if (!Number.isInteger(index1Based) || index1Based < 1) {
+    throw new RangeError(
+      `excelColumnLetter requires a positive integer (got ${index1Based})`,
+    );
+  }
+  let n = index1Based;
+  let s = "";
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
+/**
+ * Escape a string before writing it to an Excel/CSV text cell.
+ *
+ * Excel evaluates any cell whose first character is `=`, `+`, `-`, or
+ * `@` as a formula (CWE-1236 / OWASP "Formula Injection"). A poisoned
+ * `description` or filename can therefore exfiltrate via `HYPERLINK`,
+ * `WEBSERVICE`, or DDE on open. We prefix any such value with a
+ * leading apostrophe — the canonical Excel escape: the cell is
+ * treated as text and never evaluated as a formula. Note that
+ * ExcelJS persists the apostrophe verbatim in the .xlsx string
+ * table, so the user-visible cell will show e.g. `'=cmd|...`
+ * rather than stripping the prefix (LibreOffice always shows it;
+ * Excel hides it for user-typed cells but not for cells loaded
+ * from a workbook). That cosmetic leak is acceptable in exchange
+ * for closing the injection vector. Leading control characters
+ * (`\t` / `\r` / `\n`) get the same treatment because they're
+ * common smuggling prefixes in CSV exports.
+ *
+ * Returns the input unchanged when it isn't a string or doesn't start
+ * with a dangerous character, so numbers, dates, and clean text are
+ * untouched.
+ */
+export function escapeExcelText<T>(value: T): T | string {
+  if (typeof value !== "string" || value.length === 0) return value;
+  const first = value.charCodeAt(0);
+  // = + - @ \t \r \n
+  if (
+    first === 0x3d ||
+    first === 0x2b ||
+    first === 0x2d ||
+    first === 0x40 ||
+    first === 0x09 ||
+    first === 0x0d ||
+    first === 0x0a
+  ) {
+    return `'${value}`;
+  }
+  return value;
+}
+
+/** Money-formatted cell style for an ISO 4217 currency. */
+export function moneyFormatForCurrency(currencyCode: string): string {
+  // ExcelJS lets us set `numFmt`; we use a generic 2dp pattern with a
+  // 3-letter currency prefix because Excel's built-in currency locale
+  // is messy across systems. Reports preserve 4dp arithmetic via the
+  // raw Decimal string; display rounds to 2.
+  return `"${currencyCode}" #,##0.00;[Red]"${currencyCode}" -#,##0.00`;
+}

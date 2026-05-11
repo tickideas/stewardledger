@@ -257,7 +257,27 @@ async function applyTransition(
   t: Transition,
 ): Promise<ContributionBatch> {
   return database.transaction(async (tx) => {
-    const batch = await loadBatch(tx, ctx.zoneId, id);
+    // Row-lock the batch for the duration of the tx so a parallel
+    // transition (whether same-target like submit+submit, or
+    // different-target like submit+void on a draft) blocks until we
+    // commit. Without the lock, READ COMMITTED lets a parallel `void`
+    // re-evaluate its UPDATE WHERE clause against the row's new
+    // post-submit status and — because void's `from` includes
+    // 'submitted' — succeed on top of our submit. With the lock the
+    // second tx waits, then re-reads the row at the new committed
+    // version, sees the status change, and surfaces a typed
+    // `invalid_transition` via the conditional UPDATE below.
+    const [batch] = await tx
+      .select()
+      .from(contributionBatches)
+      .where(
+        and(
+          eq(contributionBatches.zoneId, ctx.zoneId),
+          eq(contributionBatches.id, id),
+        ),
+      )
+      .for("update")
+      .limit(1);
     if (!batch) {
       throw new ContributionError("not_found", "Batch not in this zone.");
     }
@@ -284,11 +304,28 @@ async function applyTransition(
       updates.voidedByUserId = ctx.userId;
       updates.voidReason = t.voidReason;
     }
+    // Conditional UPDATE on top of the row lock above. The lock
+    // serialises across transitions; the WHERE clause filter on
+    // source statuses serialises within a single transition path
+    // (defence-in-depth) and gives us a clean zero-rows signal if a
+    // future maintainer drops the FOR UPDATE.
     const [row] = await tx
       .update(contributionBatches)
       .set(updates)
-      .where(and(eq(contributionBatches.zoneId, ctx.zoneId), eq(contributionBatches.id, id)))
+      .where(
+        and(
+          eq(contributionBatches.zoneId, ctx.zoneId),
+          eq(contributionBatches.id, id),
+          inArray(contributionBatches.status, t.from),
+        ),
+      )
       .returning();
+    if (!row) {
+      throw new ContributionError(
+        "invalid_transition",
+        `Cannot ${t.action} a batch — a parallel transition won the race.`,
+      );
+    }
     await writeAudit(tx, {
       zoneId: ctx.zoneId,
       actorUserId: ctx.userId,
@@ -372,8 +409,17 @@ export async function postBatch(
     const draftRows = attached.filter((r) => r.status === "draft");
 
     const now = new Date();
+    // Use `.returning()` and audit only the rows that ACTUALLY
+    // flipped, not the pre-flight count. A parallel `postContribution`
+    // could have posted some of these drafts between our scan and the
+    // UPDATE; the conditional WHERE filters them out, so we must
+    // mirror that in the audit log. (Pre-fix: the loser wrote false
+    // `contribution.post` events that only the tx rollback hid;
+    // splitting the writes across two transactions later would silently
+    // leak the false audits.)
+    let postedIds: string[] = [];
     if (draftRows.length > 0) {
-      await tx
+      const flipped = await tx
         .update(contributions)
         .set({
           status: "posted",
@@ -388,24 +434,33 @@ export async function postBatch(
             eq(contributions.batchId, id),
             eq(contributions.status, "draft"),
           ),
+        )
+        .returning({ id: contributions.id });
+      postedIds = flipped.map((r) => r.id);
+      if (postedIds.length > 0) {
+        await writeAuditMany(
+          tx,
+          postedIds.map((cid) => ({
+            zoneId: ctx.zoneId,
+            actorUserId: ctx.userId,
+            action: "contribution.post",
+            entityType: "contribution",
+            entityId: cid,
+            before: { status: "draft" },
+            after: { status: "posted", batchId: id },
+          })),
         );
-      // Bulk-insert one audit row per posted contribution. The previous
-      // per-row loop produced N round-trips on what is meant to be the
-      // one-shot Sunday-batch hot path.
-      await writeAuditMany(
-        tx,
-        draftRows.map((row) => ({
-          zoneId: ctx.zoneId,
-          actorUserId: ctx.userId,
-          action: "contribution.post",
-          entityType: "contribution",
-          entityId: row.id,
-          before: { status: "draft" },
-          after: { status: "posted", batchId: id },
-        })),
-      );
+      }
     }
 
+    // Conditional UPDATE: `status='approved'` guards against a
+    // parallel postBatch/voidBatch race. The loser sees zero affected
+    // rows and surfaces a typed `invalid_transition`. Note the
+    // companion `contributions` UPDATE above is *already* conditional
+    // (`eq(contributions.status, "draft")`), so a partially-posted
+    // race-loser would not have promoted any drafts — only the batch
+    // status would have flipped under us. Catching it here keeps the
+    // batch-row state consistent with the (no-op) post.
     const [updated] = await tx
       .update(contributionBatches)
       .set({
@@ -415,8 +470,20 @@ export async function postBatch(
         updatedAt: now,
         updatedByUserId: ctx.userId,
       })
-      .where(and(eq(contributionBatches.zoneId, ctx.zoneId), eq(contributionBatches.id, id)))
+      .where(
+        and(
+          eq(contributionBatches.zoneId, ctx.zoneId),
+          eq(contributionBatches.id, id),
+          eq(contributionBatches.status, "approved"),
+        ),
+      )
       .returning();
+    if (!updated) {
+      throw new ContributionError(
+        "invalid_transition",
+        "Batch was no longer approved when post completed — a parallel transition won the race.",
+      );
+    }
 
     await writeAudit(tx, {
       zoneId: ctx.zoneId,
@@ -425,10 +492,10 @@ export async function postBatch(
       entityType: "contribution_batch",
       entityId: id,
       before: { status: "approved" },
-      after: { status: "posted", postedContributions: draftRows.length },
+      after: { status: "posted", postedContributions: postedIds.length },
     });
 
-    return { batch: updated, postedCount: draftRows.length };
+    return { batch: updated, postedCount: postedIds.length };
   });
 }
 

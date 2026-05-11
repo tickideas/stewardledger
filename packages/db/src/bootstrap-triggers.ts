@@ -24,7 +24,7 @@
 // bootstrap.
 
 import { sql } from "drizzle-orm";
-import type { Database } from "./client";
+import type { Database, Db } from "./client";
 
 interface TriggerSpec {
   table: string;
@@ -33,7 +33,7 @@ interface TriggerSpec {
   body: string;
 }
 
-async function installTrigger(database: Database, spec: TriggerSpec): Promise<void> {
+async function installTrigger(database: Db, spec: TriggerSpec): Promise<void> {
   await database.execute(sql.raw(`drop trigger if exists ${spec.name} on ${spec.table};`));
   await database.execute(sql.raw(`${spec.body};`));
   // Re-enabling is a no-op for a freshly-created trigger but recovers from a
@@ -49,24 +49,22 @@ const CONTRIBUTION_TRIGGER_BOOTSTRAP_LOCK_TAG = "stewardledger.applyContribution
 
 export async function applyContributionTriggers(database: Database): Promise<void> {
   // Concurrent callers (e.g. parallel vitest test files in different worker
-  // threads) all racing `drop trigger ... ; create trigger ...` against the
-  // same catalog row trigger Postgres' "tuple concurrently updated" (XX000).
-  // Serialize bootstraps with a session-level advisory lock; the lock
-  // auto-releases when the connection closes even if we throw between
-  // acquire and release.
-  await database.execute(
-    sql`select pg_advisory_lock(hashtext(${CONTRIBUTION_TRIGGER_BOOTSTRAP_LOCK_TAG}))`,
-  );
-  try {
-    await applyContributionTriggersUnlocked(database);
-  } finally {
-    await database.execute(
-      sql`select pg_advisory_unlock(hashtext(${CONTRIBUTION_TRIGGER_BOOTSTRAP_LOCK_TAG}))`,
+  // threads) all race `drop trigger ... ; create trigger ...` against the
+  // same catalog row, tripping Postgres' "tuple concurrently updated"
+  // (XX000). Serialize the whole bootstrap inside one transaction so the
+  // advisory lock + DDL share one pooled connection — a session-level
+  // `pg_advisory_lock` / `pg_advisory_unlock` pair across the pool can
+  // route to different connections, leaking the lock and skipping
+  // serialisation. `pg_advisory_xact_lock` releases automatically on commit.
+  await database.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${CONTRIBUTION_TRIGGER_BOOTSTRAP_LOCK_TAG}))`,
     );
-  }
+    await applyContributionTriggersUnlocked(tx);
+  });
 }
 
-async function applyContributionTriggersUnlocked(database: Database): Promise<void> {
+async function applyContributionTriggersUnlocked(database: Db): Promise<void> {
   // Posted-immutability: only status/void/reverse columns and
   // updated_at/updated_by_user_id may change once status='posted'.
   // `region_id` is intentionally NOT in the allow-list — it is set at insert

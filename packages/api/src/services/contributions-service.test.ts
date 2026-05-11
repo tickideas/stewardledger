@@ -24,7 +24,7 @@ import {
   zones,
 } from "@stewardledger/db";
 import Decimal from "decimal.js";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "../db";
 import {
@@ -201,34 +201,42 @@ describe("contributions service", () => {
   });
 
   afterAll(async () => {
+    // Wrap the disable / delete / re-enable in one transaction so the
+    // pool can't route the DELETE to a different connection where the
+    // trigger is still active. The advisory lock serialises against
+    // any parallel suite calling `applyContributionTriggers` in its
+    // own bootstrap. Mirrors the safe pattern in imports.test.ts.
     const guards = [
       ["contributions", "contributions_posted_guard"],
       ["contributions", "contributions_no_delete_when_posted"],
       ["contribution_lines", "contribution_lines_posted_guard"],
     ] as const;
-    for (const [t, n] of guards) {
-      await db.execute(sql.raw(`alter table ${t} disable trigger ${n}`));
-    }
-    try {
+    const TRIGGER_BOOTSTRAP_LOCK_TAG = "stewardledger.applyContributionTriggers";
+    await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtext(${TRIGGER_BOOTSTRAP_LOCK_TAG}))`,
+      );
+      for (const [t, n] of guards) {
+        await tx.execute(sql.raw(`alter table ${t} disable trigger ${n}`));
+      }
       for (const slug of cleanupSlugs) {
         const z = sql`(select id from zones where slug = ${slug})`;
-        await db.execute(sql`delete from contribution_lines where zone_id = ${z}`);
-        await db.execute(sql`delete from contribution_members where zone_id = ${z}`);
-        await db.execute(sql`delete from contributions where zone_id = ${z}`);
-        await db.execute(sql`delete from contribution_batches where zone_id = ${z}`);
-        await db.execute(sql`delete from service_events where zone_id = ${z}`);
-        await db.execute(sql`delete from members where zone_id = ${z}`);
-        await db.execute(sql`delete from chapters where zone_id = ${z}`);
-        await db.execute(sql`delete from zones where slug = ${slug}`);
+        await tx.execute(sql`delete from contribution_lines where zone_id = ${z}`);
+        await tx.execute(sql`delete from contribution_members where zone_id = ${z}`);
+        await tx.execute(sql`delete from contributions where zone_id = ${z}`);
+        await tx.execute(sql`delete from contribution_batches where zone_id = ${z}`);
+        await tx.execute(sql`delete from service_events where zone_id = ${z}`);
+        await tx.execute(sql`delete from members where zone_id = ${z}`);
+        await tx.execute(sql`delete from chapters where zone_id = ${z}`);
+        await tx.execute(sql`delete from zones where slug = ${slug}`);
       }
       for (const id of cleanupUserIds) {
-        await db.execute(sql`delete from "user" where id = ${id}`);
+        await tx.execute(sql`delete from "user" where id = ${id}`);
       }
-    } finally {
       for (const [t, n] of guards) {
-        await db.execute(sql.raw(`alter table ${t} enable trigger ${n}`));
+        await tx.execute(sql.raw(`alter table ${t} enable trigger ${n}`));
       }
-    }
+    });
   });
 
   // ─── createContribution ─────────────────────────────────────────────
@@ -990,16 +998,108 @@ describe("contributions service", () => {
       postBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id),
       postBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id),
     ]);
+    // The conditional UPDATE on `contribution_batches.status='approved'`
+    // ensures exactly one tx flips the batch row; the loser sees zero
+    // affected rows and re-classifies as a typed `invalid_transition`.
+    // The tolerant `>=1, <=2` assertions from before predated the race
+    // fix — we can now assert the strict invariant.
     const fulfilled = results.filter((r) => r.status === "fulfilled");
-    expect(fulfilled.length).toBeGreaterThanOrEqual(1);
-    expect(fulfilled.length).toBeLessThanOrEqual(2);
-    // The "lost-race" attempt either sees `posted` and rejects, or saw
-    // `approved` first and won — either way at least one succeeded.
-    if (results.some((r) => r.status === "rejected")) {
-      const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
-      expect(rejected.reason).toBeInstanceOf(ContributionError);
-      expect((rejected.reason as ContributionError).code).toBe("invalid_transition");
-    }
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(ContributionError);
+    expect(((rejected[0] as PromiseRejectedResult).reason as ContributionError).code).toBe(
+      "invalid_transition",
+    );
+  });
+
+  it("two concurrent voidContribution calls — exactly one succeeds", async () => {
+    const created = await createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+      contributionDate: `${new Date().getUTCFullYear()}-09-16`,
+      lines: [{ givingTypeId: zoneA.givingTypeId, amount: "11.0000" }],
+    });
+    await postContribution(db, { zoneId: zoneA.id, userId: USER_ID }, created.contribution.id);
+    const results = await Promise.allSettled([
+      voidContribution(db, { zoneId: zoneA.id, userId: USER_ID }, created.contribution.id, {
+        voidReason: "first",
+      }),
+      voidContribution(db, { zoneId: zoneA.id, userId: USER_ID }, created.contribution.id, {
+        voidReason: "second",
+      }),
+    ]);
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(ContributionError);
+    expect(((rejected[0] as PromiseRejectedResult).reason as ContributionError).code).toBe(
+      "not_posted",
+    );
+  });
+
+  it("two concurrent reverseContribution calls — exactly one corrective contribution lands", async () => {
+    const created = await createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+      contributionDate: `${new Date().getUTCFullYear()}-09-17`,
+      lines: [{ givingTypeId: zoneA.givingTypeId, amount: "13.0000" }],
+    });
+    const originalId = created.contribution.id;
+    await postContribution(db, { zoneId: zoneA.id, userId: USER_ID }, originalId);
+
+    const results = await Promise.allSettled([
+      reverseContribution(db, { zoneId: zoneA.id, userId: USER_ID }, originalId, {
+        reason: "first",
+      }),
+      reverseContribution(db, { zoneId: zoneA.id, userId: USER_ID }, originalId, {
+        reason: "second",
+      }),
+    ]);
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(((rejected[0] as PromiseRejectedResult).reason as ContributionError).code).toBe(
+      "not_posted",
+    );
+    // Hard invariant: the original must NOT have two reversal
+    // contributions linked to it. Pre-fix, both calls inserted a
+    // corrective entry; this asserts the worst-case data race is gone.
+    const reversals = await db
+      .select({ id: contributions.id })
+      .from(contributions)
+      .where(
+        and(
+          eq(contributions.zoneId, zoneA.id),
+          eq(contributions.reversalOfContributionId, originalId),
+        ),
+      );
+    expect(reversals).toHaveLength(1);
+  });
+
+  it("concurrent postContribution + deleteDraftContribution — only one wins", async () => {
+    const draft = await createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+      contributionDate: `${new Date().getUTCFullYear()}-09-18`,
+      lines: [{ givingTypeId: zoneA.givingTypeId, amount: "7.0000" }],
+    });
+    const results = await Promise.allSettled([
+      postContribution(db, { zoneId: zoneA.id, userId: USER_ID }, draft.contribution.id),
+      deleteDraftContribution(db, { zoneId: zoneA.id, userId: USER_ID }, draft.contribution.id),
+    ]);
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    // The loser surfaces a typed ContributionError with one of the
+    // expected codes; which one depends on who won the race.
+    const reason = (rejected[0] as PromiseRejectedResult).reason;
+    expect(reason).toBeInstanceOf(ContributionError);
+    const code = (reason as ContributionError).code;
+    expect(["not_draft", "not_found"]).toContain(code);
   });
 
   // ─── Boundary amounts ─────────────────────────────────────────────
