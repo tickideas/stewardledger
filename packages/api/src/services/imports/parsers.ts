@@ -12,7 +12,11 @@
 //   • Missing optional fields stay `null`, never `""` or `undefined`,
 //     so the JSON column shape is stable.
 
-import { parse as parseCsv } from "papaparse";
+// papaparse ships as CommonJS, so a `named import` works under tsx/esbuild's
+// dev pipeline but fails at runtime when esbuild keeps the package external in
+// our production bundle. Import the default and destructure instead.
+import papaparse from "papaparse";
+const { parse: parseCsv } = papaparse;
 
 const MAX_IMPORT_ROWS = 10_000;
 const MAX_IMPORT_COLUMNS = 100;
