@@ -253,7 +253,7 @@ export const importReconciliationReport: ReportSpec<
   },
   async excel(rows, subtotals, filters, branding) {
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = `StewardLedger — ${branding.zoneName}`;
+    workbook.creator = escapeExcelText(`StewardLedger — ${branding.zoneName}`);
     workbook.created = new Date();
 
     const filterParts: string[] = [];

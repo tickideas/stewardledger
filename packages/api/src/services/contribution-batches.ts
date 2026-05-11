@@ -284,11 +284,28 @@ async function applyTransition(
       updates.voidedByUserId = ctx.userId;
       updates.voidReason = t.voidReason;
     }
+    // Conditional UPDATE filtered on the allowed source statuses so
+    // two parallel transitions cannot both pass the pre-flight check
+    // and both succeed (e.g. submit + void racing on a draft batch).
+    // The loser sees zero affected rows and we re-classify as a typed
+    // `invalid_transition`. Mirrors the postContribution race fix.
     const [row] = await tx
       .update(contributionBatches)
       .set(updates)
-      .where(and(eq(contributionBatches.zoneId, ctx.zoneId), eq(contributionBatches.id, id)))
+      .where(
+        and(
+          eq(contributionBatches.zoneId, ctx.zoneId),
+          eq(contributionBatches.id, id),
+          inArray(contributionBatches.status, t.from),
+        ),
+      )
       .returning();
+    if (!row) {
+      throw new ContributionError(
+        "invalid_transition",
+        `Cannot ${t.action} a batch — a parallel transition won the race.`,
+      );
+    }
     await writeAudit(tx, {
       zoneId: ctx.zoneId,
       actorUserId: ctx.userId,
@@ -406,6 +423,14 @@ export async function postBatch(
       );
     }
 
+    // Conditional UPDATE: `status='approved'` guards against a
+    // parallel postBatch/voidBatch race. The loser sees zero affected
+    // rows and surfaces a typed `invalid_transition`. Note the
+    // companion `contributions` UPDATE above is *already* conditional
+    // (`eq(contributions.status, "draft")`), so a partially-posted
+    // race-loser would not have promoted any drafts — only the batch
+    // status would have flipped under us. Catching it here keeps the
+    // batch-row state consistent with the (no-op) post.
     const [updated] = await tx
       .update(contributionBatches)
       .set({
@@ -415,8 +440,20 @@ export async function postBatch(
         updatedAt: now,
         updatedByUserId: ctx.userId,
       })
-      .where(and(eq(contributionBatches.zoneId, ctx.zoneId), eq(contributionBatches.id, id)))
+      .where(
+        and(
+          eq(contributionBatches.zoneId, ctx.zoneId),
+          eq(contributionBatches.id, id),
+          eq(contributionBatches.status, "approved"),
+        ),
+      )
       .returning();
+    if (!updated) {
+      throw new ContributionError(
+        "invalid_transition",
+        "Batch was no longer approved when post completed — a parallel transition won the race.",
+      );
+    }
 
     await writeAudit(tx, {
       zoneId: ctx.zoneId,

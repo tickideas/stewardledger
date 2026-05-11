@@ -243,7 +243,11 @@ export const memberStatementReport: ReportSpec<
   async excel(rows, subtotals, filters, branding, extras) {
     const meta = extras as unknown as MemberStatementMeta | undefined;
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = `StewardLedger — ${branding.zoneName}`;
+    // `workbook.creator` is xlsx metadata (Author field), not a cell,
+    // so it isn't a formula-injection sink. Escape anyway to keep one
+    // canonical rule: every user-controlled string in an Excel
+    // artefact passes through `escapeExcelText`.
+    workbook.creator = escapeExcelText(`StewardLedger — ${branding.zoneName}`);
     workbook.created = new Date();
 
     const filterSummary = [

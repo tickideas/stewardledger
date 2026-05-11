@@ -998,16 +998,19 @@ describe("contributions service", () => {
       postBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id),
       postBatch(db, { zoneId: zoneA.id, userId: USER_ID }, batch.id),
     ]);
+    // The conditional UPDATE on `contribution_batches.status='approved'`
+    // ensures exactly one tx flips the batch row; the loser sees zero
+    // affected rows and re-classifies as a typed `invalid_transition`.
+    // The tolerant `>=1, <=2` assertions from before predated the race
+    // fix — we can now assert the strict invariant.
     const fulfilled = results.filter((r) => r.status === "fulfilled");
-    expect(fulfilled.length).toBeGreaterThanOrEqual(1);
-    expect(fulfilled.length).toBeLessThanOrEqual(2);
-    // The "lost-race" attempt either sees `posted` and rejects, or saw
-    // `approved` first and won — either way at least one succeeded.
-    if (results.some((r) => r.status === "rejected")) {
-      const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
-      expect(rejected.reason).toBeInstanceOf(ContributionError);
-      expect((rejected.reason as ContributionError).code).toBe("invalid_transition");
-    }
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(ContributionError);
+    expect(((rejected[0] as PromiseRejectedResult).reason as ContributionError).code).toBe(
+      "invalid_transition",
+    );
   });
 
   // ─── Boundary amounts ─────────────────────────────────────────────

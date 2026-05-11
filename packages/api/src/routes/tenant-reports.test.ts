@@ -326,10 +326,14 @@ describe("tenant reports routes", () => {
     expect(res.status).toBe(403);
   });
 
-  it("maps a per-spec accessCheck denial to 403 with the denial code", async () => {
-    // treasurerB is bound to chapterB only; member is in chapterA. The
-    // member-statement fetch path throws ReportError("forbidden"); the
-    // route handler must surface that as a 403.
+  it("maps a per-spec fetch-layer denial to 403 (member out of chapter scope)", async () => {
+    // treasurerB is bound to chapterB only; member is in chapterA.
+    // member-statement.accessCheck PASSES (treasurerB owns at least
+    // one binding), then the fetch path throws ReportError("forbidden")
+    // via the row-level home-chapter check. The route handler maps that
+    // through `handleError` to a 403 — the same envelope an accessCheck
+    // denial would produce. Both pathways converge on the existence-
+    // oracle fix.
     asUser(treasurerB, "treasurerB@example.com");
     const params = new URLSearchParams({
       memberId: zoneA.memberId,
@@ -346,8 +350,10 @@ describe("tenant reports routes", () => {
   });
 
   it("member-list accessCheck denies an out-of-scope chapter filter with 403", async () => {
+    // This one truly exercises the accessCheck → forbidden() path in
+    // the route (no DB round-trip needed): member-list.accessCheck
+    // returns "forbidden" synchronously for an out-of-scope chapterId.
     asUser(treasurerB, "treasurerB@example.com");
-    // treasurerB is bound to chapterB only; ask for chapterA.
     const res = await get(
       zoneA.slug,
       `/api/tenant/reports/member-list/data?chapterId=${zoneA.chapterIdA}`,

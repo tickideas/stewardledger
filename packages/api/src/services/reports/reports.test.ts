@@ -42,6 +42,7 @@ import { importReconciliationReport } from "./import-reconciliation";
 import { loadReportBranding } from "./branding";
 import { memberListReport } from "./member-list";
 import { memberStatementReport } from "./member-statement";
+import { ReportError, parseReportFilters } from "./types";
 
 function unique(): string {
   return Math.random().toString(36).slice(2, 10);
@@ -318,13 +319,15 @@ describe("member-statement report", () => {
     ).rejects.toMatchObject({ code: "forbidden" });
   });
 
-  it("escapes formula-injection prefixes in description and member name cells", async () => {
+  it("escapes formula-injection prefixes in description cells", async () => {
     const zone = await seedZone();
     seededZones.push(zone.id);
     const ctx = zoneCtx(zone);
 
-    // Poisoned description on a posted contribution. Member full name
-    // also poisoned via direct UPDATE so we exercise both code paths.
+    // Poisoned description on a posted contribution. Every text cell
+    // in the workbook flows through the same `escapeExcelText` helper
+    // (member-statement.ts:291-293), so exercising the description
+    // path is sufficient to assert the helper fires.
     const created = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
       chapterId: zone.chapterId,
       memberId: zone.memberIds[0],
@@ -448,13 +451,21 @@ describe("import-reconciliation report", () => {
 });
 
 describe("member-statement filter schema", () => {
-  it("rejects dateFrom > dateTo with invalid_filters at the schema layer", async () => {
-    const parsed = memberStatementReport.filtersSchema.safeParse({
-      memberId: "00000000-0000-0000-0000-000000000000",
-      dateFrom: "2025-12-31",
-      dateTo: "2025-01-01",
-    });
-    expect(parsed.success).toBe(false);
+  it("rejects dateFrom > dateTo via parseReportFilters as invalid_filters", () => {
+    // Drive the route's validation entry point so the test exercises
+    // the same path the API does, not just the schema in isolation.
+    let caught: unknown = null;
+    try {
+      parseReportFilters(memberStatementReport, {
+        memberId: "00000000-0000-0000-0000-000000000000",
+        dateFrom: "2025-12-31",
+        dateTo: "2025-01-01",
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ReportError);
+    expect((caught as ReportError).code).toBe("invalid_filters");
   });
 });
 

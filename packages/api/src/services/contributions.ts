@@ -759,6 +759,12 @@ export async function voidContribution(
       );
     }
     const now = new Date();
+    // Conditional UPDATE so two parallel voids cannot both clobber
+    // void_reason / voided_at / voided_by_user_id. Same race-fix
+    // pattern as `postContribution`: filter `status='posted'` in the
+    // WHERE clause; if zero rows update, the loser surfaces a typed
+    // `not_posted` error instead of silently overwriting the winner's
+    // void metadata.
     const [voided] = await tx
       .update(contributions)
       .set({
@@ -769,8 +775,20 @@ export async function voidContribution(
         updatedAt: now,
         updatedByUserId: ctx.userId,
       })
-      .where(and(eq(contributions.zoneId, ctx.zoneId), eq(contributions.id, id)))
+      .where(
+        and(
+          eq(contributions.zoneId, ctx.zoneId),
+          eq(contributions.id, id),
+          eq(contributions.status, "posted"),
+        ),
+      )
       .returning();
+    if (!voided) {
+      throw new ContributionError(
+        "not_posted",
+        "Only posted contributions can be voided.",
+      );
+    }
     await writeAudit(tx, {
       zoneId: ctx.zoneId,
       actorUserId: ctx.userId,
@@ -837,6 +855,38 @@ export async function reverseContribution(
     }
 
     const now = new Date();
+    // Race guard: atomically claim the original before doing any of the
+    // expensive bookkeeping (zone defaults, period derivation, reversal
+    // insert + lines + members). Two parallel `reverseContribution`
+    // calls under READ COMMITTED both see `status='posted'` in their
+    // snapshot and — without this claim — both proceed to insert a
+    // reversal, leaving the original with two corrective entries.
+    // Flipping the original to `reversed` first with a conditional
+    // UPDATE means the loser sees zero affected rows and aborts. We
+    // re-bump `updatedAt` again at the end of the tx so the audit
+    // timeline reflects when the reversal actually committed.
+    const claimed = await tx
+      .update(contributions)
+      .set({
+        status: "reversed",
+        updatedAt: now,
+        updatedByUserId: ctx.userId,
+      })
+      .where(
+        and(
+          eq(contributions.zoneId, ctx.zoneId),
+          eq(contributions.id, id),
+          eq(contributions.status, "posted"),
+        ),
+      )
+      .returning({ id: contributions.id });
+    if (claimed.length === 0) {
+      throw new ContributionError(
+        "not_posted",
+        "Only posted contributions can be reversed.",
+      );
+    }
+
     const zone = await loadZoneDefaults(tx, ctx.zoneId);
     const reversalDate = args.contributionDate ?? todayInZone(zone.defaultTimeZone);
     const period = await deriveGivingPeriodForDate(tx, ctx.zoneId, reversalDate);
@@ -909,7 +959,10 @@ export async function reverseContribution(
           })
       : [];
 
-    // Promote the reversal to posted now that its lines exist.
+    // Promote the reversal to posted now that its lines exist. The
+    // original was already flipped to `reversed` at the top of the tx
+    // (see the claim above); the trigger’s status guard on the
+    // original is therefore already in effect when this UPDATE runs.
     const [postedReversal] = await tx
       .update(contributions)
       .set({
@@ -921,15 +974,6 @@ export async function reverseContribution(
       })
       .where(and(eq(contributions.zoneId, ctx.zoneId), eq(contributions.id, reversal.id)))
       .returning();
-
-    await tx
-      .update(contributions)
-      .set({
-        status: "reversed",
-        updatedAt: now,
-        updatedByUserId: ctx.userId,
-      })
-      .where(and(eq(contributions.zoneId, ctx.zoneId), eq(contributions.id, id)));
 
     // Capture the entire causal chain in audit: cause on the original, a
     // self-contained create+post pair on the reversal row.
@@ -993,9 +1037,27 @@ export async function deleteDraftContribution(
         `Only draft contributions can be deleted (status='${detail.contribution.status}').`,
       );
     }
-    await tx
+    // Conditional DELETE so a parallel `postContribution` cannot slip
+    // the row to `posted` between our pre-flight check and the DELETE.
+    // The `contributions_no_delete_when_posted` trigger would catch
+    // that case anyway but surface a raw Postgres exception; the
+    // typed `not_draft` error keeps the route contract intact.
+    const deleted = await tx
       .delete(contributions)
-      .where(and(eq(contributions.zoneId, ctx.zoneId), eq(contributions.id, id)));
+      .where(
+        and(
+          eq(contributions.zoneId, ctx.zoneId),
+          eq(contributions.id, id),
+          eq(contributions.status, "draft"),
+        ),
+      )
+      .returning({ id: contributions.id });
+    if (deleted.length === 0) {
+      throw new ContributionError(
+        "not_draft",
+        "Only draft contributions can be deleted.",
+      );
+    }
     await writeAudit(tx, {
       zoneId: ctx.zoneId,
       actorUserId: ctx.userId,
