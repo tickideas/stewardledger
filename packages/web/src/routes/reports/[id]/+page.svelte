@@ -42,6 +42,11 @@
   let downloadController: AbortController | null = null;
 
   // Filter form state — superset across the three PR-1 reports.
+  // Date defaults are evaluated at module load; that's fine for a
+  // session-bound page, but a tab kept open past midnight would carry
+  // a stale `today`. The reset happens on the next reload either way,
+  // so it's an explicit not-yet-addressed product call rather than a
+  // bug worth onMount-recomputing for a v1 export tool.
   let memberId = $state("");
   let dateFrom = $state(`${new Date().getFullYear()}-01-01`);
   let dateTo = $state(new Date().toISOString().slice(0, 10));
@@ -160,7 +165,9 @@
 
   function parseFilename(disposition: string | null): string | null {
     if (!disposition) return null;
-    const match = /filename="?([^";]+)"?/i.exec(disposition);
+    // Anchor to `^filename=` or `;\s*filename=` so a future header
+    // value like `inline; xfilename="..."` can't accidentally match.
+    const match = /(?:^|;\s*)filename="?([^";]+)"?/i.exec(disposition);
     return match?.[1] ?? null;
   }
 

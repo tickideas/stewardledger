@@ -138,16 +138,20 @@ export const memberStatementReport: ReportSpec<
         ),
       )
       .limit(1);
-    if (!member) {
+    // Existence oracle guard: for a chapter-scoped caller, "member
+    // does not exist" and "member exists but is out of scope" must
+    // produce the same response. Otherwise the caller can probe a
+    // UUID and learn whether it resolves to a real member elsewhere
+    // in the zone (200 empty vs 403). Fold both into one
+    // ReportError("forbidden"). Zone-wide readers fall through to the
+    // "not found" empty response — they can see every chapter, so the
+    // empty result is the honest answer.
+    if (!isZoneRead(ctx)) {
+      if (!member?.chapterId || !ctx.chapterIds.includes(member.chapterId)) {
+        throw new ReportError("forbidden", "Member is not in your chapter scope.");
+      }
+    } else if (!member) {
       return { rows: [], subtotals: [], meta: undefined };
-    }
-    // Chapter-scoped users: deny if the member's home chapter isn't
-    // in their bindings. Returning empty would still leak existence
-    // ("this id resolves to a member, just one I can't see"); throw a
-    // ReportError("forbidden") so the route maps it to a 403 with the
-    // same envelope the member-list path uses.
-    if (!isZoneRead(ctx) && (!member.chapterId || !ctx.chapterIds.includes(member.chapterId))) {
-      throw new ReportError("forbidden", "Member is not in your chapter scope.");
     }
 
     const statusFilter = filters.includeVoided

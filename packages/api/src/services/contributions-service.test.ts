@@ -24,7 +24,7 @@ import {
   zones,
 } from "@stewardledger/db";
 import Decimal from "decimal.js";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "../db";
 import {
@@ -1011,6 +1011,95 @@ describe("contributions service", () => {
     expect(((rejected[0] as PromiseRejectedResult).reason as ContributionError).code).toBe(
       "invalid_transition",
     );
+  });
+
+  it("two concurrent voidContribution calls — exactly one succeeds", async () => {
+    const created = await createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+      contributionDate: `${new Date().getUTCFullYear()}-09-16`,
+      lines: [{ givingTypeId: zoneA.givingTypeId, amount: "11.0000" }],
+    });
+    await postContribution(db, { zoneId: zoneA.id, userId: USER_ID }, created.contribution.id);
+    const results = await Promise.allSettled([
+      voidContribution(db, { zoneId: zoneA.id, userId: USER_ID }, created.contribution.id, {
+        voidReason: "first",
+      }),
+      voidContribution(db, { zoneId: zoneA.id, userId: USER_ID }, created.contribution.id, {
+        voidReason: "second",
+      }),
+    ]);
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(ContributionError);
+    expect(((rejected[0] as PromiseRejectedResult).reason as ContributionError).code).toBe(
+      "not_posted",
+    );
+  });
+
+  it("two concurrent reverseContribution calls — exactly one corrective contribution lands", async () => {
+    const created = await createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+      contributionDate: `${new Date().getUTCFullYear()}-09-17`,
+      lines: [{ givingTypeId: zoneA.givingTypeId, amount: "13.0000" }],
+    });
+    const originalId = created.contribution.id;
+    await postContribution(db, { zoneId: zoneA.id, userId: USER_ID }, originalId);
+
+    const results = await Promise.allSettled([
+      reverseContribution(db, { zoneId: zoneA.id, userId: USER_ID }, originalId, {
+        reason: "first",
+      }),
+      reverseContribution(db, { zoneId: zoneA.id, userId: USER_ID }, originalId, {
+        reason: "second",
+      }),
+    ]);
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(((rejected[0] as PromiseRejectedResult).reason as ContributionError).code).toBe(
+      "not_posted",
+    );
+    // Hard invariant: the original must NOT have two reversal
+    // contributions linked to it. Pre-fix, both calls inserted a
+    // corrective entry; this asserts the worst-case data race is gone.
+    const reversals = await db
+      .select({ id: contributions.id })
+      .from(contributions)
+      .where(
+        and(
+          eq(contributions.zoneId, zoneA.id),
+          eq(contributions.reversalOfContributionId, originalId),
+        ),
+      );
+    expect(reversals).toHaveLength(1);
+  });
+
+  it("concurrent postContribution + deleteDraftContribution — only one wins", async () => {
+    const draft = await createContribution(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+      contributionDate: `${new Date().getUTCFullYear()}-09-18`,
+      lines: [{ givingTypeId: zoneA.givingTypeId, amount: "7.0000" }],
+    });
+    const results = await Promise.allSettled([
+      postContribution(db, { zoneId: zoneA.id, userId: USER_ID }, draft.contribution.id),
+      deleteDraftContribution(db, { zoneId: zoneA.id, userId: USER_ID }, draft.contribution.id),
+    ]);
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    // The loser surfaces a typed ContributionError with one of the
+    // expected codes; which one depends on who won the race.
+    const reason = (rejected[0] as PromiseRejectedResult).reason;
+    expect(reason).toBeInstanceOf(ContributionError);
+    const code = (reason as ContributionError).code;
+    expect(["not_draft", "not_found"]).toContain(code);
   });
 
   // ─── Boundary amounts ─────────────────────────────────────────────

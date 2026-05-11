@@ -107,8 +107,18 @@ export function addBrandedSheet(args: BrandedSheetArgs): ExcelJS.Worksheet {
   return sheet;
 }
 
-/** Excel column index (1-based) → letter. Handles arbitrary positive integers. */
+/**
+ * Excel column index (1-based) → letter. Caller must pass
+ * `index1Based >= 1`; we throw rather than silently returning `"A"`
+ * for zero/negative inputs so a misuse surfaces at the callsite
+ * instead of producing the wrong cell address.
+ */
 export function excelColumnLetter(index1Based: number): string {
+  if (!Number.isInteger(index1Based) || index1Based < 1) {
+    throw new RangeError(
+      `excelColumnLetter requires a positive integer (got ${index1Based})`,
+    );
+  }
   let n = index1Based;
   let s = "";
   while (n > 0) {
@@ -116,7 +126,7 @@ export function excelColumnLetter(index1Based: number): string {
     s = String.fromCharCode(65 + rem) + s;
     n = Math.floor((n - 1) / 26);
   }
-  return s || "A";
+  return s;
 }
 
 /**
@@ -126,10 +136,16 @@ export function excelColumnLetter(index1Based: number): string {
  * `@` as a formula (CWE-1236 / OWASP "Formula Injection"). A poisoned
  * `description` or filename can therefore exfiltrate via `HYPERLINK`,
  * `WEBSERVICE`, or DDE on open. We prefix any such value with a
- * leading apostrophe — the canonical Excel escape: the apostrophe is
- * stripped on display but the cell is treated as text. Leading control
- * characters (`\t` / `\r` / `\n`) get the same treatment because
- * they're common smuggling prefixes in CSV exports.
+ * leading apostrophe — the canonical Excel escape: the cell is
+ * treated as text and never evaluated as a formula. Note that
+ * ExcelJS persists the apostrophe verbatim in the .xlsx string
+ * table, so the user-visible cell will show e.g. `'=cmd|...`
+ * rather than stripping the prefix (LibreOffice always shows it;
+ * Excel hides it for user-typed cells but not for cells loaded
+ * from a workbook). That cosmetic leak is acceptable in exchange
+ * for closing the injection vector. Leading control characters
+ * (`\t` / `\r` / `\n`) get the same treatment because they're
+ * common smuggling prefixes in CSV exports.
  *
  * Returns the input unchanged when it isn't a string or doesn't start
  * with a dangerous character, so numbers, dates, and clean text are

@@ -39,14 +39,24 @@ function handleError(c: { json: (b: unknown, s: number) => Response }, err: unkn
 }
 
 /**
- * Convert the request's query string to a plain object. Repeated keys
- * collapse to the last value — matches Hono's existing query-param
- * convention; multi-valued filters land via Zod arrays in a later
- * report once the need exists.
+ * Convert the request's query string to a plain object. Hono's
+ * `c.req.query()` (zero-arg) returns last-value-wins for repeated
+ * keys; multi-valued filters will need `c.req.queries()` once a
+ * report (e.g. a giving-type pivot) actually needs them. Until then
+ * we keep the simpler shape and the per-spec schema is the contract.
  */
 function flatQuery(c: { req: { query: () => Record<string, string> } }): Record<string, string> {
   return c.req.query();
 }
+
+/**
+ * Common response headers: never cache report payloads. Both the
+ * `/data` JSON envelope and the `/export.xlsx` artefact carry tenant
+ * PII, so a shared proxy or browser bfcache could leak them across
+ * users or zone slugs. `Cache-Control: no-store` is the strongest
+ * available directive (`private, max-age=0` permits some bfcache).
+ */
+const NO_STORE = "no-store";
 
 tenantReportsRouter.get("/reports", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
@@ -79,6 +89,7 @@ tenantReportsRouter.get("/reports/:id/data", async (c) => {
 
   try {
     const result = await spec.fetch(db, ctx, filters);
+    c.header("cache-control", NO_STORE);
     return c.json({
       reportId: id,
       filters,
@@ -138,7 +149,7 @@ tenantReportsRouter.get("/reports/:id/export.xlsx", async (c) => {
         "content-type":
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "content-disposition": `attachment; filename="${filename}"`,
-        "cache-control": "no-store",
+        "cache-control": NO_STORE,
       },
     });
   } catch (err) {

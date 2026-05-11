@@ -319,6 +319,45 @@ describe("member-statement report", () => {
     ).rejects.toMatchObject({ code: "forbidden" });
   });
 
+  it("folds nonexistent + out-of-scope into one 403 response for chapter-scoped callers", async () => {
+    // Existence-oracle guard: a chapter-scoped caller probing a random
+    // UUID must receive the same 403 a real-but-out-of-scope member id
+    // produces. Otherwise they can iterate UUIDs to learn which ones
+    // resolve to actual members elsewhere in the zone.
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+
+    const chapterScopedCtx: AuthorizedContext = {
+      userId: zone.userId,
+      zoneId: zone.id,
+      regionId: null,
+      roleCodes: ["chapter_treasurer"],
+      chapterIds: [zone.otherChapterId],
+      isPlatformAdmin: false,
+    };
+
+    // A syntactically valid UUID that doesn't resolve to any member.
+    const phantomId = "00000000-0000-4000-8000-000000000000";
+    await expect(
+      memberStatementReport.fetch(db, chapterScopedCtx, {
+        memberId: phantomId,
+        dateFrom: shiftDays(TODAY, -1),
+        dateTo: shiftDays(TODAY, 1),
+        includeVoided: false,
+      }),
+    ).rejects.toMatchObject({ code: "forbidden" });
+
+    // Zone-wide reader still gets an empty 200 for a phantom id
+    // (no PII leak — they can already see every member).
+    const empty = await memberStatementReport.fetch(db, zoneCtx(zone), {
+      memberId: phantomId,
+      dateFrom: shiftDays(TODAY, -1),
+      dateTo: shiftDays(TODAY, 1),
+      includeVoided: false,
+    });
+    expect(empty.rows).toEqual([]);
+  });
+
   it("escapes formula-injection prefixes in description cells", async () => {
     const zone = await seedZone();
     seededZones.push(zone.id);
@@ -374,6 +413,78 @@ describe("member-statement report", () => {
     // ExcelJS stores the apostrophe-escaped value verbatim; what
     // matters is that the *raw* cell value no longer begins with `=`.
     expect(typeof descValue === "string" && descValue.startsWith("=")).toBe(false);
+  });
+});
+
+describe("import-reconciliation tenancy", () => {
+  it("scopes chapter-scoped callers to their bound chapters' import jobs", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+
+    // Commit one import for each chapter so we have two jobs to
+    // discriminate.
+    const csvForChapterA = [
+      "date,member reference,giving type code,amount,reference,currency",
+      `${TODAY},${zone.memberRefs[0]},TITHE,11.00,SCOPE-A,GBP`,
+    ].join("\n");
+    const csvForChapterB = [
+      "date,member reference,giving type code,amount,reference,currency",
+      `${TODAY},${zone.memberRefs[2]},TITHE,22.00,SCOPE-B,GBP`,
+    ].join("\n");
+    const uploadedA = await uploadImport(db, { zoneId: zone.id, userId: zone.userId }, {
+      fileName: "scope-a.csv",
+      body: new TextEncoder().encode(csvForChapterA),
+      fileType: "statement",
+      sourceType: "generic_csv",
+      chapterId: zone.chapterId,
+    });
+    const uploadedB = await uploadImport(db, { zoneId: zone.id, userId: zone.userId }, {
+      fileName: "scope-b.csv",
+      body: new TextEncoder().encode(csvForChapterB),
+      fileType: "statement",
+      sourceType: "generic_csv",
+      chapterId: zone.otherChapterId,
+    });
+
+    const chapterAReader: AuthorizedContext = {
+      userId: zone.userId,
+      zoneId: zone.id,
+      regionId: null,
+      roleCodes: ["chapter_treasurer"],
+      chapterIds: [zone.chapterId],
+      isPlatformAdmin: false,
+    };
+
+    // accessCheck passes (caller has at least one binding).
+    expect(importReconciliationReport.accessCheck?.(chapterAReader, {})).toBeNull();
+
+    // fetch returns only the chapter-A job; chapter-B's job is invisible.
+    const result = await importReconciliationReport.fetch(db, chapterAReader, {
+      dateFrom: shiftDays(TODAY, -1),
+    });
+    const visibleJobIds = result.rows.map((r) => r.importJobId);
+    expect(visibleJobIds).toContain(uploadedA.importJobId);
+    expect(visibleJobIds).not.toContain(uploadedB.importJobId);
+
+    // Zone-wide reader sees both.
+    const both = await importReconciliationReport.fetch(db, zoneCtx(zone), {
+      dateFrom: shiftDays(TODAY, -1),
+    });
+    const bothIds = both.rows.map((r) => r.importJobId);
+    expect(bothIds).toContain(uploadedA.importJobId);
+    expect(bothIds).toContain(uploadedB.importJobId);
+  });
+
+  it("denies a chapter-scoped caller with no bindings via accessCheck", () => {
+    const noBindings: AuthorizedContext = {
+      userId: "u-x",
+      zoneId: "z-x",
+      regionId: null,
+      roleCodes: ["chapter_treasurer"],
+      chapterIds: [],
+      isPlatformAdmin: false,
+    };
+    expect(importReconciliationReport.accessCheck?.(noBindings, {})).toBe("forbidden");
   });
 });
 

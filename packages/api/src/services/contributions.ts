@@ -718,13 +718,22 @@ export async function postContribution(
       )
       .returning();
     if (!posted) {
-      // A parallel caller raced ahead and posted first. The row exists
-      // (loadDetail saw it) so the only reason an UPDATE affected zero
-      // rows is the status changed under us. Surface the same typed
-      // error a serial caller would have seen.
+      // A parallel writer beat us. Discriminate `not_found` vs
+      // `not_draft`: under `deleteDraftContribution`'s conditional
+      // DELETE the row can be physically gone by the time we run; a
+      // parallel `postContribution` leaves it present with
+      // `status='posted'`. Re-read so the loser surfaces the same
+      // typed error a serial caller would have seen.
+      const [now] = await tx
+        .select({ id: contributions.id })
+        .from(contributions)
+        .where(and(eq(contributions.zoneId, ctx.zoneId), eq(contributions.id, id)))
+        .limit(1);
       throw new ContributionError(
-        "not_draft",
-        "Only draft contributions can be posted.",
+        now ? "not_draft" : "not_found",
+        now
+          ? "Only draft contributions can be posted."
+          : "Contribution not in this zone.",
       );
     }
     await writeAudit(tx, {
@@ -825,10 +834,15 @@ function todayInZone(timeZone: string): string {
  * original.
  *
  * Implementation note: the reversal is inserted with `status='draft'`
- * first because `contribution_lines_posted_guard` blocks line inserts on
- * a parent already in `status='posted'`; once lines + members are in we
- * promote the parent to `posted` in the same tx. The original is flipped
- * to `reversed` last so an audit reader sees the cause-then-effect order.
+ * first because `contribution_lines_posted_guard` blocks line inserts
+ * on a parent already in `status='posted'`; once lines + members are
+ * in we promote the parent to `posted` in the same tx. The original
+ * is flipped to `reversed` *first* (via a conditional UPDATE) to
+ * atomically claim it against parallel callers — see the race-guard
+ * comment in the body. The audit timeline still reflects cause→effect
+ * because `contribution.reverse` is recorded against the original and
+ * `contribution.create` + `contribution.post` against the reversal
+ * row, all in the same tx.
  *
  * Reversals deliberately bypass `assertReferencesInZone` for the copied
  * `accountId` / `paymentMethodId` / `serviceEventId`: the original was
@@ -855,16 +869,20 @@ export async function reverseContribution(
     }
 
     const now = new Date();
-    // Race guard: atomically claim the original before doing any of the
-    // expensive bookkeeping (zone defaults, period derivation, reversal
-    // insert + lines + members). Two parallel `reverseContribution`
-    // calls under READ COMMITTED both see `status='posted'` in their
-    // snapshot and — without this claim — both proceed to insert a
-    // reversal, leaving the original with two corrective entries.
-    // Flipping the original to `reversed` first with a conditional
-    // UPDATE means the loser sees zero affected rows and aborts. We
-    // re-bump `updatedAt` again at the end of the tx so the audit
-    // timeline reflects when the reversal actually committed.
+    // Race guard: atomically claim the original before doing any of
+    // the expensive bookkeeping (zone defaults, period derivation,
+    // reversal insert + lines + members). Two parallel
+    // `reverseContribution` calls under READ COMMITTED both see
+    // `status='posted'` in their snapshot and — without this claim —
+    // both proceed to insert a reversal, leaving the original with
+    // two corrective entries. Flipping the original to `reversed`
+    // first with a conditional UPDATE means the loser sees zero
+    // affected rows and aborts. Side-effect: the trigger
+    // `contributions_posted_guard` early-exits on any further UPDATE
+    // to this row inside the tx (`old.status <> 'posted'`); the
+    // current code never re-updates the original, but a future
+    // maintainer adding e.g. a metadata bump at the end would no
+    // longer be guarded — add a `SELECT … FOR UPDATE` if that lands.
     const claimed = await tx
       .update(contributions)
       .set({
@@ -960,9 +978,11 @@ export async function reverseContribution(
       : [];
 
     // Promote the reversal to posted now that its lines exist. The
-    // original was already flipped to `reversed` at the top of the tx
-    // (see the claim above); the trigger’s status guard on the
-    // original is therefore already in effect when this UPDATE runs.
+    // reversal row is the target of this UPDATE — the original was
+    // already flipped to `reversed` by the claim UPDATE above. The
+    // trigger's posted-guard on the reversal row is irrelevant here
+    // because it only fires when `OLD.status='posted'`, and we're
+    // transitioning from draft.
     const [postedReversal] = await tx
       .update(contributions)
       .set({

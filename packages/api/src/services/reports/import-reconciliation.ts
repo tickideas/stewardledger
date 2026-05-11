@@ -1,10 +1,17 @@
 // packages/api/src/services/reports/import-reconciliation.ts
 // Phase 7 — statement-import reconciliation report (REPORTS.md §2.11).
 //
-// One row per import job. Surfaces the full lifecycle so a treasurer
-// can answer "did every uploaded file end up in contributions?".
-// Excludes nothing: failed and rolled-back jobs still appear so
+// One row per import job in scope. Surfaces the full lifecycle so a
+// treasurer can answer "did every uploaded file end up in
+// contributions?". Failed and rolled-back jobs still appear so
 // operators can chase them.
+//
+// Tenancy: zone-wide readers (zone_owner / zone_admin /
+// zone_finance_admin / zone_auditor / zone_pastor_viewer) see every
+// job, including zone-wide imports with `chapter_id IS NULL`.
+// Chapter-scoped readers see only jobs whose `import_files.chapter_id`
+// is in their bindings — mirrors the scope the import pipeline itself
+// enforces in `tenant-imports.ts`.
 //
 // Money totals are sum of committed-row line amounts grouped by
 // currency. Phase 6 enforces single-currency imports today, so each
@@ -24,7 +31,11 @@ import {
   importRows,
   user as userTable,
 } from "@stewardledger/db/schema";
-import { uuidSchema } from "@stewardledger/shared";
+import {
+  CHAPTER_ROLES,
+  uuidSchema,
+  type AuthorizedContext,
+} from "@stewardledger/shared";
 import {
   addBrandedSheet,
   escapeExcelText,
@@ -98,6 +109,11 @@ const COLUMNS: ReportColumn[] = [
   { key: "errorMessage", label: "Error", kind: "text" },
 ];
 
+function isZoneRead(ctx: AuthorizedContext): boolean {
+  const chapterCodes: readonly string[] = Object.values(CHAPTER_ROLES);
+  return ctx.roleCodes.some((c) => !chapterCodes.includes(c));
+}
+
 export const importReconciliationReport: ReportSpec<
   ImportReconciliationFilters,
   ReconciliationRow
@@ -108,6 +124,14 @@ export const importReconciliationReport: ReportSpec<
     "Every import job with row outcomes, posted contributions, and per-currency totals.",
   filtersSchema: importReconciliationFiltersSchema,
   columns: () => COLUMNS,
+  accessCheck: (ctx, _filters) => {
+    // Zone-wide readers see every job; chapter-scoped readers must own
+    // at least one chapter binding (the per-job scope is applied in
+    // `fetch` against `import_files.chapter_id`).
+    if (isZoneRead(ctx)) return null;
+    if (ctx.chapterIds.length === 0) return "forbidden";
+    return null;
+  },
   async fetch(database, ctx, filters): Promise<ReportFetchResult<ReconciliationRow>> {
     const jobConditions = [eq(importJobs.zoneId, ctx.zoneId)];
     if (filters.importJobId) jobConditions.push(eq(importJobs.id, filters.importJobId));
@@ -117,6 +141,14 @@ export const importReconciliationReport: ReportSpec<
     if (filters.dateTo)
       // include the whole day
       jobConditions.push(sql`${importJobs.createdAt} < (${filters.dateTo}::date + 1)`);
+    // Chapter scope: zone-wide readers see every job (including
+    // zone-wide imports with `chapter_id IS NULL`); chapter-scoped
+    // readers see only jobs whose file is tied to one of their
+    // bindings. The accessCheck above guarantees
+    // `ctx.chapterIds.length > 0` here.
+    if (!isZoneRead(ctx)) {
+      jobConditions.push(inArray(importFiles.chapterId, ctx.chapterIds));
+    }
 
     const jobRows = await database
       .select({
