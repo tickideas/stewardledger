@@ -96,10 +96,6 @@ export interface ReportSpec<F, R, S extends ZodTypeAny = ZodTypeAny> {
   accessCheck?: (ctx: AuthorizedContext, filters: F) => string | null;
 }
 
-/** Type helper: extract the filter shape of a spec. */
-export type ReportFilters<S extends ReportSpec<unknown, unknown>> =
-  S extends ReportSpec<infer F, infer _R> ? F : never;
-
 /**
  * Validate filter input against a spec's schema. Centralised so the
  * route layer and the in-process renderer (export endpoint) share one
@@ -143,7 +139,5 @@ export function reportErrorStatus(code: string): 400 | 403 | 404 | 422 | 500 {
   }
 }
 
-/** Inferred filter type from a spec's schema. Used by callers. */
-export type InferFilters<S> = S extends ReportSpec<infer F, infer _R> ? F : never;
-// re-export Zod inferred helper for spec authors
+/** Re-export Zod inferred helper for spec authors. */
 export type FiltersFrom<Schema extends z.ZodTypeAny> = z.infer<Schema>;

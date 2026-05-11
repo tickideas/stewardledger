@@ -24,7 +24,7 @@ import {
   uuidSchema,
   type AuthorizedContext,
 } from "@stewardledger/shared";
-import { addBrandedSheet } from "./branding";
+import { addBrandedSheet, escapeExcelText } from "./branding";
 import type { ReportColumn, ReportFetchResult, ReportSpec } from "./types";
 
 export const memberListFiltersSchema = z.object({
@@ -192,6 +192,10 @@ export const memberListReport: ReportSpec<MemberListFilters, MemberListRow> = {
     });
     headerRow.commit();
 
+    // Every text column is user-controlled (member full name, email,
+    // mobile, chapter name). Route through `escapeExcelText` so a
+    // poisoned member name like `=cmd|'/c calc'!A0` can't fire when a
+    // viewer opens the workbook.
     let r = 7;
     for (const row of rows) {
       const dataRow = sheet.getRow(r);
@@ -200,6 +204,8 @@ export const memberListReport: ReportSpec<MemberListFilters, MemberListRow> = {
         const v = (row as unknown as Record<string, unknown>)[col.key];
         if (col.key === "isActive") {
           cell.value = row.isActive ? "Active" : "Inactive";
+        } else if (typeof v === "string") {
+          cell.value = escapeExcelText(v);
         } else {
           cell.value = (v as ExcelJS.CellValue) ?? null;
         }

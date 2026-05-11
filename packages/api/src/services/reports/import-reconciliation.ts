@@ -27,6 +27,7 @@ import {
 import { uuidSchema } from "@stewardledger/shared";
 import {
   addBrandedSheet,
+  escapeExcelText,
   moneyFormatForCurrency,
 } from "./branding";
 import type {
@@ -280,12 +281,15 @@ export const importReconciliationReport: ReportSpec<
     });
     headerRow.commit();
 
+    // User-controlled text columns (fileName, uploadedBy, errorMessage)
+    // go through `escapeExcelText` so a poisoned filename or parser
+    // echo can't smuggle a formula into the workbook.
     let r = 7;
     for (const row of rows) {
       const dataRow = sheet.getRow(r);
-      dataRow.getCell(1).value = row.fileName;
-      dataRow.getCell(2).value = row.uploadedBy;
-      dataRow.getCell(3).value = row.uploadedAt;
+      dataRow.getCell(1).value = escapeExcelText(row.fileName);
+      dataRow.getCell(2).value = escapeExcelText(row.uploadedBy);
+      dataRow.getCell(3).value = escapeExcelText(row.uploadedAt);
       dataRow.getCell(4).value = row.status;
       dataRow.getCell(5).value = row.totalRows;
       dataRow.getCell(6).value = row.matchedRows;
@@ -294,10 +298,15 @@ export const importReconciliationReport: ReportSpec<
       dataRow.getCell(9).value = row.failedRows;
       dataRow.getCell(10).value = row.committedRows;
       dataRow.getCell(11).value = row.contributionsPosted;
-      dataRow.getCell(12).value = row.totalsByCurrency
-        .map((t) => `${t.currencyCode} ${t.total}`)
-        .join(", ");
-      dataRow.getCell(13).value = row.errorMessage;
+      // Totals string is server-built from currency codes + decimal
+      // strings — neither can lead with a dangerous char, but route
+      // through the helper for uniformity.
+      dataRow.getCell(12).value = escapeExcelText(
+        row.totalsByCurrency
+          .map((t) => `${t.currencyCode} ${t.total}`)
+          .join(", "),
+      );
+      dataRow.getCell(13).value = escapeExcelText(row.errorMessage);
       dataRow.commit();
       r += 1;
     }

@@ -672,7 +672,20 @@ export async function updateDraftContribution(
   });
 }
 
-/** Promote a draft contribution to posted. Trigger enforces immutability afterwards. */
+/**
+ * Promote a draft contribution to posted. Two parallel callers cannot
+ * both succeed: the conditional UPDATE filters `status='draft'`, so
+ * the loser's UPDATE affects zero rows and we re-classify the failure
+ * as `not_draft` (or `not_found`) by reading the row's current state.
+ * Without the conditional UPDATE both txs would race past the
+ * pre-flight status check under READ COMMITTED — the trigger would
+ * catch the second writer but the error would be a raw Postgres
+ * exception instead of a typed `ContributionError`.
+ *
+ * The trigger `contributions_posted_guard` still enforces immutability
+ * for downstream edits; the conditional UPDATE is the service-layer
+ * mirror of that invariant on the draft→posted boundary.
+ */
 export async function postContribution(
   database: Database,
   ctx: ActorContext,
@@ -696,8 +709,24 @@ export async function postContribution(
         updatedAt: now,
         updatedByUserId: ctx.userId,
       })
-      .where(and(eq(contributions.zoneId, ctx.zoneId), eq(contributions.id, id)))
+      .where(
+        and(
+          eq(contributions.zoneId, ctx.zoneId),
+          eq(contributions.id, id),
+          eq(contributions.status, "draft"),
+        ),
+      )
       .returning();
+    if (!posted) {
+      // A parallel caller raced ahead and posted first. The row exists
+      // (loadDetail saw it) so the only reason an UPDATE affected zero
+      // rows is the status changed under us. Surface the same typed
+      // error a serial caller would have seen.
+      throw new ContributionError(
+        "not_draft",
+        "Only draft contributions can be posted.",
+      );
+    }
     await writeAudit(tx, {
       zoneId: ctx.zoneId,
       actorUserId: ctx.userId,

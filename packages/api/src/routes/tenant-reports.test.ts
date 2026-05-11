@@ -16,7 +16,8 @@ import {
   userRoleBindings,
   zones,
 } from "@stewardledger/db";
-import { ZONE_ROLES } from "@stewardledger/shared";
+import { CHAPTER_ROLES, ZONE_ROLES } from "@stewardledger/shared";
+void CHAPTER_ROLES;
 import { createApp } from "../app";
 import { auth } from "../auth";
 import { db } from "../db";
@@ -34,9 +35,11 @@ interface SeededZone {
   id: string;
   slug: string;
   chapterIdA: string;
+  chapterIdB: string;
   memberId: string;
   ownerRoleId: string;
   auditorRoleId: string;
+  treasurerRoleId: string;
 }
 
 async function seedZone(slug: string): Promise<SeededZone> {
@@ -59,13 +62,19 @@ async function seedZone(slug: string): Promise<SeededZone> {
     ministryYearStartMonth: 3,
   });
 
-  const [chapterA] = await db
+  const [chapterA, chapterB] = await db
     .insert(chapters)
     .values([
       {
         zoneId: zone.id,
         referenceCode: `CR${unique()}`.slice(0, 12),
-        name: `Reports Chapter ${unique()}`,
+        name: `Reports Chapter A ${unique()}`,
+        dateFrom: "2024-01-01",
+      },
+      {
+        zoneId: zone.id,
+        referenceCode: `CR${unique()}`.slice(0, 12),
+        name: `Reports Chapter B ${unique()}`,
         dateFrom: "2024-01-01",
       },
     ])
@@ -86,9 +95,11 @@ async function seedZone(slug: string): Promise<SeededZone> {
     id: zone.id,
     slug: zone.slug,
     chapterIdA: chapterA.id,
+    chapterIdB: chapterB.id,
     memberId: member.id,
     ownerRoleId: roleIds.get(ZONE_ROLES.ZONE_OWNER)!,
     auditorRoleId: roleIds.get(ZONE_ROLES.ZONE_AUDITOR)!,
+    treasurerRoleId: roleIds.get("chapter_treasurer")!,
   };
 }
 
@@ -125,6 +136,8 @@ describe("tenant reports routes", () => {
   let zoneB: SeededZone;
   let ownerA: string;
   let auditorA: string;
+  let treasurerB: string; // bound to zoneA chapter B only
+  let nobody: string; // authenticated but with no bindings in zoneA
   const today = new Date().toISOString().slice(0, 10);
   const cleanupSlugs: string[] = [];
   const cleanupUserIds: string[] = [];
@@ -141,11 +154,22 @@ describe("tenant reports routes", () => {
 
     ownerA = await seedUser(`rpt-owner+${unique()}@example.com`);
     auditorA = await seedUser(`rpt-auditor+${unique()}@example.com`);
-    cleanupUserIds.push(ownerA, auditorA);
+    treasurerB = await seedUser(`rpt-treasurerB+${unique()}@example.com`);
+    nobody = await seedUser(`rpt-nobody+${unique()}@example.com`);
+    cleanupUserIds.push(ownerA, auditorA, treasurerB, nobody);
 
+    // nobody is intentionally absent from userRoleBindings: they have a
+    // session but no role in zoneA, so the requireTenantAuth middleware
+    // surfaces a 403 before the route handler ever runs.
     await db.insert(userRoleBindings).values([
       { userId: ownerA, zoneId: zoneA.id, roleId: zoneA.ownerRoleId },
       { userId: auditorA, zoneId: zoneA.id, roleId: zoneA.auditorRoleId },
+      {
+        userId: treasurerB,
+        zoneId: zoneA.id,
+        chapterId: zoneA.chapterIdB,
+        roleId: zoneA.treasurerRoleId,
+      },
     ]);
   });
 
@@ -291,5 +315,43 @@ describe("tenant reports routes", () => {
       "/api/tenant/reports/no-such-report/data",
     );
     expect(res.status).toBe(404);
+  });
+
+  it("403 when an authenticated user has no bindings in the zone", async () => {
+    asUser(nobody, "nobody@example.com");
+    const res = await get(zoneA.slug, "/api/tenant/reports");
+    // requireTenantAuth fires before the reports gate, so the body code
+    // is the generic "forbidden" envelope rather than the report-
+    // specific one.
+    expect(res.status).toBe(403);
+  });
+
+  it("maps a per-spec accessCheck denial to 403 with the denial code", async () => {
+    // treasurerB is bound to chapterB only; member is in chapterA. The
+    // member-statement fetch path throws ReportError("forbidden"); the
+    // route handler must surface that as a 403.
+    asUser(treasurerB, "treasurerB@example.com");
+    const params = new URLSearchParams({
+      memberId: zoneA.memberId,
+      dateFrom: today,
+      dateTo: today,
+    });
+    const res = await get(
+      zoneA.slug,
+      `/api/tenant/reports/member-statement/data?${params.toString()}`,
+    );
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("forbidden");
+  });
+
+  it("member-list accessCheck denies an out-of-scope chapter filter with 403", async () => {
+    asUser(treasurerB, "treasurerB@example.com");
+    // treasurerB is bound to chapterB only; ask for chapterA.
+    const res = await get(
+      zoneA.slug,
+      `/api/tenant/reports/member-list/data?chapterId=${zoneA.chapterIdA}`,
+    );
+    expect(res.status).toBe(403);
   });
 });

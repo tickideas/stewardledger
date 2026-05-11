@@ -72,8 +72,12 @@ export function addBrandedSheet(args: BrandedSheetArgs): ExcelJS.Worksheet {
   const colCount = Math.max(args.columnCount, 1);
   const lastColLetter = excelColumnLetter(colCount);
 
+  // Every header cell carries user-controlled text (zone name, legal
+  // name, filter summary). Escape each through `escapeExcelText` so a
+  // tenant who sets their zone name to `=HYPERLINK(...)` can't poison
+  // the workbook for downstream readers.
   const titleCell = sheet.getCell("A1");
-  titleCell.value = args.branding.zoneName;
+  titleCell.value = escapeExcelText(args.branding.zoneName);
   titleCell.font = { bold: true, size: 16 };
   sheet.mergeCells(`A1:${lastColLetter}1`);
 
@@ -82,18 +86,20 @@ export function addBrandedSheet(args: BrandedSheetArgs): ExcelJS.Worksheet {
   if (args.branding.legalName) subParts.push(args.branding.legalName);
   subParts.push(`Country: ${args.branding.countryCode}`);
   subParts.push(`Default currency: ${args.branding.defaultCurrencyCode}`);
-  subRow.value = subParts.join("  •  ");
+  subRow.value = escapeExcelText(subParts.join("  •  "));
   subRow.font = { color: { argb: "FF555555" }, size: 10 };
   sheet.mergeCells(`A2:${lastColLetter}2`);
 
   const titleRow = sheet.getCell("A3");
-  titleRow.value = `${args.reportTitle} — generated ${new Date().toISOString()}`;
+  titleRow.value = escapeExcelText(
+    `${args.reportTitle} — generated ${new Date().toISOString()}`,
+  );
   titleRow.font = { bold: true, size: 11 };
   sheet.mergeCells(`A3:${lastColLetter}3`);
 
   if (args.filterSummary) {
     const filterCell = sheet.getCell("A4");
-    filterCell.value = args.filterSummary;
+    filterCell.value = escapeExcelText(args.filterSummary);
     filterCell.font = { italic: true, color: { argb: "FF666666" }, size: 10 };
     sheet.mergeCells(`A4:${lastColLetter}4`);
   }
@@ -101,7 +107,7 @@ export function addBrandedSheet(args: BrandedSheetArgs): ExcelJS.Worksheet {
   return sheet;
 }
 
-/** Excel column index (1-based) → letter. Supports up to ZZ (702 cols). */
+/** Excel column index (1-based) → letter. Handles arbitrary positive integers. */
 export function excelColumnLetter(index1Based: number): string {
   let n = index1Based;
   let s = "";
@@ -111,6 +117,40 @@ export function excelColumnLetter(index1Based: number): string {
     n = Math.floor((n - 1) / 26);
   }
   return s || "A";
+}
+
+/**
+ * Escape a string before writing it to an Excel/CSV text cell.
+ *
+ * Excel evaluates any cell whose first character is `=`, `+`, `-`, or
+ * `@` as a formula (CWE-1236 / OWASP "Formula Injection"). A poisoned
+ * `description` or filename can therefore exfiltrate via `HYPERLINK`,
+ * `WEBSERVICE`, or DDE on open. We prefix any such value with a
+ * leading apostrophe — the canonical Excel escape: the apostrophe is
+ * stripped on display but the cell is treated as text. Leading control
+ * characters (`\t` / `\r` / `\n`) get the same treatment because
+ * they're common smuggling prefixes in CSV exports.
+ *
+ * Returns the input unchanged when it isn't a string or doesn't start
+ * with a dangerous character, so numbers, dates, and clean text are
+ * untouched.
+ */
+export function escapeExcelText<T>(value: T): T | string {
+  if (typeof value !== "string" || value.length === 0) return value;
+  const first = value.charCodeAt(0);
+  // = + - @ \t \r \n
+  if (
+    first === 0x3d ||
+    first === 0x2b ||
+    first === 0x2d ||
+    first === 0x40 ||
+    first === 0x09 ||
+    first === 0x0d ||
+    first === 0x0a
+  ) {
+    return `'${value}`;
+  }
+  return value;
 }
 
 /** Money-formatted cell style for an ISO 4217 currency. */

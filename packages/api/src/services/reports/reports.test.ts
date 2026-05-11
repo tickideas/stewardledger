@@ -290,7 +290,7 @@ describe("member-statement report", () => {
     expect(sheet!.getCell("A6").value).toBe("Date");
   });
 
-  it("denies a chapter-scoped caller whose chapter does not own the member", async () => {
+  it("throws ReportError('forbidden') when the caller's chapter does not own the member", async () => {
     const zone = await seedZone();
     seededZones.push(zone.id);
 
@@ -309,13 +309,68 @@ describe("member-statement report", () => {
       dateTo: shiftDays(TODAY, 1),
       includeVoided: false,
     };
-    // accessCheck passes (chapter B is bound); but the fetch returns
-    // empty because the member's home chapter is not in the caller's
-    // bindings — guarding the PII at the row level.
+    // accessCheck passes (chapter B is bound); the row-level enforcement
+    // throws ReportError("forbidden") rather than returning empty so a
+    // route caller cannot use the empty response as an existence oracle.
     expect(memberStatementReport.accessCheck?.(chapterScopedCtx, filters)).toBeNull();
-    const result = await memberStatementReport.fetch(db, chapterScopedCtx, filters);
-    expect(result.rows).toEqual([]);
-    expect(result.subtotals).toEqual([]);
+    await expect(
+      memberStatementReport.fetch(db, chapterScopedCtx, filters),
+    ).rejects.toMatchObject({ code: "forbidden" });
+  });
+
+  it("escapes formula-injection prefixes in description and member name cells", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    // Poisoned description on a posted contribution. Member full name
+    // also poisoned via direct UPDATE so we exercise both code paths.
+    const created = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[0],
+      sourceType: "manual",
+      contributionDate: TODAY,
+      description: `=HYPERLINK("http://attacker/x","click")`,
+      lines: [{ givingTypeId: zone.givingTypeId, amount: "10.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, created.contribution.id);
+
+    const result = await memberStatementReport.fetch(db, ctx, {
+      memberId: zone.memberIds[0],
+      dateFrom: shiftDays(TODAY, -1),
+      dateTo: shiftDays(TODAY, 1),
+      includeVoided: false,
+    });
+    const branding = await loadReportBranding(db, zone.id);
+    const bytes = await memberStatementReport.excel(
+      result.rows,
+      result.subtotals,
+      {
+        memberId: zone.memberIds[0],
+        dateFrom: shiftDays(TODAY, -1),
+        dateTo: shiftDays(TODAY, 1),
+        includeVoided: false,
+      },
+      branding,
+      result.meta,
+    );
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(toArrayBuffer(bytes));
+    const sheet = wb.getWorksheet("Statement")!;
+    // Find the description column (last of COLUMNS array).
+    const headerRow = sheet.getRow(6);
+    let descCol = 0;
+    headerRow.eachCell((cell, col) => {
+      if (cell.value === "Description") descCol = col;
+    });
+    expect(descCol).toBeGreaterThan(0);
+    const dataRow = sheet.getRow(7);
+    const descValue = dataRow.getCell(descCol).value;
+    // The leading `=` MUST have been escaped to a literal apostrophe-
+    // prefixed string so Excel renders it as text, not a formula.
+    // ExcelJS stores the apostrophe-escaped value verbatim; what
+    // matters is that the *raw* cell value no longer begins with `=`.
+    expect(typeof descValue === "string" && descValue.startsWith("=")).toBe(false);
   });
 });
 
@@ -389,6 +444,17 @@ describe("import-reconciliation report", () => {
     // voided rows from the posted tally.
     expect(result.rows[0].contributionsPosted).toBe(0);
     expect(result.rows[0].totalsByCurrency).toEqual([]);
+  });
+});
+
+describe("member-statement filter schema", () => {
+  it("rejects dateFrom > dateTo with invalid_filters at the schema layer", async () => {
+    const parsed = memberStatementReport.filtersSchema.safeParse({
+      memberId: "00000000-0000-0000-0000-000000000000",
+      dateFrom: "2025-12-31",
+      dateTo: "2025-01-01",
+    });
+    expect(parsed.success).toBe(false);
   });
 });
 

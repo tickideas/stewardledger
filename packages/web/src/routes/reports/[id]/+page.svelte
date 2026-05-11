@@ -36,6 +36,10 @@
   let data = $state<DataResponse | null>(null);
   let loadError = $state<string | null>(null);
   let loading = $state(false);
+  // Persisted across re-submits so the previous run can be aborted
+  // when the treasurer mashes "Run report" twice in a row.
+  let runController: AbortController | null = null;
+  let downloadController: AbortController | null = null;
 
   // Filter form state — superset across the three PR-1 reports.
   let memberId = $state("");
@@ -96,12 +100,13 @@
         `/api/tenant/reports/${reportId}/data?${params.toString()}`,
         signal,
       );
+      if (signal.aborted) return;
       data = res;
     } catch (err) {
       if (isAbortError(err)) return;
       loadError = err instanceof ApiError ? err.message : "Could not run report.";
     } finally {
-      loading = false;
+      if (!signal.aborted) loading = false;
     }
   }
 
@@ -117,6 +122,9 @@
    * prod paths on the same code.
    */
   async function downloadXlsx() {
+    downloadController?.abort();
+    const controller = new AbortController();
+    downloadController = controller;
     downloading = true;
     downloadError = null;
     try {
@@ -126,7 +134,7 @@
       if (slug) headers.set("x-stewardledger-zone-slug", slug);
       const res = await fetch(
         `${PUBLIC_API_URL}/api/tenant/reports/${reportId}/export.xlsx?${params.toString()}`,
-        { method: "GET", credentials: "include", headers },
+        { method: "GET", credentials: "include", headers, signal: controller.signal },
       );
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -143,9 +151,10 @@
       // Defer revoke so Safari has time to start the download.
       setTimeout(() => URL.revokeObjectURL(url), 5_000);
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       downloadError = err instanceof Error ? err.message : "Download failed.";
     } finally {
-      downloading = false;
+      if (!controller.signal.aborted) downloading = false;
     }
   }
 
@@ -164,9 +173,18 @@
 
   function onSubmit(evt: SubmitEvent) {
     evt.preventDefault();
+    runController?.abort();
     const controller = new AbortController();
+    runController = controller;
     void runReport(controller.signal);
   }
+
+  $effect(() => {
+    return () => {
+      runController?.abort();
+      downloadController?.abort();
+    };
+  });
 </script>
 
 <div class="max-w-6xl mx-auto px-6 py-8">
@@ -300,17 +318,19 @@
         </button>
       {/if}
     </div>
-    {#if loadError}
-      <p class="mt-3 text-sm text-rose-700">{loadError}</p>
-    {/if}
-    {#if downloadError}
-      <p class="mt-3 text-sm text-rose-700">{downloadError}</p>
-    {/if}
+    <div aria-live="polite" class="mt-3 text-sm text-rose-700">
+      {#if loadError}
+        <p>{loadError}</p>
+      {/if}
+      {#if downloadError}
+        <p>{downloadError}</p>
+      {/if}
+    </div>
   </form>
 
   {#if data}
     <div class="mt-6 overflow-x-auto rounded-xl border bg-white shadow-sm">
-      <table class="min-w-full text-sm">
+      <table class="min-w-full text-sm" aria-label="Report rows">
         <thead class="bg-slate-50 text-left text-slate-600">
           <tr>
             {#each data.columns as col (col.key)}
