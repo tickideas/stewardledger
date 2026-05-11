@@ -146,7 +146,7 @@ Exit checklist:
 
 ---
 
-## Phase 5 — Contributions (manual + envelope batch) *(current focus)*
+## Phase 5 — Contributions (manual + envelope batch)
 
 Deliverables:
 
@@ -179,11 +179,11 @@ Exit checklist:
 
 ---
 
-## Phase 6 — Imports pipeline (flagship)
+## Phase 6 — Imports pipeline (flagship) *(current focus)*
 
 Deliverables:
 
-- Import file upload (CSV/XLSX) with checksum + storage in object storage.
+- Import file upload (CSV in Phase 6; XLSX deferred until a hardened parser lands) with checksum + storage in object storage.
 - Background `import.parse` job populating `import_rows`.
 - Background `import.match` job filling member / chapter / giving type / period.
 - Failure catalog + per-row failure capture.
@@ -191,15 +191,27 @@ Deliverables:
 - Atomic commit job posting validated rows into contributions.
 - Re-upload duplicate detection.
 - Bank-format pluggable parsers (CSV first, then bank-specific).
-- Import dashboard: history, status, retry, rollback.
+- Import dashboard: statement-import history, status, chapter-scoped upload, row preview, commit, rollback. Member, target, setup, retry, and inline row-fix flows are deferred to Phase 6 polish.
 - Replay-friendly: a job can be re-run safely; idempotency keys per row.
+
+Implementation notes:
+
+- Schema (`packages/db/src/schema/imports.ts`): `import_files`, `import_jobs`, `import_rows`, `import_row_failures`, `import_failure_types` (platform-default catalog + per-zone overrides, split partial unique indexes so the platform catalog is race-safe), `import_schedules` (partial unique on (zone, job) where committed_at and rolled_back_at are null — only one active schedule per job), `processed_transactions`. Composite `(zone_id, id)` FKs across the board.
+- Object storage adapter at `packages/api/src/services/storage.ts` ships an FS backend by default (`STORAGE_ROOT`, anchored at repo root); S3 / R2 / B2 are a one-class swap. Storage keys are tenant-scoped: `{zoneId}/imports/{yyyy}/{mm}/{fileId}-{sha8}.{ext}`. Path resolution uses the same `resolve + startsWith(root + sep)` guard pattern as `db:bootstrap`'s ENV_FILE check.
+- Pluggable parsers in `packages/api/src/services/imports/parsers.ts` cover CSV (RFC4180 via papaparse, UK/ISO date handling, bracketed-negative + currency-symbol tolerant) with parser-level row/column/cell caps; XLSX imports are intentionally disabled until StewardLedger ships a hardened parser. Header aliasing means a bank statement only needs the obvious labels.
+- Pipeline orchestration in `packages/api/src/services/imports/index.ts`: `uploadImport` → `runImportJob` → `scheduleImport` → `commitImport` → `rollbackImport`. Upload metadata + bytes are persisted in a short tx; parse/match run synchronously outside that tx for Phase 6; row/failure persistence plus the final `matched` status update commit atomically in a second tx. pg-boss wraps `runImportJob` later without service-layer changes.
+- Concurrency safety: every lifecycle transition (`received→parsing`, `matched→scheduled`, `scheduled→committing`, `committed→rolled_back`) is a conditional UPDATE — the WHERE clause filters by current status, so two parallel callers cannot both succeed. The upload path races on the split chapter-aware checksum/source partial unique indexes and falls back to the reuse branch on 23505. `storage().put` happens after the file row is inserted; if a later DB write rolls back, the service best-effort deletes the orphaned object because object storage is not transactional.
+- Bulk commit: the commit path uses bounded-size chunked writes (insert drafts → insert lines → bulk-promote to posted → insert processed_transactions → backfill import_rows.contribution_id via chunked `UPDATE … FROM (VALUES …)`). Round trips scale by chunks rather than rows, and each statement stays below Postgres' bind-parameter ceiling. Audit emits `contribution.create` + `contribution.post` per row, mirroring Phase 5.
+- Tenant API at `/api/tenant/imports[/:id][/rows|/schedule|/commit|/rollback]` (`packages/api/src/routes/tenant-imports.ts`). Phase 6 accepts statement CSV imports only; unsupported file types fail with `unsupported_file_type` until their dedicated strategies exist. Chapter scope is enforced at every endpoint: a `CHAPTER_TREASURER` bound to Chapter A cannot upload, read, schedule, commit, or roll back jobs tied to Chapter B (or zone-wide jobs with `chapter_id IS NULL`). Bookkeepers upload + read; treasurers / finance admins schedule, commit, and roll back.
+- SvelteKit dashboard at `/imports` (list + upload) and `/imports/[id]` (summary stats, row preview with per-row failures, action buttons). Upload uses the canonical `PUBLIC_API_URL` from `$lib/env` (the pre-review code's `VITE_PUBLIC_API_URL` typo silently broke split-host production deploys).
+- Idempotency: re-uploading the same bytes returns the existing job (file-level), and the matcher flags rows whose `external_transaction_id` is already in `processed_transactions` (row-level). Commit skips duplicates; rollback voids the committed contributions, snapshots the freed external ids into the audit `after` payload, and deletes the `processed_transactions` rows so a corrected re-upload can replace them.
 
 Exit checklist:
 
-- [ ] One canonical statement file imports end-to-end into contributions atomically.
-- [ ] Failed rows are listed with human-readable reasons and an inline "fix" UI.
-- [ ] A second upload of the same file produces zero new contributions (full idempotency via `processed_transactions`).
-- [ ] An import job can be rolled back; the audit log shows the rollback.
+- [x] One canonical statement file imports end-to-end into contributions atomically (`imports.test.ts` "uploads, matches, schedules, commits…").
+- [x] Failed rows are listed with machine-readable reasons in the dashboard; manual correction currently means fixing the source CSV and re-uploading. Human-readable failure descriptions plus inline row-fix endpoint/UI are deferred to Phase 6 polish.
+- [x] A second upload of the same file produces zero new contributions (full idempotency via `processed_transactions`; covered by the "re-uploading new bytes with already-seen external ids" test).
+- [x] An import job can be rolled back; the audit log shows the rollback (`rollbackImport` writes `import.rollback` + per-contribution `contribution.void` events; verified by the "rolls back a committed job" test).
 
 ---
 

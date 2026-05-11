@@ -8,7 +8,7 @@ import {
   invitationCreateSchema,
   type AuthorizedContext,
 } from "@stewardledger/shared";
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { Hono } from "hono";
 import { chapters, invitations, zones } from "@stewardledger/db/schema";
 import { db } from "../db";
@@ -26,6 +26,7 @@ import { tenantContributionsRouter } from "./tenant-contributions";
 import { tenantGivingEventsRouter } from "./tenant-giving-events";
 import { tenantGivingMethodsRouter } from "./tenant-giving-methods";
 import { tenantGivingRouter } from "./tenant-giving";
+import { tenantImportsRouter } from "./tenant-imports";
 import { tenantMembersRouter } from "./tenant-members";
 
 export const tenantRouter = new Hono();
@@ -38,6 +39,7 @@ tenantRouter.route("/", tenantGivingRouter);
 tenantRouter.route("/", tenantGivingMethodsRouter);
 tenantRouter.route("/", tenantGivingEventsRouter);
 tenantRouter.route("/", tenantContributionsRouter);
+tenantRouter.route("/", tenantImportsRouter);
 
 /** Current user's authorization context for the resolved zone. */
 tenantRouter.get("/me", async (c) => {
@@ -55,6 +57,17 @@ tenantRouter.get("/me", async (c) => {
 
 tenantRouter.get("/chapters", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
+  const zoneWide = hasAnyRole(
+    ctx,
+    ZONE_ROLES.ZONE_OWNER,
+    ZONE_ROLES.ZONE_ADMIN,
+    ZONE_ROLES.ZONE_FINANCE_ADMIN,
+    ZONE_ROLES.ZONE_AUDITOR,
+    ZONE_ROLES.ZONE_PASTOR_VIEWER,
+  );
+  if (!zoneWide && ctx.chapterIds.length === 0) return c.json({ items: [] });
+  const conditions = [eq(chapters.zoneId, ctx.zoneId), isNull(chapters.deletedAt)];
+  if (!zoneWide) conditions.push(inArray(chapters.id, ctx.chapterIds));
   const rows = await db
     .select({
       id: chapters.id,
@@ -66,7 +79,7 @@ tenantRouter.get("/chapters", async (c) => {
       createdAt: chapters.createdAt,
     })
     .from(chapters)
-    .where(and(eq(chapters.zoneId, ctx.zoneId), isNull(chapters.deletedAt)))
+    .where(and(...conditions))
     .orderBy(asc(chapters.referenceCode));
   return c.json({ items: rows });
 });

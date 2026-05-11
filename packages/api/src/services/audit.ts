@@ -20,6 +20,8 @@ export interface AuditWrite {
   requestId?: string | null;
 }
 
+const AUDIT_INSERT_CHUNK = 1_000;
+
 function toRow(evt: AuditWrite) {
   return {
     zoneId: evt.zoneId,
@@ -47,6 +49,8 @@ export async function writeAudit(database: Db, evt: AuditWrite): Promise<void> {
  * an N+1 round-trip on the hot path (e.g. batch posting).
  */
 export async function writeAuditMany(database: Db, evts: AuditWrite[]): Promise<void> {
-  if (evts.length === 0) return;
-  await database.insert(auditEvents).values(evts.map(toRow));
+  for (let i = 0; i < evts.length; i += AUDIT_INSERT_CHUNK) {
+    const chunk = evts.slice(i, i + AUDIT_INSERT_CHUNK);
+    if (chunk.length > 0) await database.insert(auditEvents).values(chunk.map(toRow));
+  }
 }

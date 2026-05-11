@@ -10,6 +10,7 @@
       <nav class="text-sm text-slate-600 flex gap-4">
         <a href="/members" class="hover:text-slate-900">Members</a>
         <a href="/contributions" class="hover:text-slate-900">Contributions</a>
+        <a href="/imports" class="hover:text-slate-900">Imports</a>
         <a href="/signup" class="hover:text-slate-900">Set up a zone</a>
         <a href="/login" class="hover:text-slate-900">Sign in</a>
       </nav>

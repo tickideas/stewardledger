@@ -554,22 +554,22 @@ import_files
   storage_key text not null               -- object storage key
   size_bytes int not null
   checksum_sha256 text not null
-  file_type text not null                 -- statement | member | giving | target
-  source_type text null                   -- "bank_a" | "online_giving" | ...
+  file_type text not null                 -- statement in Phase 6; member/giving/target deferred
+  source_type text not null default 'generic_csv' -- generic_csv | bank_csv | online_giving
   uploaded_at timestamptz default now()
 
 import_jobs
   id uuid pk
   zone_id uuid not null
   import_file_id uuid not null references import_files(id)
-  status text not null                    -- received | parsing | parsed | validating | scheduled | committing | committed | failed | rolled_back
+  status text not null                    -- received | parsing | parsed | matching | matched | scheduled | committing | committed | failed | rolled_back
   total_rows int not null default 0
   matched_rows int not null default 0
   unmatched_rows int not null default 0
   duplicate_rows int not null default 0
   failed_rows int not null default 0
   committed_rows int not null default 0
-  started_at, finished_at, error_message
+  started_at, finished_at, error_code, error_message
   created_at, updated_at
 
 import_rows
@@ -598,7 +598,7 @@ import_row_failures
   id uuid pk
   zone_id uuid not null
   row_id uuid not null references import_rows(id) on delete cascade
-  failure_type_id uuid not null references import_failure_types(id)
+  failure_type_id uuid not null references import_failure_types(id) -- platform default or same-zone override
   details jsonb null
 
 import_failure_types                      -- catalog
@@ -746,7 +746,7 @@ A billing party owning multiple zones holds one subscription per zone. There is 
 2. `contributions` rows in `posted` are immutable except for void/reversal flow.
 3. `contribution_lines.amount` is signed: positive on inflow contributions, negative on reversals. Service-layer write paths reject non-positive amounts on every endpoint other than `reverseContribution`, which is the only place that emits negatives. The `total_amount` on `contributions` equals the signed sum of its lines; this invariant is enforced by the service layer (`createContribution` / `updateDraftContribution`), not by a DB constraint. See §6 "Sign convention (Phase 5)".
 4. All `contribution_lines` of a contribution share its `currency_code`.
-5. `import_jobs.status = 'committed'` ⇒ every `import_rows` row in that job has `validation_status = 'valid'` and points to a `contribution_id`.
+5. `import_jobs.status = 'committed'` ⇒ every non-duplicate `import_rows` row committed by that job has `validation_status = 'valid'` and points to a `contribution_id`; duplicate rows remain linked only to their duplicate source.
 6. Audit event rows are never updated or deleted by application code.
 7. A user's `user_role_bindings` resolves their permission set; absence ⇒ no access.
 8. `members.reference_code` is unique within `zone_id`.

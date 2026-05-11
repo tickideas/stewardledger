@@ -491,3 +491,64 @@ export const contributionBatchVoidSchema = z.object({
   voidReason: z.string().min(1).max(2000),
 });
 export type ContributionBatchVoidInput = z.infer<typeof contributionBatchVoidSchema>;
+
+// ─── Imports (Phase 6) ───────────────────────────────────────────────
+
+export const IMPORT_FILE_TYPES = ["statement"] as const;
+export const importFileTypeSchema = z.enum(IMPORT_FILE_TYPES);
+
+export const IMPORT_SOURCE_TYPES = [
+  "generic_csv",
+  "bank_csv",
+  "online_giving",
+] as const;
+export const importSourceTypeSchema = z.enum(IMPORT_SOURCE_TYPES);
+
+/**
+ * Initiate an import. The file is uploaded as multipart/form-data with the
+ * binary body and these fields. Service-layer hashes the bytes and applies
+ * the zone/checksum/file-type/source-type/chapter-scope re-upload guard.
+ */
+export const importCreateSchema = z.object({
+  fileType: importFileTypeSchema.default("statement"),
+  sourceType: importSourceTypeSchema.default("generic_csv"),
+  chapterId: uuidSchema.nullish(),
+});
+export type ImportCreateInput = z.infer<typeof importCreateSchema>;
+
+export const importListQuerySchema = z.object({
+  status: z
+    .enum([
+      "received",
+      "parsing",
+      "parsed",
+      "matching",
+      "matched",
+      "scheduled",
+      "committing",
+      "committed",
+      "failed",
+      "rolled_back",
+    ])
+    .optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type ImportListQuery = z.infer<typeof importListQuerySchema>;
+
+export const importRowListQuerySchema = z.object({
+  matchStatus: z.enum(["pending", "matched", "partial", "unmatched"]).optional(),
+  validationStatus: z.enum(["pending", "valid", "invalid"]).optional(),
+  isDuplicate: z
+    .union([z.boolean(), z.enum(["true", "false"])])
+    .transform((v) => (typeof v === "boolean" ? v : v === "true"))
+    .optional(),
+  limit: z.coerce.number().int().min(1).max(500).default(100),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type ImportRowListQuery = z.infer<typeof importRowListQuerySchema>;
+
+export const importRollbackSchema = z.object({
+  reason: z.string().min(1).max(2000),
+});
+export type ImportRollbackInput = z.infer<typeof importRollbackSchema>;
