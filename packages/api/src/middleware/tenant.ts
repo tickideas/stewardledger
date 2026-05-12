@@ -1,6 +1,7 @@
 // packages/api/src/middleware/tenant.ts
 // Resolves the current zone (tenant) from the Host header — subdomain or custom domain.
-// Throws 404 if no zone matches; downstream handlers may attach the user binding context.
+// Also accepts the zone header on the configured split API host.
+// RELEVANT FILES: ./auth.ts, ../app.ts, ../../../web/src/lib/api.ts
 
 import { zoneSlugSchema, type AuthorizedContext } from "@stewardledger/shared";
 import { eq } from "drizzle-orm";
@@ -41,9 +42,24 @@ export function resolveDevZoneSlugFromHeader(
   nodeEnv: string,
   tenantDomain: string,
 ): string | null {
-  if (nodeEnv === "production" || tenantDomain !== "localhost" || !header) return null;
+  if (nodeEnv === "production" || tenantDomain !== "localhost") return null;
+  return resolveZoneSlugFromHeader(header);
+}
+
+export function resolveZoneSlugFromHeader(header: string | undefined): string | null {
+  if (!header) return null;
   const parsed = zoneSlugSchema.safeParse(header);
   return parsed.success ? parsed.data : null;
+}
+
+export function hostMatchesPublicApiOrigin(host: string, publicApiUrl: string): boolean {
+  if (!host) return false;
+  try {
+    const apiHost = new URL(publicApiUrl).hostname.toLowerCase();
+    return host.toLowerCase().split(":")[0] === apiHost;
+  } catch {
+    return false;
+  }
 }
 
 /** Hono middleware that loads the tenant by Host header. */
@@ -53,6 +69,9 @@ export const tenantMiddleware: MiddlewareHandler = async (c: Context, next) => {
 
   const slug =
     resolveZoneSlugFromHost(host, env.PUBLIC_TENANT_DOMAIN) ??
+    (hostMatchesPublicApiOrigin(host, env.PUBLIC_API_URL)
+      ? resolveZoneSlugFromHeader(c.req.header("x-stewardledger-zone-slug"))
+      : null) ??
     resolveDevZoneSlugFromHeader(
       c.req.header("x-stewardledger-zone-slug"),
       env.NODE_ENV,

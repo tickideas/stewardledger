@@ -163,6 +163,11 @@ Configure Dokploy routing after the first build succeeds:
 
 The example domains are placeholders. Replace them in Dokploy with real environment domains before production use.
 
+In a split-host deployment, tenant pages call the API host with
+`x-stewardledger-zone-slug`. The API only honors that header on the configured
+`PUBLIC_API_URL` host; tenant subdomains and custom domains continue to resolve
+from `Host`.
+
 ## Database migrations
 
 `stewardledger-api-migrate` runs before `stewardledger-api` starts. It runs:

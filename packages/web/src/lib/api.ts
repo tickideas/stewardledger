@@ -1,8 +1,10 @@
 // packages/web/src/lib/api.ts
 // Tiny fetch wrapper for the StewardLedger HTTP API. Always sends credentials
-// so Better Auth cookies travel with requests.
+// Adds tenant context for split-host API deployments.
+// RELEVANT FILES: ./session.svelte.ts, ./session-paths.ts, ../../../api/src/middleware/tenant.ts
 
 import { PUBLIC_API_URL } from "./env";
+import { session } from "./session.svelte";
 
 export interface ApiErrorBody {
   error: { code: string; message: string; details?: Record<string, unknown> };
@@ -64,7 +66,9 @@ function currentZoneSlug(): string | null {
     localStorage.setItem("stewardledger.activeZoneSlug", fromUrl);
     return fromUrl;
   }
-  return localStorage.getItem("stewardledger.activeZoneSlug");
+  const stored = localStorage.getItem("stewardledger.activeZoneSlug");
+  if (stored) return stored;
+  return session.current.status === "authenticated" ? session.current.activeZoneSlug : null;
 }
 
 /**
