@@ -13,11 +13,32 @@ export interface EmailMessage {
   html?: string;
 }
 
-export async function sendEmail(message: EmailMessage): Promise<void> {
+/**
+ * Outcome of a send attempt. `transport` describes which path the call
+ * took; `dev-log` means no real send occurred. Callers that don't care
+ * (most of them) can ignore the return value.
+ */
+export type EmailResult =
+  | { ok: true; transport: "usesend" | "dev-log"; endpoint?: string }
+  | {
+      ok: false;
+      transport: "usesend" | "dev-log";
+      reason: "missing-config" | "missing-from" | "network" | "http";
+      detail?: string;
+      status?: number;
+      endpoint?: string;
+    };
+
+export async function sendEmail(message: EmailMessage): Promise<EmailResult> {
   if (!env.USESEND_API_KEY || !env.USESEND_API_URL) {
     log.info({ to: message.to, subject: message.subject }, "[dev] email not sent");
     log.debug({ body: message.body }, "[dev] email body");
-    return;
+    return {
+      ok: false,
+      transport: "dev-log",
+      reason: "missing-config",
+      detail: "USESEND_API_KEY and/or USESEND_API_URL are not set",
+    };
   }
 
   if (!env.USESEND_FROM) {
@@ -25,7 +46,12 @@ export async function sendEmail(message: EmailMessage): Promise<void> {
       { to: message.to, subject: message.subject },
       "USESEND_FROM is not set — refusing to send. Configure a verified sender address.",
     );
-    return;
+    return {
+      ok: false,
+      transport: "usesend",
+      reason: "missing-from",
+      detail: "USESEND_FROM is not set",
+    };
   }
 
   // useSend exposes POST {base}/api/v1/emails with bearer auth. The base
@@ -58,7 +84,13 @@ export async function sendEmail(message: EmailMessage): Promise<void> {
       { err, to: message.to, subject: message.subject, endpoint },
       "useSend request failed",
     );
-    return;
+    return {
+      ok: false,
+      transport: "usesend",
+      reason: "network",
+      detail: err instanceof Error ? err.message : String(err),
+      endpoint,
+    };
   }
 
   if (!response.ok) {
@@ -72,10 +104,18 @@ export async function sendEmail(message: EmailMessage): Promise<void> {
       },
       "useSend returned non-2xx",
     );
-    return;
+    return {
+      ok: false,
+      transport: "usesend",
+      reason: "http",
+      status: response.status,
+      detail: detail.slice(0, 500),
+      endpoint,
+    };
   }
 
   log.info({ to: message.to, subject: message.subject }, "email sent via useSend");
+  return { ok: true, transport: "usesend", endpoint };
 }
 
 export function escapeHtml(value: string): string {

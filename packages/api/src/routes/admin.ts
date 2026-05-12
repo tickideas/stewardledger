@@ -32,6 +32,7 @@ import {
   type SessionUser,
 } from "../middleware/auth";
 import { writeAudit } from "../services/audit";
+import { brandedEmailHtml, sendEmail } from "../services/email";
 import {
   createInvitation,
   revokeOpenInvitations,
@@ -75,6 +76,74 @@ function logAdminAccess(c: Context, event: string, extra: Record<string, unknown
     "admin access",
   );
 }
+
+
+// ─── Diagnostics: outbound email ──────────────────────────────────────
+
+/**
+ * Super-admin only end-to-end smoke test for the useSend transport. Sends
+ * a real email to `to` (or, by default, the caller's own address) and
+ * surfaces the exact failure mode from `sendEmail`. Useful for verifying
+ * a new deployment before relying on invitation flows.
+ *
+ *   POST /api/admin/diagnostics/email-test
+ *   body: { to?: string }
+ *
+ * The endpoint never throws; failures return structured JSON with the
+ * same `reason` codes used internally so operators can grep logs and the
+ * dashboard for the same string.
+ */
+const emailTestSchema = z.object({
+  to: z.string().trim().email().max(254).optional(),
+});
+
+adminRouter.post(
+  "/diagnostics/email-test",
+  zValidator("json", emailTestSchema),
+  async (c) => {
+    const denied = superAdminGate(c);
+    if (denied) return denied;
+    const user = c.get("user") as SessionUser;
+    const input = c.req.valid("json");
+    const to = input.to ?? user.email;
+    logAdminAccess(c, "admin.diagnostics.email_test", { to });
+
+    const stamp = new Date().toISOString();
+    const result = await sendEmail({
+      to,
+      subject: "StewardLedger email test",
+      body: `This is a diagnostic test from StewardLedger sent at ${stamp}.\n\nIf you received this, useSend is wired correctly.`,
+      html: brandedEmailHtml({
+        body: `<p>This is a diagnostic test from <strong>StewardLedger</strong>.</p><p>Sent at <code>${stamp}</code>.</p><p>If you received this, useSend is wired correctly.</p>`,
+      }),
+    });
+
+    if (result.ok) {
+      return c.json({
+        status: "sent",
+        transport: result.transport,
+        endpoint: result.endpoint ?? null,
+        to,
+        sentAt: stamp,
+      });
+    }
+
+    return c.json(
+      {
+        status: "failed",
+        transport: result.transport,
+        reason: result.reason,
+        detail: result.detail ?? null,
+        httpStatus:
+          result.transport === "usesend" && "status" in result ? result.status : null,
+        endpoint:
+          result.transport === "usesend" && "endpoint" in result ? result.endpoint : null,
+        to,
+      },
+      503,
+    );
+  },
+);
 
 // ─── Zones (tenants) ─────────────────────────────────────────────────
 
