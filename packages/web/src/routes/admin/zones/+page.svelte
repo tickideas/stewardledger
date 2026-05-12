@@ -3,6 +3,7 @@
   import { api, ApiError } from "$lib/api";
   import { fmtMoney } from "$lib/format";
   import { statusBadgeClass } from "$lib/ui";
+  import EmailDiagnostic from "./email-diagnostic.svelte";
   import InviteZoneModal from "./invite-zone-modal.svelte";
 
   type Subtotal = { currencyCode: string; total: string; count: number };
@@ -159,6 +160,8 @@
       {inviteFlash}
     </p>
   {/if}
+
+  <EmailDiagnostic />
 
   <InviteZoneModal bind:open={inviteOpen} oninvited={onInvited} />
 

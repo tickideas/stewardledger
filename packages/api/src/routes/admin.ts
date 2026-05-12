@@ -128,20 +128,20 @@ adminRouter.post(
       });
     }
 
-    return c.json(
-      {
-        status: "failed",
-        transport: result.transport,
-        reason: result.reason,
-        detail: result.detail ?? null,
-        httpStatus:
-          result.transport === "usesend" && "status" in result ? result.status : null,
-        endpoint:
-          result.transport === "usesend" && "endpoint" in result ? result.endpoint : null,
-        to,
-      },
-      503,
-    );
+    // 200 with a failure envelope: the API call itself succeeded, this is
+    // a diagnostic result. Returning 503 would force the web client to
+    // route through its error handler and lose the structured detail.
+    return c.json({
+      status: "failed",
+      transport: result.transport,
+      reason: result.reason,
+      detail: result.detail ?? null,
+      httpStatus:
+        result.transport === "usesend" && "status" in result ? result.status : null,
+      endpoint:
+        result.transport === "usesend" && "endpoint" in result ? result.endpoint : null,
+      to,
+    });
   },
 );
 
