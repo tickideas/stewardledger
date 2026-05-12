@@ -1,6 +1,294 @@
 @import "tailwindcss";
 
+/* =============================================================
+   StewardLedger — "Ledger Editorial"
+   A financial-publication aesthetic: warm parchment surface,
+   editorial serif display type, hairline rules, tabular numerals,
+   one burnished brass accent used with restraint.
+   ============================================================= */
+
 :root {
-  --color-brand-deep: #0f1f3a;
-  --color-brand-accent: #f0d687;
+  /* Surface */
+  --paper:        #f6f1e6;   /* page */
+  --paper-soft:   #efe8d6;   /* sunken */
+  --card:         #fffdf8;   /* raised */
+  --card-warm:    #faf4e4;   /* tinted card */
+
+  /* Ink */
+  --ink:          #15161a;
+  --ink-soft:     #2b2a26;
+  --ink-mute:     #6b6657;
+  --ink-faint:    #948c78;
+
+  /* Lines */
+  --rule:         #e6dfcc;
+  --rule-strong:  #d6cdb3;
+
+  /* Accent — burnished brass. Used for ONE thing per view. */
+  --brass:        #a87432;
+  --brass-deep:   #8c5d24;
+  --brass-soft:   #f0e2c4;
+  --brass-glow:   #d8a958;
+
+  /* Semantic (kept warm, never neon) */
+  --ok:           #4a6a3f;
+  --ok-soft:      #e3ead7;
+  --warn:         #9a6a1f;
+  --warn-soft:    #f3e6c8;
+  --bad:          #8b3a2e;
+  --bad-soft:     #f0d8d2;
+  --info:         #3a5a7a;
+  --info-soft:    #dde5ed;
+
+  /* Type */
+  --font-display: "Fraunces", "Cormorant Garamond", ui-serif, Georgia, serif;
+  --font-body:    "Geist", "Inter Tight", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono:    "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Misc */
+  --shadow-card:  0 1px 0 rgba(21,22,26,0.04), 0 8px 24px -16px rgba(21,22,26,0.18);
+  --shadow-lift:  0 1px 0 rgba(21,22,26,0.04), 0 18px 40px -24px rgba(21,22,26,0.28);
 }
+
+/* ---------- Base ---------- */
+
+html {
+  background: var(--paper);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-family: var(--font-body);
+  font-feature-settings: "ss01", "cv11";
+  background:
+    radial-gradient(1200px 600px at 85% -10%, rgba(168,116,50,0.06), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, rgba(21,22,26,0.04), transparent 60%),
+    var(--paper);
+  min-height: 100vh;
+}
+
+/* Paper grain — barely-there, gives the page life. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.35;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.08 0 0 0 0 0.08 0 0 0 0 0.06 0 0 0 0.06 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* Make sure interactive content sits above the grain. */
+#__layout, .sl-app, main, header, footer { position: relative; z-index: 1; }
+
+/* ---------- Typography utilities ---------- */
+
+.sl-display     { font-family: var(--font-display); font-feature-settings: "ss01"; letter-spacing: -0.02em; }
+.sl-serif-italic{ font-family: var(--font-display); font-style: italic; font-feature-settings: "ss01"; }
+.sl-mono        { font-family: var(--font-mono); font-feature-settings: "zero", "ss01"; }
+.sl-num         { font-variant-numeric: tabular-nums; font-feature-settings: "tnum", "lnum"; }
+
+.sl-eyebrow {
+  font-family: var(--font-body);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  font-weight: 500;
+}
+
+.sl-rule { height: 1px; background: var(--rule); width: 100%; }
+.sl-rule-strong { height: 1px; background: var(--rule-strong); width: 100%; }
+
+/* ---------- Components (utility classes — not @apply, to keep Tailwind v4 happy) ---------- */
+
+.sl-card {
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  box-shadow: var(--shadow-card);
+}
+
+.sl-card-warm {
+  background: var(--card-warm);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+.sl-btn {
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  padding: 0.625rem 1rem;
+  font-size: 13px; font-weight: 500;
+  letter-spacing: 0.01em;
+  border-radius: 2px;
+  transition: transform 120ms ease, background 160ms ease, color 160ms ease, box-shadow 160ms ease;
+  border: 1px solid transparent;
+  cursor: pointer;
+  user-select: none;
+}
+.sl-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.sl-btn-primary {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+.sl-btn-primary:hover:not(:disabled) {
+  background: var(--brass-deep);
+  border-color: var(--brass-deep);
+  color: var(--paper);
+}
+
+.sl-btn-ghost {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--rule-strong);
+}
+.sl-btn-ghost:hover:not(:disabled) {
+  background: var(--card);
+  border-color: var(--ink);
+}
+
+.sl-btn-accent {
+  background: var(--brass);
+  color: #fffdf8;
+  border-color: var(--brass);
+}
+.sl-btn-accent:hover:not(:disabled) {
+  background: var(--brass-deep);
+  border-color: var(--brass-deep);
+}
+
+.sl-input, .sl-select {
+  width: 100%;
+  background: var(--card);
+  border: 1px solid var(--rule-strong);
+  border-radius: 2px;
+  padding: 0.55rem 0.75rem;
+  font-size: 13px;
+  color: var(--ink);
+  font-family: var(--font-body);
+  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+.sl-input::placeholder { color: var(--ink-faint); }
+.sl-input:focus, .sl-select:focus {
+  outline: none;
+  border-color: var(--brass);
+  box-shadow: 0 0 0 3px rgba(168,116,50,0.15);
+  background: var(--card);
+}
+
+.sl-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+}
+.sl-table thead th {
+  text-align: left;
+  font-family: var(--font-body);
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  font-weight: 500;
+  padding: 0.85rem 1rem;
+  background: var(--paper-soft);
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+.sl-table tbody td {
+  padding: 0.9rem 1rem;
+  border-bottom: 1px solid var(--rule);
+  color: var(--ink-soft);
+  vertical-align: top;
+}
+.sl-table tbody tr:last-child td { border-bottom: none; }
+.sl-table tbody tr { transition: background 120ms ease; }
+.sl-table tbody tr:hover { background: var(--paper-soft); }
+
+.sl-badge {
+  display: inline-flex; align-items: center;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-radius: 2px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.sl-badge-ok    { background: var(--ok-soft);   color: var(--ok);   border-color: rgba(74,106,63,0.2); }
+.sl-badge-warn  { background: var(--warn-soft); color: var(--warn); border-color: rgba(154,106,31,0.25); }
+.sl-badge-bad   { background: var(--bad-soft);  color: var(--bad);  border-color: rgba(139,58,46,0.25); }
+.sl-badge-info  { background: var(--info-soft); color: var(--info); border-color: rgba(58,90,122,0.2); }
+.sl-badge-mute  { background: var(--paper-soft);color: var(--ink-mute); border-color: var(--rule); }
+.sl-badge-accent{ background: var(--brass-soft);color: var(--brass-deep); border-color: rgba(168,116,50,0.3); }
+
+.sl-link {
+  color: var(--ink);
+  text-decoration: none;
+  background-image: linear-gradient(currentColor, currentColor);
+  background-size: 100% 1px;
+  background-repeat: no-repeat;
+  background-position: 0 100%;
+  transition: color 120ms ease;
+}
+.sl-link:hover { color: var(--brass-deep); }
+
+.sl-nav-link {
+  color: var(--ink-mute);
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  padding: 4px 0;
+  position: relative;
+  transition: color 120ms ease;
+}
+.sl-nav-link:hover { color: var(--ink); }
+.sl-nav-link[aria-current="page"] {
+  color: var(--ink);
+}
+.sl-nav-link[aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -17px;
+  height: 1px;
+  background: var(--brass);
+}
+
+/* ---------- Animations ---------- */
+
+@keyframes sl-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes sl-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes sl-rule-grow {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+.sl-reveal { opacity: 0; animation: sl-fade-up 700ms cubic-bezier(0.2, 0.7, 0.2, 1) forwards; }
+.sl-reveal-1 { animation-delay: 60ms; }
+.sl-reveal-2 { animation-delay: 140ms; }
+.sl-reveal-3 { animation-delay: 220ms; }
+.sl-reveal-4 { animation-delay: 300ms; }
+.sl-reveal-5 { animation-delay: 380ms; }
+.sl-reveal-6 { animation-delay: 460ms; }
+
+.sl-rule-anim { transform-origin: left; animation: sl-rule-grow 900ms cubic-bezier(0.2,0.7,0.2,1) forwards; }
+
+/* ---------- Selection ---------- */
+::selection { background: var(--brass-soft); color: var(--ink); }
+
+/* ---------- Scrollbar (subtle) ---------- */
+* { scrollbar-width: thin; scrollbar-color: var(--rule-strong) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:hover { background: var(--ink-faint); background-clip: padding-box; border: 2px solid transparent; }

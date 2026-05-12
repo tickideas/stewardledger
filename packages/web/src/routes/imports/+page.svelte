@@ -1,10 +1,4 @@
 <script lang="ts">
-  // Phase 6 — import dashboard. Lists every job for the active zone with
-  // status filtering, links into per-job detail, and offers the new-upload
-  // form inline. Uploading drops the user straight onto the new job's
-  // detail page where they can review failures, correct the source CSV
-  // if needed, schedule, and commit.
-
   import { goto } from "$app/navigation";
   import { api, ApiError, isAbortError } from "$lib/api";
   import { PUBLIC_API_URL } from "$lib/env";
@@ -31,12 +25,8 @@
   let status = $state("");
   let loading = $state(false);
   let loadError = $state<string | null>(null);
-  // Plain mutable counter — not reactive on purpose. The effect closure
-  // captures it as a last-request-wins token; using `$state` would
-  // schedule an extra re-render on every fetch.
   let refreshToken = 0;
 
-  // Upload form state.
   let file = $state<File | null>(null);
   let fileType = $state<"statement">("statement");
   let sourceType = $state<"generic_csv" | "bank_csv" | "online_giving">("generic_csv");
@@ -140,11 +130,6 @@
       form.set("fileType", fileType);
       form.set("sourceType", sourceType);
       if (selectedChapterId) form.set("chapterId", selectedChapterId);
-      // We use fetch directly (not `api.post`) because multipart bodies
-      // shouldn't get a JSON content-type header. PUBLIC_API_URL is the
-      // canonical env reference — the previous `VITE_PUBLIC_API_URL`
-      // typo silently broke production builds where the API runs on a
-      // different host than the SvelteKit app.
       const headers = new Headers();
       const slug = localStorage.getItem("stewardledger.activeZoneSlug");
       if (slug) headers.set("x-stewardledger-zone-slug", slug);
@@ -166,65 +151,67 @@
     }
   }
 
-  function statusBadge(s: string): string {
+  function statusBadgeClass(s: string): string {
     switch (s) {
-      case "committed":
-        return "bg-green-100 text-green-700";
-      case "scheduled":
-        return "bg-blue-100 text-blue-700";
-      case "matched":
-        return "bg-amber-100 text-amber-700";
-      case "failed":
-        return "bg-rose-100 text-rose-700";
-      case "rolled_back":
-        return "bg-slate-200 text-slate-700";
-      default:
-        return "bg-slate-100 text-slate-700";
+      case "committed":   return "sl-badge sl-badge-ok";
+      case "scheduled":   return "sl-badge sl-badge-info";
+      case "matched":     return "sl-badge sl-badge-warn";
+      case "failed":      return "sl-badge sl-badge-bad";
+      case "rolled_back": return "sl-badge sl-badge-mute";
+      default:            return "sl-badge sl-badge-mute";
     }
   }
 </script>
 
-<div class="max-w-6xl mx-auto px-6 py-8">
-  <div class="flex items-baseline justify-between">
-    <div>
-      <h1 class="text-2xl font-semibold tracking-tight">Imports</h1>
-      <p class="mt-1 text-sm text-slate-600">
-        Bank statements and online-giving exports. Preview, schedule, commit, and rollback CSV imports.
-      </p>
-    </div>
+<div class="mx-auto max-w-7xl px-8 py-10">
+  <div class="sl-reveal sl-reveal-1">
+    <span class="sl-eyebrow">§ Pipeline · Imports</span>
+    <h1 class="mt-3 sl-display text-[44px] leading-[1] text-[var(--ink)]">
+      Imports <span class="sl-serif-italic font-light text-[var(--brass-deep)]">pipeline</span>
+    </h1>
+    <p class="mt-2 max-w-2xl text-[14px] text-[var(--ink-mute)]">
+      Bank statements and online-giving exports. Preview, schedule, commit, and
+      rollback CSV imports — every step is staged and reversible.
+    </p>
   </div>
 
-  <form onsubmit={submitUpload} class="mt-6 rounded-xl border bg-white p-5 shadow-sm">
-    <div class="grid grid-cols-1 gap-4 sm:grid-cols-5">
-      <label class="text-sm">
-        <span class="block text-slate-600">File</span>
+  <!-- Upload card -->
+  <form onsubmit={submitUpload} class="sl-reveal sl-reveal-2 mt-8 sl-card overflow-hidden">
+    <div class="flex items-center gap-3 border-b border-[var(--rule)] bg-[var(--paper-soft)] px-6 py-3.5">
+      <span class="inline-block h-1.5 w-1.5 rounded-full" style="background:var(--brass);box-shadow:0 0 0 3px rgba(168,116,50,0.18)"></span>
+      <span class="sl-eyebrow">New upload</span>
+      <span class="text-[12px] text-[var(--ink-mute)]">— files are staged for review before any rows commit</span>
+    </div>
+    <div class="grid grid-cols-1 gap-5 p-6 sm:grid-cols-5">
+      <label class="block">
+        <span class="sl-eyebrow" style="font-size:10.5px">File</span>
         <input
           type="file"
           accept=".csv,.tsv"
           onchange={onFileChange}
-          class="mt-1 w-full text-sm"
           required
+          class="mt-2 block w-full text-[12px] file:mr-3 file:rounded-[2px] file:border file:border-[var(--rule-strong)] file:bg-[var(--card)] file:px-3 file:py-2 file:text-[12px] file:text-[var(--ink)] hover:file:bg-[var(--paper-soft)]"
         />
       </label>
-      <label class="text-sm">
-        <span class="block text-slate-600">File type</span>
-        <select bind:value={fileType} class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2">
+      <label class="block">
+        <span class="sl-eyebrow" style="font-size:10.5px">File type</span>
+        <select bind:value={fileType} class="sl-select mt-2">
           <option value="statement">Bank statement</option>
         </select>
-        <span class="mt-1 block text-xs text-slate-500">Member, target, and setup imports are deferred.</span>
+        <span class="mt-1.5 block text-[11px] text-[var(--ink-mute)]">Member / target imports deferred.</span>
       </label>
-      <label class="text-sm">
-        <span class="block text-slate-600">Source</span>
-        <select bind:value={sourceType} class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2">
+      <label class="block">
+        <span class="sl-eyebrow" style="font-size:10.5px">Source</span>
+        <select bind:value={sourceType} class="sl-select mt-2">
           <option value="generic_csv">Generic CSV</option>
           <option value="bank_csv">Bank CSV</option>
           <option value="online_giving">Online giving export</option>
         </select>
-        <span class="mt-1 block text-xs text-slate-500">Export spreadsheets as CSV before upload.</span>
+        <span class="mt-1.5 block text-[11px] text-[var(--ink-mute)]">Export spreadsheets as CSV first.</span>
       </label>
-      <label class="text-sm">
-        <span class="block text-slate-600">Chapter</span>
-        <select bind:value={selectedChapterId} class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2">
+      <label class="block">
+        <span class="sl-eyebrow" style="font-size:10.5px">Chapter</span>
+        <select bind:value={selectedChapterId} class="sl-select mt-2">
           {#if canZoneWideUpload}
             <option value="">Zone-wide / file includes chapter column</option>
           {/if}
@@ -233,26 +220,25 @@
           {/each}
         </select>
         {#if !canZoneWideUpload}
-          <span class="mt-1 block text-xs text-slate-500">Required for chapter-scoped uploaders.</span>
+          <span class="mt-1.5 block text-[11px] text-[var(--ink-mute)]">Required for chapter-scoped uploaders.</span>
         {/if}
       </label>
       <div class="flex items-end">
-        <button
-          type="submit"
-          disabled={!canSubmitUpload}
-          class="w-full inline-flex justify-center items-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-        >
+        <button type="submit" disabled={!canSubmitUpload} class="sl-btn sl-btn-primary w-full justify-center">
           {uploading ? "Uploading…" : "Upload + parse"}
         </button>
       </div>
     </div>
     {#if uploadError}
-      <p class="mt-3 text-sm text-red-600">{uploadError}</p>
+      <div class="border-t border-[var(--rule)] px-6 py-3">
+        <p class="border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{uploadError}</p>
+      </div>
     {/if}
   </form>
 
-  <div class="mt-6 flex gap-3 items-center">
-    <select bind:value={status} class="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+  <!-- Filters -->
+  <div class="sl-reveal sl-reveal-3 mt-8 flex flex-wrap items-center gap-3">
+    <select bind:value={status} class="sl-select w-56">
       <option value="">All statuses</option>
       <option value="received">Received</option>
       <option value="parsed">Parsed</option>
@@ -263,53 +249,53 @@
       <option value="rolled_back">Rolled back</option>
     </select>
     {#if total !== null}
-      <span class="text-xs text-slate-500">{total} jobs</span>
+      <span class="sl-mono text-[11px] text-[var(--ink-mute)]" style="letter-spacing:0.06em">
+        {total} {total === 1 ? "job" : "jobs"}
+      </span>
     {/if}
   </div>
 
   {#if loadError}
-    <p class="mt-4 text-sm text-red-600">{loadError}</p>
+    <p class="mt-6 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{loadError}</p>
   {/if}
 
-  <table class="mt-4 w-full text-sm">
-    <thead class="text-left text-xs uppercase tracking-wide text-slate-500 border-b">
-      <tr>
-        <th class="py-2">Created</th>
-        <th class="py-2">Status</th>
-        <th class="py-2 text-right">Rows</th>
-        <th class="py-2 text-right">Matched</th>
-        <th class="py-2 text-right">Failed</th>
-        <th class="py-2 text-right">Duplicates</th>
-        <th class="py-2 text-right">Committed</th>
-      </tr>
-    </thead>
-    <tbody class="divide-y divide-slate-200">
-      {#each jobs as job (job.id)}
-        <tr class="hover:bg-slate-50">
-          <td class="py-3 text-xs text-slate-500">
-            <a href={`/imports/${job.id}`} class="hover:underline">
-              {new Date(job.createdAt).toLocaleString()}
-            </a>
-          </td>
-          <td class="py-3">
-            <span class={`inline-block px-2 py-0.5 rounded-full text-xs ${statusBadge(job.status)}`}>
-              {job.status}
-            </span>
-          </td>
-          <td class="py-3 text-right font-mono text-slate-700">{job.totalRows}</td>
-          <td class="py-3 text-right font-mono text-slate-700">{job.matchedRows}</td>
-          <td class="py-3 text-right font-mono text-rose-700">{job.failedRows}</td>
-          <td class="py-3 text-right font-mono text-amber-700">{job.duplicateRows}</td>
-          <td class="py-3 text-right font-mono text-green-700">{job.committedRows}</td>
-        </tr>
-      {/each}
-      {#if !loading && jobs.length === 0}
+  <div class="sl-reveal mt-6 sl-card overflow-hidden">
+    <table class="sl-table">
+      <thead>
         <tr>
-          <td colspan="7" class="py-8 text-center text-sm text-slate-500">
-            No imports yet. Upload a statement above to begin.
-          </td>
+          <th>Created</th>
+          <th>Status</th>
+          <th class="!text-right">Rows</th>
+          <th class="!text-right">Matched</th>
+          <th class="!text-right">Failed</th>
+          <th class="!text-right">Duplicates</th>
+          <th class="!text-right">Committed</th>
         </tr>
-      {/if}
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        {#each jobs as job (job.id)}
+          <tr>
+            <td>
+              <a href={`/imports/${job.id}`} class="sl-mono text-[12px] text-[var(--ink)] hover:text-[var(--brass-deep)]">
+                {new Date(job.createdAt).toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+              </a>
+            </td>
+            <td><span class={statusBadgeClass(job.status)}>{job.status.replace("_", " ")}</span></td>
+            <td class="text-right sl-mono sl-num text-[var(--ink)]">{job.totalRows}</td>
+            <td class="text-right sl-mono sl-num text-[var(--ink-soft)]">{job.matchedRows}</td>
+            <td class="text-right sl-mono sl-num" style="color:var(--bad)">{job.failedRows}</td>
+            <td class="text-right sl-mono sl-num" style="color:var(--warn)">{job.duplicateRows}</td>
+            <td class="text-right sl-mono sl-num" style="color:var(--ok)">{job.committedRows}</td>
+          </tr>
+        {/each}
+        {#if !loading && jobs.length === 0}
+          <tr>
+            <td colspan="7" class="py-12 text-center text-[13px] text-[var(--ink-mute)]">
+              No imports yet. Upload a statement above to begin.
+            </td>
+          </tr>
+        {/if}
+      </tbody>
+    </table>
+  </div>
 </div>

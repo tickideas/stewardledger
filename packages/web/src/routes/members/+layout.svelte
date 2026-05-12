@@ -1,13 +1,19 @@
 <script lang="ts">
+  import { page } from "$app/state";
   let { children } = $props();
+
+  const path = $derived(page.url.pathname);
+  function isActive(prefix: string) {
+    return path === prefix || path.startsWith(prefix + "/");
+  }
 </script>
 
-<div class="max-w-6xl mx-auto px-6">
-  <nav class="text-sm text-slate-600 flex gap-6 py-4 border-b">
-    <a href="/members/chapters" class="hover:text-slate-900 font-medium">Chapters</a>
-    <a href="/members/people" class="hover:text-slate-900">Members</a>
-    <a href="/members/lookups" class="hover:text-slate-900">Lookups</a>
-    <a href="/members/merge" class="hover:text-slate-900">Merge proposals</a>
+<div class="mx-auto max-w-7xl px-8">
+  <nav class="flex gap-8 border-b border-[var(--rule)] py-5">
+    <a href="/members/chapters" class="sl-nav-link" aria-current={isActive("/members/chapters") ? "page" : undefined}>Chapters</a>
+    <a href="/members/people" class="sl-nav-link" aria-current={isActive("/members/people") ? "page" : undefined}>Members</a>
+    <a href="/members/lookups" class="sl-nav-link" aria-current={isActive("/members/lookups") ? "page" : undefined}>Lookups</a>
+    <a href="/members/merge" class="sl-nav-link" aria-current={isActive("/members/merge") ? "page" : undefined}>Merge proposals</a>
   </nav>
   {@render children?.()}
 </div>

@@ -40,9 +40,7 @@
 
   function onInvited() {
     inviteFlash = "Invitation sent. The new zone is in pending_setup until the contact accepts.";
-    // Refresh from the top so the new pending_setup zone shows up.
     refresh();
-    // Clear the banner after a few seconds; the table itself is the persistent confirmation.
     if (inviteFlashTimer) clearTimeout(inviteFlashTimer);
     inviteFlashTimer = setTimeout(() => {
       inviteFlash = null;
@@ -50,11 +48,7 @@
     }, 6000);
   }
 
-  // Server-side search via the API. We debounce in-component so typing
-  // doesn't fire a request per keystroke.
   let searchDebounce: ReturnType<typeof setTimeout> | null = null;
-  // Bumped on each fresh refresh so a slower previous response can't clobber
-  // a newer one (e.g. user types fast, network is flaky).
   let fetchEpoch = 0;
 
   async function refresh(opts: { append?: boolean; cursor?: string | null } = {}) {
@@ -69,7 +63,7 @@
       const qs = params.toString();
       const path = qs ? `/api/admin/zones?${qs}` : "/api/admin/zones";
       const res = await api.get<ZonesListResponse>(path);
-      if (epoch !== fetchEpoch) return; // superseded
+      if (epoch !== fetchEpoch) return;
       zones = opts.append ? [...zones, ...res.items] : res.items;
       nextCursor = res.nextCursor;
       loadError = null;
@@ -98,151 +92,187 @@
     searchDebounce = setTimeout(() => refresh(), 200);
   }
 
-  function statusClass(status: string): string {
+  function statusBadgeClass(status: string): string {
     switch (status) {
-      case "active":
-        return "bg-green-100 text-green-800";
-      case "pending_setup":
-        return "bg-amber-100 text-amber-800";
-      case "past_due":
-        return "bg-orange-100 text-orange-800";
-      case "suspended":
-        return "bg-red-100 text-red-800";
-      default:
-        return "bg-slate-100 text-slate-700";
+      case "active":        return "sl-badge sl-badge-ok";
+      case "pending_setup": return "sl-badge sl-badge-warn";
+      case "past_due":      return "sl-badge sl-badge-warn";
+      case "suspended":     return "sl-badge sl-badge-bad";
+      default:              return "sl-badge sl-badge-mute";
     }
   }
+
+  // Aggregate KPIs across the loaded page — gives the dashboard headline numbers
+  const kpiActive = $derived(zones.filter((z) => z.status === "active").length);
+  const kpiPending = $derived(zones.filter((z) => z.status === "pending_setup").length);
+  const kpiChapters = $derived(zones.reduce((s, z) => s + z.chapterCount, 0));
+  const kpiMembers = $derived(zones.reduce((s, z) => s + z.memberCount, 0));
 </script>
 
-<div class="py-8">
-  <div class="flex items-baseline justify-between gap-4">
+<div class="py-10">
+  <!-- Title block -->
+  <div class="sl-reveal sl-reveal-1 flex flex-wrap items-end justify-between gap-6">
     <div>
-      <h1 class="text-2xl font-semibold tracking-tight">Zones</h1>
-      <p class="mt-1 text-sm text-slate-600">
-        All tenants on this StewardLedger deployment. Read-only cross-zone view.
+      <span class="sl-eyebrow">§ Section I · Tenants</span>
+      <h1 class="mt-3 sl-display text-[44px] leading-[1] text-[var(--ink)]">
+        Zones <span class="sl-serif-italic font-light text-[var(--brass-deep)]">register</span>
+      </h1>
+      <p class="mt-2 max-w-xl text-[14px] text-[var(--ink-mute)]">
+        Every tenant on this StewardLedger deployment. Read-only cross-zone view —
+        every figure below ties back to a posted journal entry.
       </p>
     </div>
     <div class="flex items-center gap-3">
-      <input
-        type="search"
-        value={query}
-        oninput={(e) => onQueryInput((e.target as HTMLInputElement).value)}
-        placeholder="Search by name, slug, region"
-        class="w-64 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-      />
-      <button
-        type="button"
-        onclick={() => (inviteOpen = true)}
-        class="inline-flex items-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
-      >
+      <div class="relative">
+        <svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ink-mute)]" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <circle cx="6" cy="6" r="4" stroke="currentColor" stroke-width="1.25"/>
+          <path d="M9 9l3 3" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+        </svg>
+        <input
+          type="search"
+          value={query}
+          oninput={(e) => onQueryInput((e.target as HTMLInputElement).value)}
+          placeholder="Search by name, slug, region…"
+          class="sl-input w-72 pl-9"
+        />
+      </div>
+      <button type="button" onclick={() => (inviteOpen = true)} class="sl-btn sl-btn-primary">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <path d="M7 3v8M3 7h8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+        </svg>
         Invite zone
       </button>
     </div>
   </div>
 
+  <!-- KPI strip -->
+  <div class="sl-reveal sl-reveal-2 mt-10 grid grid-cols-2 gap-0 border-y border-[var(--rule)] bg-[var(--card)] md:grid-cols-4">
+    {#each [
+      { label: "Active",      value: kpiActive,    sub: "zones in production" },
+      { label: "Pending",     value: kpiPending,   sub: "awaiting acceptance" },
+      { label: "Chapters",    value: kpiChapters,  sub: "across all zones" },
+      { label: "Members",     value: kpiMembers,   sub: "indexed identities" },
+    ] as kpi, i}
+      <div class="px-6 py-7 md:border-r md:border-[var(--rule)] md:last:border-r-0" class:border-b={i < 2} class:md:border-b-0={i < 2} style="border-color:var(--rule)">
+        <span class="sl-eyebrow">{kpi.label}</span>
+        <div class="mt-3 sl-display sl-num text-[44px] leading-none text-[var(--ink)]">
+          {kpi.value.toLocaleString()}
+        </div>
+        <p class="mt-2 text-[12px] text-[var(--ink-mute)]">{kpi.sub}</p>
+      </div>
+    {/each}
+  </div>
+
   {#if inviteFlash}
-    <p
-      class="mt-4 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
-    >
+    <p class="sl-reveal mt-6 border-l-2 border-[var(--ok)] bg-[var(--ok-soft)] px-4 py-3 text-[13px] text-[var(--ink-soft)]">
       {inviteFlash}
     </p>
   {/if}
 
   <InviteZoneModal bind:open={inviteOpen} oninvited={onInvited} />
 
-  {#if loadError}
-    <p class="mt-6 text-sm text-red-600">{loadError}</p>
-  {:else if loading && zones.length === 0}
-    <p class="mt-10 text-sm text-slate-500">Loading…</p>
-  {:else if zones.length === 0}
-    <p class="mt-10 text-sm text-slate-500">
-      {#if query.trim().length > 0}
-        No zones match <code>{query}</code>.
-      {:else}
-        No zones yet. Run <code>pnpm seed:demo</code>, or use
-        <strong>Invite zone</strong> to onboard one.
-      {/if}
-    </p>
-  {:else}
-    <div class="mt-6 overflow-hidden rounded-xl border border-slate-200 bg-white">
-      <table class="w-full text-sm">
-        <thead class="text-left text-xs uppercase tracking-wide text-slate-500 border-b bg-slate-50">
-          <tr>
-            <th class="py-3 px-4">Zone</th>
-            <th class="py-3 px-4">Region</th>
-            <th class="py-3 px-4">Status</th>
-            <th class="py-3 px-4 text-right">Chapters</th>
-            <th class="py-3 px-4 text-right">Members</th>
-            <th class="py-3 px-4 text-right">Contributions</th>
-            <th class="py-3 px-4">Created</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-slate-100">
-          {#each zones as z (z.id)}
-            <tr class="hover:bg-slate-50">
-              <td class="py-3 px-4">
-                <a
-                  href={`/admin/zones/${z.slug}`}
-                  class="font-medium text-slate-900 hover:underline"
-                >
-                  {z.name}
-                </a>
-                <div class="text-xs text-slate-500">
-                  {z.slug} &middot; {z.countryCode} &middot; {z.defaultCurrencyCode}
-                </div>
-              </td>
-              <td class="py-3 px-4 text-slate-700">
-                {#if z.regionName}
-                  {z.regionName}
-                {:else if z.regionNameUnverified}
-                  <span class="text-amber-700">{z.regionNameUnverified}</span>
-                  <span class="text-xs text-amber-600"> (unverified)</span>
-                {:else}
-                  <span class="text-slate-400">—</span>
-                {/if}
-              </td>
-              <td class="py-3 px-4">
-                <span
-                  class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium {statusClass(
-                    z.status,
-                  )}"
-                >
-                  {z.status.replace("_", " ")}
-                </span>
-              </td>
-              <td class="py-3 px-4 text-right tabular-nums">{z.chapterCount}</td>
-              <td class="py-3 px-4 text-right tabular-nums">{z.memberCount}</td>
-              <td class="py-3 px-4 text-right tabular-nums">
-                {fmtMoney(z.postedContributionTotal, z.postedContributionCurrency, 2)}
-                {#if z.postedContributionSubtotals.length > 1}
-                  <div class="text-xs text-amber-700" title={z.postedContributionSubtotals
-                      .map((s) => `${s.currencyCode}: ${s.total}`)
-                      .join(", ")}>
-                    +{z.postedContributionSubtotals.length - 1} more currenc{z.postedContributionSubtotals.length === 2 ? "y" : "ies"}
-                  </div>
-                {/if}
-                <div class="text-xs text-slate-500">{z.postedContributionCount} posted</div>
-              </td>
-              <td class="py-3 px-4 text-xs text-slate-500">
-                {new Date(z.createdAt).toLocaleDateString()}
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
+  <!-- Table -->
+  <div class="sl-reveal sl-reveal-3 mt-10">
+    <div class="mb-3 flex items-center justify-between">
+      <span class="sl-eyebrow">Ledger of zones</span>
+      <span class="sl-mono text-[10.5px] text-[var(--ink-mute)]" style="letter-spacing:0.06em">
+        {zones.length} {zones.length === 1 ? "row" : "rows"}{nextCursor ? " · more available" : ""}
+      </span>
     </div>
 
+    {#if loadError}
+      <p class="border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-4 py-3 text-[13px] text-[var(--bad)]">{loadError}</p>
+    {:else if loading && zones.length === 0}
+      <div class="sl-card p-12 text-center text-[13px] text-[var(--ink-mute)]">
+        <span class="sl-mono" style="letter-spacing:0.16em">LOADING…</span>
+      </div>
+    {:else if zones.length === 0}
+      <div class="sl-card p-12 text-center text-[14px] text-[var(--ink-mute)]">
+        {#if query.trim().length > 0}
+          No zones match <code class="sl-mono text-[var(--ink)]">{query}</code>.
+        {:else}
+          No zones yet. Run <code class="sl-mono text-[var(--ink)]">pnpm seed:demo</code>, or use
+          <strong class="text-[var(--ink)]">Invite zone</strong> to onboard one.
+        {/if}
+      </div>
+    {:else}
+      <div class="sl-card overflow-hidden">
+        <table class="sl-table">
+          <thead>
+            <tr>
+              <th>Zone</th>
+              <th>Region</th>
+              <th>Status</th>
+              <th class="!text-right">Chapters</th>
+              <th class="!text-right">Members</th>
+              <th class="!text-right">Contributions</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each zones as z (z.id)}
+              <tr>
+                <td>
+                  <a href={`/admin/zones/${z.slug}`} class="sl-display text-[15px] text-[var(--ink)] hover:text-[var(--brass-deep)]">
+                    {z.name}
+                  </a>
+                  <div class="mt-1 flex items-center gap-2 sl-mono text-[10.5px] text-[var(--ink-mute)]" style="letter-spacing:0.04em">
+                    <span>{z.slug}</span>
+                    <span class="text-[var(--rule-strong)]">·</span>
+                    <span>{z.countryCode}</span>
+                    <span class="text-[var(--rule-strong)]">·</span>
+                    <span>{z.defaultCurrencyCode}</span>
+                  </div>
+                </td>
+                <td class="text-[var(--ink-soft)]">
+                  {#if z.regionName}
+                    {z.regionName}
+                  {:else if z.regionNameUnverified}
+                    <span class="text-[var(--warn)]">{z.regionNameUnverified}</span>
+                    <span class="ml-1 sl-mono text-[10px] text-[var(--warn)]">(unverified)</span>
+                  {:else}
+                    <span class="text-[var(--ink-faint)]">—</span>
+                  {/if}
+                </td>
+                <td>
+                  <span class={statusBadgeClass(z.status)}>{z.status.replace("_", " ")}</span>
+                </td>
+                <td class="text-right sl-mono sl-num text-[var(--ink)]">{z.chapterCount}</td>
+                <td class="text-right sl-mono sl-num text-[var(--ink)]">{z.memberCount}</td>
+                <td class="text-right">
+                  <div class="sl-mono sl-num text-[var(--ink)]">
+                    {fmtMoney(z.postedContributionTotal, z.postedContributionCurrency, 2)}
+                  </div>
+                  {#if z.postedContributionSubtotals.length > 1}
+                    <div class="mt-0.5 text-[11px] text-[var(--warn)]" title={z.postedContributionSubtotals.map((s) => `${s.currencyCode}: ${s.total}`).join(", ")}>
+                      +{z.postedContributionSubtotals.length - 1} more {z.postedContributionSubtotals.length === 2 ? "currency" : "currencies"}
+                    </div>
+                  {/if}
+                  <div class="mt-0.5 sl-mono text-[10.5px] text-[var(--ink-mute)]" style="letter-spacing:0.04em">
+                    {z.postedContributionCount} posted
+                  </div>
+                </td>
+                <td class="sl-mono text-[11.5px] text-[var(--ink-mute)]">
+                  {new Date(z.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+
     {#if nextCursor}
-      <div class="mt-4 flex justify-center">
+      <div class="mt-6 flex justify-center">
         <button
           type="button"
           onclick={() => refresh({ append: true, cursor: nextCursor })}
           disabled={loadingMore}
-          class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+          class="sl-btn sl-btn-ghost"
         >
           {loadingMore ? "Loading…" : "Load more"}
         </button>
       </div>
     {/if}
-  {/if}
+  </div>
 </div>

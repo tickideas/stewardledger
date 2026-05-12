@@ -5,15 +5,6 @@
 
   let { children } = $props();
 
-  // Gate super-admin-only admin pages BEFORE rendering. Other admin routes
-  // (e.g. /admin/regions, /admin/regions/inbox) are available to
-  // REGION_CURATOR platform-role holders too — see `requirePlatformRole`
-  // on the API side. The session payload doesn't yet surface platform
-  // roles, so the remaining admin routes rely on the API's 403.
-  // Lives here (not in
-  // the root layout) so admin pages never get a chance to mount and fire
-  // their data fetches — which would flash a "Could not load …" error
-  // before the redirect arrives.
   $effect(() => {
     const s = session.current;
     if (
@@ -25,38 +16,52 @@
     }
   });
 
-  // What the child page may render: super-admin-only routes wait for the
-  // gate; the rest render eagerly (the API enforces curator access).
   const allow = $derived.by(() => {
     const s = session.current;
     if (s.status === "loading") return true;
     if (isSuperAdmin(s)) return true;
-    // Authenticated non-super-admin: hide super-admin-only routes; allow
-    // the rest (regions, inbox) so curators aren't blocked.
     if (s.status === "authenticated") return !isSuperAdminOnlyPath(page.url.pathname);
     return false;
   });
+
+  const path = $derived(page.url.pathname);
+  function isActive(prefix: string) {
+    return path === prefix || path.startsWith(prefix + "/");
+  }
 </script>
 
 {#if allow}
-  <div class="border-b bg-amber-50">
-    <div class="max-w-6xl mx-auto px-6 py-2 text-xs text-amber-800">
-      Platform admin &mdash; cross-zone access. Every action is audited.
+  <!-- Admin banner: thin brass stripe — restrained but unmistakable -->
+  <div
+    class="border-b border-[var(--rule)]"
+    style="background: linear-gradient(180deg, var(--brass-soft) 0%, var(--paper) 100%)"
+  >
+    <div class="mx-auto flex max-w-7xl items-center gap-3 px-8 py-2.5">
+      <span
+        class="inline-block h-1.5 w-1.5 rounded-full"
+        style="background:var(--brass);box-shadow:0 0 0 3px rgba(168,116,50,0.18)"
+      ></span>
+      <span class="sl-eyebrow" style="color:var(--brass-deep)">Platform Admin</span>
+      <span class="text-[12px] text-[var(--ink-mute)]">
+        Cross-zone access · every action is audited
+      </span>
     </div>
   </div>
-  <div class="max-w-6xl mx-auto px-6">
-    <nav class="text-sm text-slate-600 flex gap-6 py-4 border-b">
+
+  <div class="mx-auto max-w-7xl px-8">
+    <nav class="flex gap-8 border-b border-[var(--rule)] py-5">
       {#if isSuperAdmin(session.current)}
-        <a href="/admin/zones" class="hover:text-slate-900">Zones</a>
+        <a href="/admin/zones" class="sl-nav-link" aria-current={isActive("/admin/zones") ? "page" : undefined}>
+          Zones
+        </a>
       {/if}
-      <a href="/admin/regions" class="hover:text-slate-900">Regions</a>
-      <a href="/admin/regions/inbox" class="hover:text-slate-900">Inbox</a>
+      <a href="/admin/regions" class="sl-nav-link" aria-current={path === "/admin/regions" ? "page" : undefined}>
+        Regions
+      </a>
+      <a href="/admin/regions/inbox" class="sl-nav-link" aria-current={isActive("/admin/regions/inbox") ? "page" : undefined}>
+        Inbox
+      </a>
     </nav>
     {@render children?.()}
   </div>
-{:else}
-  <!-- Either anonymous/no_zone/error (root layout handles those redirects)
-       or authenticated-but-not-super-admin on a super-admin-only path
-       (we're about to redirect). Render nothing instead of flashing the
-       admin chrome. -->
 {/if}

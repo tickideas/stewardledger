@@ -15,7 +15,6 @@
   let regions = $state<Region[]>([]);
   let loadError = $state<string | null>(null);
 
-  // Per-row promote selection state.
   let mode = $state<Record<string, "existing" | "new">>({});
   let pickRegionId = $state<Record<string, string>>({});
   let newRegionName = $state<Record<string, string>>({});
@@ -54,66 +53,76 @@
       await api.post("/api/admin/regions/promote", payload);
       await refresh();
     } catch (err) {
-      rowError[row.zoneId] =
-        err instanceof ApiError ? err.message : "Could not promote.";
+      rowError[row.zoneId] = err instanceof ApiError ? err.message : "Could not promote.";
     } finally {
       busy[row.zoneId] = false;
     }
   }
 </script>
 
-<div class="py-8">
-  <h1 class="text-2xl font-semibold tracking-tight">Unverified region inbox</h1>
-  <p class="mt-1 text-sm text-slate-600">
-    Zones whose region name was entered as free text at signup. Promote each to an existing region or create a new one.
-  </p>
+<div class="py-10">
+  <div class="sl-reveal sl-reveal-1">
+    <span class="sl-eyebrow">§ Section III · Curation</span>
+    <h1 class="mt-3 sl-display text-[44px] leading-[1] text-[var(--ink)]">
+      Unverified <span class="sl-serif-italic font-light text-[var(--brass-deep)]">inbox</span>
+    </h1>
+    <p class="mt-2 max-w-xl text-[14px] text-[var(--ink-mute)]">
+      Zones whose region name was entered as free text at signup. Promote each to an existing region
+      or create a new one.
+    </p>
+  </div>
 
   {#if loadError}
-    <p class="mt-6 text-sm text-red-600">{loadError}</p>
+    <p class="mt-6 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{loadError}</p>
   {:else if rows.length === 0}
-    <p class="mt-8 text-sm text-slate-500">Nothing to review. Inbox is empty.</p>
+    <div class="sl-reveal sl-reveal-2 mt-10 sl-card flex flex-col items-center justify-center p-16 text-center">
+      <span class="sl-display text-[36px] italic text-[var(--brass-deep)]">∅</span>
+      <p class="mt-4 sl-display text-[18px] italic text-[var(--ink)]">Inbox is empty.</p>
+      <p class="mt-2 text-[13px] text-[var(--ink-mute)]">Nothing to review right now — clean books.</p>
+    </div>
   {:else}
-    <ul class="mt-8 divide-y divide-slate-200 border border-slate-200 rounded-lg overflow-hidden">
-      {#each rows as r}
-        <li class="px-4 py-4 space-y-3">
-          <div class="flex items-baseline justify-between">
+    <ul class="sl-reveal sl-reveal-2 mt-10 sl-card divide-y divide-[var(--rule)] overflow-hidden">
+      {#each rows as r, i}
+        <li class="space-y-4 px-6 py-6">
+          <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p class="text-sm font-medium text-slate-800">{r.zoneName}</p>
-              <p class="text-xs text-slate-500">
-                {r.zoneSlug}.stewardledger.church &middot; {r.countryCode}
+              <span class="sl-mono text-[10.5px] text-[var(--ink-mute)]" style="letter-spacing:0.1em">№ {String(i + 1).padStart(2, "0")}</span>
+              <p class="mt-1 sl-display text-[18px] text-[var(--ink)]">{r.zoneName}</p>
+              <p class="mt-0.5 sl-mono text-[11px] text-[var(--ink-mute)]" style="letter-spacing:0.04em">
+                {r.zoneSlug}.stewardledger.church · {r.countryCode}
               </p>
             </div>
-            <p class="text-xs text-slate-500">
-              submitted: <strong>{r.regionNameUnverified}</strong>
-            </p>
+            <div class="text-right">
+              <span class="sl-eyebrow" style="font-size:10px">Submitted as</span>
+              <p class="mt-1 sl-display italic text-[var(--ink)]">"{r.regionNameUnverified}"</p>
+            </div>
           </div>
 
-          <div class="flex items-center gap-2 text-xs">
-            <label class="flex items-center gap-1">
+          <div class="flex flex-wrap items-center gap-5 text-[13px]">
+            <label class="flex items-center gap-2">
               <input
                 type="radio"
                 value="existing"
                 checked={(mode[r.zoneId] ?? "existing") === "existing"}
                 onchange={() => (mode[r.zoneId] = "existing")}
+                style="accent-color: var(--brass)"
               />
-              Existing region
+              <span class="text-[var(--ink-soft)]">Map to existing</span>
             </label>
-            <label class="flex items-center gap-1">
+            <label class="flex items-center gap-2">
               <input
                 type="radio"
                 value="new"
                 checked={mode[r.zoneId] === "new"}
                 onchange={() => (mode[r.zoneId] = "new")}
+                style="accent-color: var(--brass)"
               />
-              Create new
+              <span class="text-[var(--ink-soft)]">Create new region</span>
             </label>
           </div>
 
           {#if (mode[r.zoneId] ?? "existing") === "existing"}
-            <select
-              bind:value={pickRegionId[r.zoneId]}
-              class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            >
+            <select bind:value={pickRegionId[r.zoneId]} class="sl-select">
               <option value="" disabled selected>Pick a region…</option>
               {#each regions as opt}
                 <option value={opt.id}>{opt.name}</option>
@@ -124,21 +133,16 @@
               type="text"
               bind:value={newRegionName[r.zoneId]}
               placeholder={r.regionNameUnverified}
-              class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              class="sl-input"
             />
           {/if}
 
           {#if rowError[r.zoneId]}
-            <p class="text-sm text-red-600">{rowError[r.zoneId]}</p>
+            <p class="border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{rowError[r.zoneId]}</p>
           {/if}
 
-          <div class="text-right">
-            <button
-              type="button"
-              disabled={busy[r.zoneId]}
-              class="inline-flex items-center px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-700 disabled:opacity-50"
-              onclick={() => promote(r)}
-            >
+          <div class="flex justify-end">
+            <button type="button" disabled={busy[r.zoneId]} class="sl-btn sl-btn-accent" onclick={() => promote(r)}>
               {busy[r.zoneId] ? "Promoting…" : "Promote"}
             </button>
           </div>

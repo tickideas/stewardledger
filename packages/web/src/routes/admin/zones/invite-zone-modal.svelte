@@ -153,41 +153,44 @@
 
 {#if open}
   <div
-    class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 sm:p-8"
+    class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8"
+    style="background: rgba(21,22,26,0.45); backdrop-filter: blur(2px)"
     role="presentation"
     onclick={(e) => {
       if (e.target === e.currentTarget) close();
     }}
   >
     <div
-      class="w-full max-w-xl rounded-xl bg-white shadow-xl"
+      class="sl-card w-full max-w-xl"
+      style="box-shadow: var(--shadow-lift)"
       role="dialog"
       aria-modal="true"
       aria-labelledby="invite-zone-title"
     >
-      <div class="flex items-start justify-between border-b border-slate-200 px-6 py-4">
+      <div class="flex items-start justify-between border-b border-[var(--rule)] px-7 py-5">
         <div>
-          <h2 id="invite-zone-title" class="text-lg font-semibold tracking-tight">
-            Invite a zone
+          <span class="sl-eyebrow">New tenant</span>
+          <h2 id="invite-zone-title" class="mt-2 sl-display text-[24px] text-[var(--ink)]">
+            Invite a <span class="sl-serif-italic text-[var(--brass-deep)]">zone</span>
           </h2>
-          <p class="mt-1 text-xs text-slate-500">
-            Creates the zone in <code>pending_setup</code> and emails the primary contact a
-            <code>zone_owner</code> invitation that expires in 7 days.
+          <p class="mt-2 max-w-md text-[12px] text-[var(--ink-mute)]">
+            Creates the zone in <code class="sl-mono text-[var(--ink)]">pending_setup</code> and emails the primary contact a
+            <code class="sl-mono text-[var(--ink)]">zone_owner</code> invitation that expires in 7 days.
           </p>
         </div>
         <button
           type="button"
           onclick={close}
-          class="ml-4 text-slate-400 hover:text-slate-700"
+          class="ml-4 text-[var(--ink-mute)] hover:text-[var(--ink)] text-lg leading-none"
           aria-label="Close"
         >
           ✕
         </button>
       </div>
 
-      <form class="space-y-5 px-6 py-5" onsubmit={submit}>
+      <form class="space-y-5 px-7 py-6" onsubmit={submit}>
         <label class="block">
-          <span class="text-sm font-medium text-slate-700">Zone name</span>
+          <span class="sl-eyebrow" style="font-size:10.5px">Zone name</span>
           <input
             type="text"
             required
@@ -195,13 +198,13 @@
             maxlength="120"
             bind:value={name}
             placeholder="e.g. Christ Embassy UK Zone 1"
-            class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            class="sl-input mt-2"
           />
         </label>
 
         <label class="block">
-          <span class="text-sm font-medium text-slate-700">Subdomain</span>
-          <div class="mt-1 flex overflow-hidden rounded-lg border border-slate-300">
+          <span class="sl-eyebrow" style="font-size:10.5px">Subdomain</span>
+          <div class="mt-2 flex overflow-hidden rounded-[2px] border border-[var(--rule-strong)]">
             <input
               type="text"
               required
@@ -209,9 +212,9 @@
               minlength="3"
               maxlength="40"
               bind:value={slug}
-              class="flex-1 px-3 py-2 text-sm focus:outline-none"
+              class="flex-1 bg-[var(--card)] px-3 py-2 text-[13px] focus:outline-none"
             />
-            <span class="border-l bg-slate-50 px-3 py-2 text-sm text-slate-500"
+            <span class="border-l border-[var(--rule-strong)] bg-[var(--paper-soft)] px-3 py-2 sl-mono text-[12px] text-[var(--ink-mute)]"
               >.stewardledger.church</span
             >
           </div>
@@ -219,38 +222,21 @@
 
         <div class="grid grid-cols-3 gap-3">
           <label class="block">
-            <span class="text-sm font-medium text-slate-700">Country</span>
-            <input
-              type="text"
-              required
-              maxlength="2"
-              bind:value={countryCode}
-              class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase"
-            />
+            <span class="sl-eyebrow" style="font-size:10.5px">Country</span>
+            <input type="text" required maxlength="2" bind:value={countryCode} class="sl-input mt-2 uppercase" />
           </label>
           <label class="block">
-            <span class="text-sm font-medium text-slate-700">Currency</span>
-            <input
-              type="text"
-              required
-              maxlength="3"
-              bind:value={defaultCurrency}
-              class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase"
-            />
+            <span class="sl-eyebrow" style="font-size:10.5px">Currency</span>
+            <input type="text" required maxlength="3" bind:value={defaultCurrency} class="sl-input mt-2 uppercase" />
           </label>
           <label class="block">
-            <span class="text-sm font-medium text-slate-700">Time zone</span>
-            <input
-              type="text"
-              required
-              bind:value={timeZone}
-              class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            />
+            <span class="sl-eyebrow" style="font-size:10.5px">Time zone</span>
+            <input type="text" required bind:value={timeZone} class="sl-input mt-2" />
           </label>
         </div>
 
         <div class="block">
-          <span class="text-sm font-medium text-slate-700">Region</span>
+          <span class="sl-eyebrow" style="font-size:10.5px">Region</span>
           {#if !useFreeText}
             <input
               type="text"
@@ -259,20 +245,20 @@
                 if (regionId) regionId = null;
               }}
               placeholder="Search…"
-              class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              class="sl-input mt-2"
             />
             {#if regionId}
-              <p class="mt-1 text-xs text-slate-500">
-                Selected: <strong>{regionQuery}</strong>
-                <button type="button" class="ml-2 underline" onclick={clearRegion}>change</button>
+              <p class="mt-2 text-[12px] text-[var(--ink-mute)]">
+                Selected: <strong class="text-[var(--ink)]">{regionQuery}</strong>
+                <button type="button" class="sl-link ml-2" onclick={clearRegion}>change</button>
               </p>
             {:else if regionResults.length > 0}
-              <ul class="mt-1 overflow-hidden rounded-lg border border-slate-200">
+              <ul class="mt-2 overflow-hidden rounded-[2px] border border-[var(--rule)]">
                 {#each regionResults as r (r.id)}
                   <li>
                     <button
                       type="button"
-                      class="block w-full px-3 py-2 text-left text-sm hover:bg-slate-100"
+                      class="block w-full px-3 py-2 text-left text-[13px] hover:bg-[var(--paper-soft)]"
                       onclick={() => pickRegion(r)}
                     >
                       {r.name}{r.shortCode ? ` (${r.shortCode})` : ""}
@@ -283,7 +269,7 @@
             {/if}
             <button
               type="button"
-              class="mt-2 text-xs text-slate-600 underline"
+              class="sl-link mt-2 text-[12px]"
               onclick={() => {
                 useFreeText = true;
                 regionId = null;
@@ -300,13 +286,13 @@
               maxlength="120"
               bind:value={regionNameUnverified}
               placeholder="Region name"
-              class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              class="sl-input mt-2"
             />
-            <p class="mt-1 text-xs text-slate-500">
-              Will land in <code>/api/admin/regions/inbox</code> for curation.
+            <p class="mt-2 text-[12px] text-[var(--ink-mute)]">
+              Will land in <code class="sl-mono text-[var(--ink)]">/api/admin/regions/inbox</code> for curation.
               <button
                 type="button"
-                class="ml-2 underline"
+                class="sl-link ml-2"
                 onclick={() => {
                   useFreeText = false;
                   regionNameUnverified = "";
@@ -318,48 +304,27 @@
           {/if}
         </div>
 
-        <hr class="border-slate-200" />
+        <div class="h-px bg-[var(--rule)]"></div>
 
         <label class="block">
-          <span class="text-sm font-medium text-slate-700">Primary contact name</span>
-          <input
-            type="text"
-            required
-            minlength="2"
-            maxlength="120"
-            bind:value={primaryContactName}
-            class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          />
+          <span class="sl-eyebrow" style="font-size:10.5px">Primary contact name</span>
+          <input type="text" required minlength="2" maxlength="120" bind:value={primaryContactName} class="sl-input mt-2" />
         </label>
         <label class="block">
-          <span class="text-sm font-medium text-slate-700">Primary contact email</span>
-          <input
-            type="email"
-            required
-            bind:value={primaryContactEmail}
-            class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          />
-          <p class="mt-1 text-xs text-slate-500">The invitation email goes here.</p>
+          <span class="sl-eyebrow" style="font-size:10.5px">Primary contact email</span>
+          <input type="email" required bind:value={primaryContactEmail} class="sl-input mt-2" />
+          <p class="mt-2 text-[12px] text-[var(--ink-mute)]">The invitation email goes here.</p>
         </label>
 
         {#if errorMsg}
-          <p class="text-sm text-red-600">{errorMsg}</p>
+          <p class="border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{errorMsg}</p>
         {/if}
 
         <div class="flex items-center justify-end gap-3 pt-2">
-          <button
-            type="button"
-            onclick={close}
-            disabled={submitting}
-            class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-          >
+          <button type="button" onclick={close} disabled={submitting} class="sl-btn sl-btn-ghost">
             Cancel
           </button>
-          <button
-            type="submit"
-            disabled={submitting}
-            class="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-          >
+          <button type="submit" disabled={submitting} class="sl-btn sl-btn-primary">
             {submitting ? "Sending…" : "Send invitation"}
           </button>
         </div>

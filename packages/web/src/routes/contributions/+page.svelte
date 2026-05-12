@@ -1,6 +1,4 @@
 <script lang="ts">
-  // Treasurer's home: batches first (the Sunday close), individual
-  // contributions tab for one-off / online / bank-import entries.
   import { goto } from "$app/navigation";
   import { api, ApiError, isAbortError } from "$lib/api";
   import { formatMoney } from "@stewardledger/shared";
@@ -49,15 +47,8 @@
   let loadError = $state<string | null>(null);
   let chaptersError = $state<string | null>(null);
 
-  // Last-request-wins token: if the user clicks chapter A then B faster
-  // than the round-trip, A's response must not overwrite B's table.
   let refreshToken = 0;
 
-  // Reset the status filter when the tab changes — the two tabs share a
-  // <select> but their valid status sets diverge (batches have
-  // "approved", contributions have "reversed"). Without this, switching
-  // tabs while a tab-specific value was selected sends an invalid status
-  // to the new endpoint.
   function selectTab(next: "batches" | "contributions") {
     if (tab === next) return;
     tab = next;
@@ -71,8 +62,6 @@
       chaptersError = null;
     } catch (err) {
       if (isAbortError(err)) return;
-      // Surface the failure so a treasurer with no chapter access (or a
-      // network blip) doesn't see an empty filter and wonder why.
       chapters = [];
       chaptersError =
         err instanceof ApiError ? `Could not load chapters: ${err.message}` : "Could not load chapters.";
@@ -119,7 +108,6 @@
     return () => controller.abort();
   });
 
-  // Re-fetch whenever the tab or filters change.
   $effect(() => {
     void tab;
     void chapterId;
@@ -134,21 +122,15 @@
     return chapters.find((c) => c.id === chapterIdValue)?.name ?? "—";
   }
 
-  function statusBadge(s: string): string {
+  function statusBadgeClass(s: string): string {
     switch (s) {
-      case "posted":
-        return "bg-green-100 text-green-700";
-      case "approved":
-        return "bg-blue-100 text-blue-700";
-      case "submitted":
-        return "bg-amber-100 text-amber-700";
-      case "voided":
-        return "bg-slate-100 text-slate-500";
-      case "reversed":
-        return "bg-rose-100 text-rose-700";
+      case "posted":    return "sl-badge sl-badge-ok";
+      case "approved":  return "sl-badge sl-badge-info";
+      case "submitted": return "sl-badge sl-badge-warn";
+      case "voided":    return "sl-badge sl-badge-mute";
+      case "reversed":  return "sl-badge sl-badge-bad";
       case "draft":
-      default:
-        return "bg-slate-100 text-slate-700";
+      default:          return "sl-badge sl-badge-mute";
     }
   }
 
@@ -159,58 +141,136 @@
   async function newBatch() {
     await goto("/contributions/batches/new");
   }
+
+  // Derived headline: posted totals, grouped by currency.
+  const postedByCurrency = $derived.by(() => {
+    if (tab !== "contributions") return [] as { currency: string; total: number; count: number }[];
+    const acc = new Map<string, { total: number; count: number }>();
+    for (const c of contributions) {
+      if (c.status !== "posted") continue;
+      const cur = acc.get(c.currencyCode) ?? { total: 0, count: 0 };
+      cur.total += parseFloat(c.totalAmount);
+      cur.count += 1;
+      acc.set(c.currencyCode, cur);
+    }
+    return [...acc.entries()].map(([currency, v]) => ({ currency, ...v }));
+  });
+
+  const batchCashTotal = $derived.by(() => {
+    const acc = new Map<string, number>();
+    for (const b of batches) {
+      if (!b.cashTotal) continue;
+      acc.set(b.currencyCode, (acc.get(b.currencyCode) ?? 0) + parseFloat(b.cashTotal));
+    }
+    return [...acc.entries()];
+  });
 </script>
 
-<div class="max-w-6xl mx-auto px-6 py-8">
-  <div class="flex items-baseline justify-between">
+<div class="mx-auto max-w-7xl px-8 py-10">
+  <div class="sl-reveal sl-reveal-1 flex flex-wrap items-end justify-between gap-6">
     <div>
-      <h1 class="text-2xl font-semibold tracking-tight">Contributions</h1>
-      <p class="mt-1 text-sm text-slate-600">
-        Sunday batches, individual gifts, and online imports.
+      <span class="sl-eyebrow">§ Daily ledger · Treasurer</span>
+      <h1 class="mt-3 sl-display text-[44px] leading-[1] text-[var(--ink)]">
+        Contributions <span class="sl-serif-italic font-light text-[var(--brass-deep)]">journal</span>
+      </h1>
+      <p class="mt-2 max-w-xl text-[14px] text-[var(--ink-mute)]">
+        Sunday batches, individual gifts, and online imports — all reconciled into a single
+        traceable ledger.
       </p>
     </div>
-    <button
-      onclick={newBatch}
-      class="inline-flex items-center px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-700"
-    >
+    <button onclick={newBatch} class="sl-btn sl-btn-primary">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+        <path d="M7 3v8M3 7h8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+      </svg>
       New batch
     </button>
   </div>
 
-  <div class="mt-6 border-b border-slate-200">
-    <nav class="flex gap-6 text-sm">
+  <!-- KPI strip -->
+  <div class="sl-reveal sl-reveal-2 mt-10 grid grid-cols-2 gap-0 border-y border-[var(--rule)] bg-[var(--card)] md:grid-cols-4">
+    <div class="px-6 py-7 border-r border-[var(--rule)]">
+      <span class="sl-eyebrow">Batches shown</span>
+      <div class="mt-3 sl-display sl-num text-[44px] leading-none text-[var(--ink)]">
+        {batchTotal ?? batches.length}
+      </div>
+      <p class="mt-2 text-[12px] text-[var(--ink-mute)]">{batches.filter((b) => b.status === "posted").length} posted · {batches.filter((b) => b.status === "submitted").length} pending</p>
+    </div>
+    <div class="px-6 py-7 md:border-r md:border-[var(--rule)]">
+      <span class="sl-eyebrow">Contributions</span>
+      <div class="mt-3 sl-display sl-num text-[44px] leading-none text-[var(--ink)]">
+        {contribTotal ?? contributions.length}
+      </div>
+      <p class="mt-2 text-[12px] text-[var(--ink-mute)]">across filters in view</p>
+    </div>
+    <div class="border-t border-[var(--rule)] px-6 py-7 md:border-r md:border-t-0 md:border-[var(--rule)]">
+      <span class="sl-eyebrow">Cash on hand · batches</span>
+      <div class="mt-3 sl-display sl-num text-[28px] leading-tight text-[var(--ink)]">
+        {#if batchCashTotal.length === 0}
+          <span class="text-[var(--ink-faint)]">—</span>
+        {:else}
+          {#each batchCashTotal as [cur, total], i}
+            <span class:block={i > 0}>{fmt(total.toFixed(2), cur)}</span>
+          {/each}
+        {/if}
+      </div>
+      <p class="mt-2 text-[12px] text-[var(--ink-mute)]">unposted physical cash</p>
+    </div>
+    <div class="border-t border-[var(--rule)] px-6 py-7 md:border-t-0">
+      <span class="sl-eyebrow">Posted · this view</span>
+      <div class="mt-3 sl-display sl-num text-[28px] leading-tight text-[var(--brass-deep)]">
+        {#if tab === "contributions" && postedByCurrency.length > 0}
+          {#each postedByCurrency as p, i}
+            <span class:block={i > 0}>{fmt(p.total.toFixed(2), p.currency)}</span>
+          {/each}
+        {:else}
+          <span class="text-[var(--ink-faint)]">—</span>
+        {/if}
+      </div>
+      <p class="mt-2 text-[12px] text-[var(--ink-mute)]">tab: {tab}</p>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="sl-reveal sl-reveal-3 mt-10 border-b border-[var(--rule)]">
+    <nav class="flex gap-8">
       <button
         type="button"
         onclick={() => selectTab("batches")}
-        class={tab === "batches"
-          ? "border-b-2 border-slate-900 px-1 py-3 font-medium text-slate-900"
-          : "border-b-2 border-transparent px-1 py-3 text-slate-500 hover:text-slate-800"}
+        class="relative -mb-px py-3"
+        style={tab === "batches" ? "color:var(--ink)" : "color:var(--ink-mute)"}
       >
-        Batches{batchTotal !== null ? ` (${batchTotal})` : ""}
+        <span class="sl-display text-[16px]">Batches</span>
+        {#if batchTotal !== null}
+          <span class="ml-2 sl-mono text-[11px] text-[var(--ink-mute)]">({batchTotal})</span>
+        {/if}
+        {#if tab === "batches"}
+          <span class="absolute inset-x-0 -bottom-px h-px bg-[var(--brass)]"></span>
+        {/if}
       </button>
       <button
         type="button"
         onclick={() => selectTab("contributions")}
-        class={tab === "contributions"
-          ? "border-b-2 border-slate-900 px-1 py-3 font-medium text-slate-900"
-          : "border-b-2 border-transparent px-1 py-3 text-slate-500 hover:text-slate-800"}
+        class="relative -mb-px py-3"
+        style={tab === "contributions" ? "color:var(--ink)" : "color:var(--ink-mute)"}
       >
-        All contributions{contribTotal !== null ? ` (${contribTotal})` : ""}
+        <span class="sl-display text-[16px]">All contributions</span>
+        {#if contribTotal !== null}
+          <span class="ml-2 sl-mono text-[11px] text-[var(--ink-mute)]">({contribTotal})</span>
+        {/if}
+        {#if tab === "contributions"}
+          <span class="absolute inset-x-0 -bottom-px h-px bg-[var(--brass)]"></span>
+        {/if}
       </button>
     </nav>
   </div>
 
-  <div class="mt-4 flex gap-3">
-    <select
-      bind:value={chapterId}
-      class="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-    >
+  <!-- Filters -->
+  <div class="mt-5 flex flex-wrap items-center gap-3">
+    <select bind:value={chapterId} class="sl-select w-56">
       <option value="">All chapters</option>
-      {#each chapters as ch (ch.id)}
-        <option value={ch.id}>{ch.name}</option>
-      {/each}
+      {#each chapters as ch (ch.id)}<option value={ch.id}>{ch.name}</option>{/each}
     </select>
-    <select bind:value={status} class="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+    <select bind:value={status} class="sl-select w-48">
       <option value="">All statuses</option>
       {#if tab === "batches"}
         <option value="draft">Draft</option>
@@ -228,96 +288,88 @@
   </div>
 
   {#if chaptersError}
-    <p class="mt-3 text-sm text-amber-700">{chaptersError}</p>
+    <p class="mt-4 border-l-2 border-[var(--warn)] bg-[var(--warn-soft)] px-3 py-2 text-[13px] text-[var(--ink-soft)]">{chaptersError}</p>
   {/if}
 
   {#if loadError}
-    <p class="mt-6 text-sm text-red-600">{loadError}</p>
+    <p class="mt-6 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{loadError}</p>
   {:else if tab === "batches"}
-    <table class="mt-6 w-full text-sm">
-      <thead class="text-left text-xs uppercase tracking-wide text-slate-500 border-b">
-        <tr>
-          <th class="py-2">Reference</th>
-          <th class="py-2">Chapter</th>
-          <th class="py-2">Source</th>
-          <th class="py-2 text-right">Cash</th>
-          <th class="py-2 text-right">Cheque</th>
-          <th class="py-2">Status</th>
-          <th class="py-2">Created</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-slate-200">
-        {#each batches as b (b.id)}
-          <tr class="hover:bg-slate-50">
-            <td class="py-3 font-mono text-xs text-slate-600">
-              <a href={`/contributions/batches/${b.id}`} class="hover:underline">
-                {b.referenceCode ?? b.id.slice(0, 8)}
-              </a>
-            </td>
-            <td class="py-3 text-slate-700">{chapterName(b.chapterId)}</td>
-            <td class="py-3 text-slate-600">{b.sourceType}</td>
-            <td class="py-3 text-right font-mono text-slate-700">
-              {b.cashTotal ? fmt(b.cashTotal, b.currencyCode) : "—"}
-            </td>
-            <td class="py-3 text-right font-mono text-slate-700">
-              {b.chequeTotal ? fmt(b.chequeTotal, b.currencyCode) : "—"}
-            </td>
-            <td class="py-3">
-              <span class={`inline-block px-2 py-0.5 rounded-full text-xs ${statusBadge(b.status)}`}>
-                {b.status}
-              </span>
-            </td>
-            <td class="py-3 text-xs text-slate-500">{new Date(b.createdAt).toLocaleDateString()}</td>
-          </tr>
-        {/each}
-        {#if !loading && batches.length === 0}
+    <div class="sl-reveal mt-6 sl-card overflow-hidden">
+      <table class="sl-table">
+        <thead>
           <tr>
-            <td colspan="7" class="py-8 text-center text-sm text-slate-500">
-              No batches yet. Click <strong>New batch</strong> to record a Sunday close.
-            </td>
+            <th>Reference</th>
+            <th>Chapter</th>
+            <th>Source</th>
+            <th class="!text-right">Cash</th>
+            <th class="!text-right">Cheque</th>
+            <th>Status</th>
+            <th>Created</th>
           </tr>
-        {/if}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {#each batches as b (b.id)}
+            <tr>
+              <td>
+                <a href={`/contributions/batches/${b.id}`} class="sl-mono text-[12px] text-[var(--ink)] hover:text-[var(--brass-deep)]">
+                  {b.referenceCode ?? b.id.slice(0, 8)}
+                </a>
+              </td>
+              <td class="text-[var(--ink-soft)]">{chapterName(b.chapterId)}</td>
+              <td class="sl-mono text-[11.5px] text-[var(--ink-mute)] uppercase" style="letter-spacing:0.06em">{b.sourceType}</td>
+              <td class="text-right sl-mono sl-num text-[var(--ink)]">
+                {b.cashTotal ? fmt(b.cashTotal, b.currencyCode) : "—"}
+              </td>
+              <td class="text-right sl-mono sl-num text-[var(--ink)]">
+                {b.chequeTotal ? fmt(b.chequeTotal, b.currencyCode) : "—"}
+              </td>
+              <td><span class={statusBadgeClass(b.status)}>{b.status}</span></td>
+              <td class="sl-mono text-[11.5px] text-[var(--ink-mute)]">
+                {new Date(b.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+              </td>
+            </tr>
+          {/each}
+          {#if !loading && batches.length === 0}
+            <tr>
+              <td colspan="7" class="py-12 text-center text-[13px] text-[var(--ink-mute)]">
+                No batches yet. Click <strong class="text-[var(--ink)]">New batch</strong> to record a Sunday close.
+              </td>
+            </tr>
+          {/if}
+        </tbody>
+      </table>
+    </div>
   {:else}
-    <table class="mt-6 w-full text-sm">
-      <thead class="text-left text-xs uppercase tracking-wide text-slate-500 border-b">
-        <tr>
-          <th class="py-2">Date</th>
-          <th class="py-2">Chapter</th>
-          <th class="py-2">Source</th>
-          <th class="py-2 text-right">Total</th>
-          <th class="py-2">Status</th>
-          <th class="py-2">Description</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-slate-200">
-        {#each contributions as c (c.id)}
-          <tr class="hover:bg-slate-50">
-            <td class="py-3 text-slate-700">
-              <a href={`/contributions/${c.id}`} class="hover:underline">{c.contributionDate}</a>
-            </td>
-            <td class="py-3 text-slate-700">{chapterName(c.chapterId)}</td>
-            <td class="py-3 text-slate-600">{c.sourceType}</td>
-            <td class="py-3 text-right font-mono text-slate-700">
-              {fmt(c.totalAmount, c.currencyCode)}
-            </td>
-            <td class="py-3">
-              <span class={`inline-block px-2 py-0.5 rounded-full text-xs ${statusBadge(c.status)}`}>
-                {c.status}
-              </span>
-            </td>
-            <td class="py-3 text-slate-500 truncate max-w-md">{c.description ?? "—"}</td>
-          </tr>
-        {/each}
-        {#if !loading && contributions.length === 0}
+    <div class="sl-reveal mt-6 sl-card overflow-hidden">
+      <table class="sl-table">
+        <thead>
           <tr>
-            <td colspan="6" class="py-8 text-center text-sm text-slate-500">
-              No contributions yet.
-            </td>
+            <th>Date</th>
+            <th>Chapter</th>
+            <th>Source</th>
+            <th class="!text-right">Total</th>
+            <th>Status</th>
+            <th>Description</th>
           </tr>
-        {/if}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {#each contributions as c (c.id)}
+            <tr>
+              <td class="sl-mono text-[12px] text-[var(--ink)]">
+                <a href={`/contributions/${c.id}`} class="hover:text-[var(--brass-deep)]">{c.contributionDate}</a>
+              </td>
+              <td class="text-[var(--ink-soft)]">{chapterName(c.chapterId)}</td>
+              <td class="sl-mono text-[11.5px] text-[var(--ink-mute)] uppercase" style="letter-spacing:0.06em">{c.sourceType}</td>
+              <td class="text-right sl-mono sl-num text-[var(--ink)]">{fmt(c.totalAmount, c.currencyCode)}</td>
+              <td><span class={statusBadgeClass(c.status)}>{c.status}</span></td>
+              <td class="max-w-md truncate text-[var(--ink-mute)]">{c.description ?? "—"}</td>
+            </tr>
+          {/each}
+          {#if !loading && contributions.length === 0}
+            <tr><td colspan="6" class="py-12 text-center text-[13px] text-[var(--ink-mute)]">No contributions yet.</td></tr>
+          {/if}
+        </tbody>
+      </table>
+    </div>
   {/if}
 </div>
