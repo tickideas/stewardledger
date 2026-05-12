@@ -15,6 +15,9 @@
     "db:migrate": "turbo db:migrate",
     "db:push": "turbo db:push",
     "db:studio": "pnpm --filter @stewardledger/db db:studio",
+    "seed:demo": "pnpm --filter @stewardledger/api seed:demo",
+    "make-super-admin": "pnpm --filter @stewardledger/api make-super-admin",
+    "create-admin": "pnpm --filter @stewardledger/api create-admin",
     "clean": "turbo clean"
   },
   "devDependencies": {

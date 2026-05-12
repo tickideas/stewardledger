@@ -15,7 +15,10 @@
     "start": "node dist/server.js",
     "clean": "rm -rf dist",
     "test": "ENV_FILE=../../.env.test vitest run",
-    "test:watch": "ENV_FILE=../../.env.test vitest"
+    "test:watch": "ENV_FILE=../../.env.test vitest",
+    "seed:demo": "tsx scripts/seed-demo.ts",
+    "make-super-admin": "tsx scripts/make-super-admin.ts",
+    "create-admin": "tsx scripts/create-admin.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.1",

@@ -10,7 +10,7 @@ import {
 } from "@stewardledger/shared";
 import { and, asc, eq, ilike, isNull } from "drizzle-orm";
 import { Hono } from "hono";
-import { regions, userRoleBindings, zones } from "@stewardledger/db/schema";
+import { regions, user as userTable, userRoleBindings, zones } from "@stewardledger/db/schema";
 import { auth } from "../auth";
 import { db } from "../db";
 import { log } from "../logger";
@@ -56,6 +56,12 @@ publicRouter.get("/session-zones", async (c) => {
     return c.json({ error: { code: "unauthenticated", message: "Sign in required" } }, 401);
   }
 
+  const [userRow] = await db
+    .select({ isSuperAdmin: userTable.isSuperAdmin })
+    .from(userTable)
+    .where(eq(userTable.id, session.user.id))
+    .limit(1);
+
   const rows = await db
     .select({ id: zones.id, slug: zones.slug, name: zones.name })
     .from(userRoleBindings)
@@ -70,7 +76,7 @@ publicRouter.get("/session-zones", async (c) => {
     return true;
   });
 
-  return c.json({ items });
+  return c.json({ items, isSuperAdmin: userRow?.isSuperAdmin ?? false });
 });
 
 /** Public zone signup. Always invites the owner immediately (no admin gate). */

@@ -21,14 +21,25 @@ export type Zone = { id: string; slug: string; name: string };
  *                     /login because the user may still be signed in
  */
 export type SessionState =
-  | { status: "loading"; zones: never[]; activeZoneSlug: null }
-  | { status: "anonymous"; zones: never[]; activeZoneSlug: null }
-  | { status: "no_zone"; zones: never[]; activeZoneSlug: null }
-  | { status: "authenticated"; zones: Zone[]; activeZoneSlug: string | null }
-  | { status: "error"; zones: never[]; activeZoneSlug: null; reason: string };
+  | { status: "loading"; zones: never[]; activeZoneSlug: null; isSuperAdmin: false }
+  | { status: "anonymous"; zones: never[]; activeZoneSlug: null; isSuperAdmin: false }
+  | { status: "no_zone"; zones: never[]; activeZoneSlug: null; isSuperAdmin: false }
+  | {
+      status: "authenticated";
+      zones: Zone[];
+      activeZoneSlug: string | null;
+      isSuperAdmin: boolean;
+    }
+  | {
+      status: "error";
+      zones: never[];
+      activeZoneSlug: null;
+      isSuperAdmin: false;
+      reason: string;
+    };
 
 export const session = $state<{ current: SessionState }>({
-  current: { status: "loading", zones: [], activeZoneSlug: null },
+  current: { status: "loading", zones: [], activeZoneSlug: null, isSuperAdmin: false },
 });
 
 let inflight: Promise<void> | null = null;
@@ -52,23 +63,51 @@ export function loadSession(): Promise<void> {
       if (epoch !== sessionEpoch) return; // superseded by sign-out
 
       if (res.status === 401) {
-        session.current = { status: "anonymous", zones: [], activeZoneSlug: null };
+        session.current = {
+          status: "anonymous",
+          zones: [],
+          activeZoneSlug: null,
+          isSuperAdmin: false,
+        };
         return;
       }
       if (!res.ok) {
         const reason = `session-zones returned ${res.status}`;
         console.warn(`[session] ${reason}`);
-        session.current = { status: "error", zones: [], activeZoneSlug: null, reason };
+        session.current = {
+          status: "error",
+          zones: [],
+          activeZoneSlug: null,
+          isSuperAdmin: false,
+          reason,
+        };
         return;
       }
 
-      const body = (await res.json()) as { items: Zone[] };
+      const body = (await res.json()) as { items: Zone[]; isSuperAdmin?: boolean };
       if (epoch !== sessionEpoch) return; // superseded between fetch + parse
+      const isSuperAdmin = body.isSuperAdmin === true;
 
       if (body.items.length === 0) {
+        // Super-admins may legitimately have zero zone bindings (platform-only
+        // users). Treat them as authenticated so /admin is reachable.
+        if (isSuperAdmin) {
+          session.current = {
+            status: "authenticated",
+            zones: [],
+            activeZoneSlug: null,
+            isSuperAdmin: true,
+          };
+          return;
+        }
         // Authenticated but bound to no zone — surface explicitly instead of
         // showing protected nav links that will fail every API call.
-        session.current = { status: "no_zone", zones: [], activeZoneSlug: null };
+        session.current = {
+          status: "no_zone",
+          zones: [],
+          activeZoneSlug: null,
+          isSuperAdmin: false,
+        };
         return;
       }
 
@@ -77,12 +116,23 @@ export function loadSession(): Promise<void> {
       const fallback = body.items[0]?.slug ?? null;
       const activeZoneSlug =
         stored && body.items.some((z) => z.slug === stored) ? stored : fallback;
-      session.current = { status: "authenticated", zones: body.items, activeZoneSlug };
+      session.current = {
+        status: "authenticated",
+        zones: body.items,
+        activeZoneSlug,
+        isSuperAdmin,
+      };
     } catch (err) {
       if (epoch !== sessionEpoch) return;
       const reason = err instanceof Error ? err.message : String(err);
       console.warn("[session] loadSession failed:", reason);
-      session.current = { status: "error", zones: [], activeZoneSlug: null, reason };
+      session.current = {
+        status: "error",
+        zones: [],
+        activeZoneSlug: null,
+        isSuperAdmin: false,
+        reason,
+      };
     } finally {
       inflight = null;
     }
@@ -102,7 +152,12 @@ export async function signOut(): Promise<void> {
   if (typeof localStorage !== "undefined") {
     localStorage.removeItem(ACTIVE_ZONE_KEY);
   }
-  session.current = { status: "anonymous", zones: [], activeZoneSlug: null };
+  session.current = {
+    status: "anonymous",
+    zones: [],
+    activeZoneSlug: null,
+    isSuperAdmin: false,
+  };
 
   try {
     await fetch(`${PUBLIC_API_URL}/api/auth/sign-out`, {

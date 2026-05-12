@@ -49,6 +49,16 @@
     }
   });
 
+  // Authenticated non-super-admins on /admin/* get bounced to /members.
+  // The API enforces this server-side too; this is UX hardening.
+  $effect(() => {
+    if (session.current.status !== "authenticated") return;
+    if (session.current.isSuperAdmin) return;
+    if (page.url.pathname.startsWith("/admin")) {
+      goto("/members", { replaceState: true });
+    }
+  });
+
   const isAuthed = $derived(session.current.status === "authenticated");
   const activeZone = $derived(
     session.current.status === "authenticated"
@@ -72,6 +82,9 @@
           <a href="/contributions" class="hover:text-slate-900">Contributions</a>
           <a href="/imports" class="hover:text-slate-900">Imports</a>
           <a href="/reports" class="hover:text-slate-900">Reports</a>
+          {#if session.current.status === "authenticated" && session.current.isSuperAdmin}
+            <a href="/admin/zones" class="text-amber-700 hover:text-amber-900">Admin</a>
+          {/if}
           {#if activeZone}
             <span class="text-slate-400">·</span>
             <span class="text-slate-500" title={activeZone.slug}>{activeZone.name}</span>

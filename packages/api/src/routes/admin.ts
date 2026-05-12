@@ -10,9 +10,15 @@ import {
   regionPromoteSchema,
   regionUpdateSchema,
 } from "@stewardledger/shared";
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, sql, sum } from "drizzle-orm";
 import { Hono } from "hono";
-import { chapters, regions, zones } from "@stewardledger/db/schema";
+import {
+  chapters,
+  contributions,
+  members,
+  regions,
+  zones,
+} from "@stewardledger/db/schema";
 import { db } from "../db";
 import {
   requirePlatformRole,
@@ -29,6 +35,162 @@ adminRouter.use(
   requireSession,
   requirePlatformRole(PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.REGION_CURATOR),
 );
+
+// ─── Zones (tenants) ─────────────────────────────────────────────────
+
+/**
+ * Cross-tenant zones list with denormalized counts. Read-only — every write
+ * still flows through the normal tenant-scoped endpoints so audits stay
+ * per-zone. Super-admin only (region-curators can scope this in a follow-up).
+ */
+adminRouter.get("/zones", async (c) => {
+  const user = c.get("user") as SessionUser;
+  if (!user.isSuperAdmin) {
+    return c.json({ error: { code: "forbidden", message: "Super-admin required" } }, 403);
+  }
+
+  const zoneRows = await db
+    .select({
+      id: zones.id,
+      slug: zones.slug,
+      name: zones.name,
+      status: zones.status,
+      countryCode: zones.countryCode,
+      defaultCurrencyCode: zones.defaultCurrencyCode,
+      regionId: zones.regionId,
+      regionName: regions.name,
+      regionNameUnverified: zones.regionNameUnverified,
+      activatedAt: zones.activatedAt,
+      createdAt: zones.createdAt,
+    })
+    .from(zones)
+    .leftJoin(regions, eq(regions.id, zones.regionId))
+    .where(isNull(zones.deletedAt))
+    .orderBy(desc(zones.createdAt));
+
+  if (zoneRows.length === 0) return c.json({ items: [] });
+  const zoneIds = zoneRows.map((z) => z.id);
+
+  // One round-trip each, then stitched in-memory. Three small grouped queries
+  // is cheaper and clearer than three correlated subqueries.
+  const chapterCounts = await db
+    .select({ zoneId: chapters.zoneId, n: count(chapters.id) })
+    .from(chapters)
+    .where(and(inArray(chapters.zoneId, zoneIds), isNull(chapters.deletedAt)))
+    .groupBy(chapters.zoneId);
+  const memberCounts = await db
+    .select({ zoneId: members.zoneId, n: count(members.id) })
+    .from(members)
+    .where(and(inArray(members.zoneId, zoneIds), isNull(members.deletedAt)))
+    .groupBy(members.zoneId);
+  const contributionTotals = await db
+    .select({
+      zoneId: contributions.zoneId,
+      total: sum(contributions.totalAmount),
+      n: count(contributions.id),
+    })
+    .from(contributions)
+    .where(and(inArray(contributions.zoneId, zoneIds), eq(contributions.status, "posted")))
+    .groupBy(contributions.zoneId);
+
+  const chapterByZone = new Map(chapterCounts.map((r) => [r.zoneId, Number(r.n)]));
+  const memberByZone = new Map(memberCounts.map((r) => [r.zoneId, Number(r.n)]));
+  const contributionByZone = new Map(
+    contributionTotals.map((r) => [r.zoneId, { total: r.total ?? "0", count: Number(r.n) }]),
+  );
+
+  const items = zoneRows.map((z) => ({
+    ...z,
+    chapterCount: chapterByZone.get(z.id) ?? 0,
+    memberCount: memberByZone.get(z.id) ?? 0,
+    postedContributionTotal: contributionByZone.get(z.id)?.total ?? "0",
+    postedContributionCount: contributionByZone.get(z.id)?.count ?? 0,
+  }));
+  return c.json({ items });
+});
+
+/** Zone detail: zone row + chapters + members snapshot. */
+adminRouter.get("/zones/:slug", async (c) => {
+  const user = c.get("user") as SessionUser;
+  if (!user.isSuperAdmin) {
+    return c.json({ error: { code: "forbidden", message: "Super-admin required" } }, 403);
+  }
+  const slug = c.req.param("slug");
+
+  const [zone] = await db
+    .select({
+      id: zones.id,
+      slug: zones.slug,
+      name: zones.name,
+      legalName: zones.legalName,
+      status: zones.status,
+      countryCode: zones.countryCode,
+      defaultCurrencyCode: zones.defaultCurrencyCode,
+      defaultTimeZone: zones.defaultTimeZone,
+      fiscalYearStartMonth: zones.fiscalYearStartMonth,
+      ministryYearStartMonth: zones.ministryYearStartMonth,
+      regionId: zones.regionId,
+      regionName: regions.name,
+      regionNameUnverified: zones.regionNameUnverified,
+      activatedAt: zones.activatedAt,
+      createdAt: zones.createdAt,
+    })
+    .from(zones)
+    .leftJoin(regions, eq(regions.id, zones.regionId))
+    .where(and(eq(zones.slug, slug), isNull(zones.deletedAt)))
+    .limit(1);
+
+  if (!zone) {
+    return c.json({ error: { code: "not_found", message: "Zone not found" } }, 404);
+  }
+
+  const chapterRows = await db
+    .select({
+      id: chapters.id,
+      referenceCode: chapters.referenceCode,
+      name: chapters.name,
+      countryCode: chapters.countryCode,
+      dateFrom: chapters.dateFrom,
+      dateTo: chapters.dateTo,
+      createdAt: chapters.createdAt,
+    })
+    .from(chapters)
+    .where(and(eq(chapters.zoneId, zone.id), isNull(chapters.deletedAt)))
+    .orderBy(asc(chapters.name));
+
+  // Per-chapter member counts in one grouped query.
+  const memberCountsByChapter = await db
+    .select({ chapterId: members.chapterId, n: count(members.id) })
+    .from(members)
+    .where(and(eq(members.zoneId, zone.id), isNull(members.deletedAt)))
+    .groupBy(members.chapterId);
+  const byChapter = new Map(memberCountsByChapter.map((r) => [r.chapterId ?? "", Number(r.n)]));
+
+  const chaptersWithCounts = chapterRows.map((ch) => ({
+    ...ch,
+    memberCount: byChapter.get(ch.id) ?? 0,
+  }));
+  const unassignedMembers = byChapter.get("") ?? 0;
+
+  const [contributionAgg] = await db
+    .select({
+      total: sum(contributions.totalAmount),
+      n: count(contributions.id),
+    })
+    .from(contributions)
+    .where(and(eq(contributions.zoneId, zone.id), eq(contributions.status, "posted")));
+
+  return c.json({
+    zone,
+    chapters: chaptersWithCounts,
+    totals: {
+      members: chaptersWithCounts.reduce((sum, ch) => sum + ch.memberCount, 0) + unassignedMembers,
+      unassignedMembers,
+      postedContributionTotal: contributionAgg?.total ?? "0",
+      postedContributionCount: Number(contributionAgg?.n ?? 0),
+    },
+  });
+});
 
 // ─── Regions CRUD ─────────────────────────────────────────────────────
 
