@@ -18,6 +18,9 @@
     if (code === "no_zone") {
       return "Your account is signed in but not yet linked to a zone. Ask your zone owner for an invitation.";
     }
+    if (page.url.searchParams.get("verified") === "1") {
+      return "Email verified. Sign in to continue.";
+    }
     return null;
   });
 
