@@ -1074,7 +1074,12 @@ export async function listImports(
   }
   const conditions = [eq(importJobs.zoneId, zoneId)];
   if (query.status) conditions.push(eq(importJobs.status, query.status));
-  if (scope.chapterIds && scope.chapterIds.length > 0) {
+  if (query.chapterId) {
+    // Caller pinned the list to one chapter. The route layer has already
+    // validated the chapter is in the zone + the caller can scope to it,
+    // so we can apply the filter directly.
+    conditions.push(eq(importFiles.chapterId, query.chapterId));
+  } else if (scope.chapterIds && scope.chapterIds.length > 0) {
     // Chapter-scoped users only see imports tied to a chapter they can
     // access. Zone-wide imports (chapter_id IS NULL on the file) are
     // hidden from chapter-only readers.

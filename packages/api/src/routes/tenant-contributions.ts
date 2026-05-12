@@ -19,7 +19,7 @@ import {
   type AuthorizedContext,
 } from "@stewardledger/shared";
 import { Hono } from "hono";
-import { hasAnyRole } from "../middleware/auth";
+import { hasAnyRole, requireChapterScope } from "../middleware/auth";
 import {
   ContributionError,
   createContribution,
@@ -143,9 +143,16 @@ tenantContributionsRouter.get(
     const ctx = c.get("auth") as AuthorizedContext;
     if (!hasZoneRead(ctx) && !hasChapterRead(ctx)) return forbidden(c);
     const q = c.req.valid("query");
+    // Reject cross-zone or unauthorised chapter ids loudly. Without this,
+    // `?chapterId=<other-zone-uuid>` silently returns an empty list.
+    if (q.chapterId) {
+      const scope = await requireChapterScope(ctx, q.chapterId, CONTRIB_ZONE_READ_ROLES);
+      if (!scope.ok) {
+        return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
+      }
+    }
     if (!hasZoneRead(ctx)) {
       if (ctx.chapterIds.length === 0) return forbidden(c);
-      if (q.chapterId && !ctx.chapterIds.includes(q.chapterId)) return forbidden(c);
     }
     const result = await listContributions(db, ctx.zoneId, q, {
       chapterIds: hasZoneRead(ctx) ? undefined : ctx.chapterIds,
@@ -304,9 +311,14 @@ tenantContributionsRouter.get(
     const ctx = c.get("auth") as AuthorizedContext;
     if (!hasZoneRead(ctx) && !hasChapterRead(ctx)) return forbidden(c);
     const q = c.req.valid("query");
+    if (q.chapterId) {
+      const scope = await requireChapterScope(ctx, q.chapterId, CONTRIB_ZONE_READ_ROLES);
+      if (!scope.ok) {
+        return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
+      }
+    }
     if (!hasZoneRead(ctx)) {
       if (ctx.chapterIds.length === 0) return forbidden(c);
-      if (q.chapterId && !ctx.chapterIds.includes(q.chapterId)) return forbidden(c);
     }
     const result = await listBatches(db, ctx.zoneId, q, {
       chapterIds: hasZoneRead(ctx) ? undefined : ctx.chapterIds,

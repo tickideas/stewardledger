@@ -10,6 +10,7 @@ import type { AuthorizedContext } from "@stewardledger/shared";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Context, MiddlewareHandler } from "hono";
 import {
+  chapters,
   platformRoleBindings,
   roles,
   user as userTable,
@@ -139,4 +140,67 @@ export function requirePlatformRole(...allowed: string[]): MiddlewareHandler {
 export function hasAnyRole(ctx: AuthorizedContext, ...codes: string[]): boolean {
   if (ctx.isPlatformAdmin) return true;
   return ctx.roleCodes.some((c) => codes.includes(c));
+}
+
+/**
+ * Outcome of `requireChapterScope`. Tagged so each route can decide whether
+ * to surface a 404 (chapter doesn't belong to this zone) or a 403 (chapter
+ * exists in the zone but the caller has no binding to it).
+ */
+export type ChapterScopeResult =
+  | { ok: true }
+  | { ok: false; status: 404; code: "chapter_not_found"; message: string }
+  | { ok: false; status: 403; code: "forbidden"; message: string };
+
+/**
+ * Validate that the caller can legitimately scope a read to `chapterId`.
+ *
+ *  1. `chapterId` must be a soft-active chapter in `ctx.zoneId`. Cross-zone
+ *     ids → 404; the silent empty-result behaviour previously shipped on
+ *     `?chapterId=other-zones-uuid` is a foot-gun for the `/church/*`
+ *     surface (the URL implies “this one chapter”), so we make it loud.
+ *  2. If the caller is a zone-read user (anything in `zoneReadRoles`), or a
+ *     platform super-admin, they may scope to any chapter in the zone.
+ *     This preserves the existing “zone admin drills into a chapter”
+ *     behaviour the `/zone/*` and `/church/*` UIs both rely on.
+ *  3. Otherwise the chapter must be in `ctx.chapterIds`. This is the
+ *     check that was already inlined at each endpoint for chapter-scoped
+ *     users; centralising it keeps the rule single-sourced.
+ *
+ * Callers translate the result into the appropriate response shape —
+ * `chapter_not_found` (404) for cross-zone smuggling, `forbidden` (403)
+ * for chapter-only users requesting a chapter they don't hold.
+ */
+export async function requireChapterScope(
+  ctx: AuthorizedContext,
+  chapterId: string,
+  zoneReadRoles: readonly string[],
+): Promise<ChapterScopeResult> {
+  const [row] = await db
+    .select({ id: chapters.id })
+    .from(chapters)
+    .where(
+      and(
+        eq(chapters.id, chapterId),
+        eq(chapters.zoneId, ctx.zoneId),
+        isNull(chapters.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (!row) {
+    return {
+      ok: false,
+      status: 404,
+      code: "chapter_not_found",
+      message: "Chapter not in this zone",
+    };
+  }
+  if (hasAnyRole(ctx, ...zoneReadRoles)) return { ok: true };
+  if (ctx.chapterIds.includes(chapterId)) return { ok: true };
+  return {
+    ok: false,
+    status: 403,
+    code: "forbidden",
+    message: "No access to this chapter",
+  };
 }

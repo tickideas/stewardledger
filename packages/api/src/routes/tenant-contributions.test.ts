@@ -722,4 +722,41 @@ describe("tenant contribution routes", () => {
     });
     expect(del.status).toBe(403);
   });
+
+  // ─── Chapter-scope filter (requireChapterScope) ─────────────────────
+
+  it("GET /contributions?chapterId=<other-zone> from zone admin → 404", async () => {
+    // Hand-edited URL pointing at zone B's chapter. Previously: silently
+    // empty result. Now: loud 404 chapter_not_found so the UI can react.
+    asUser(ownerA, "owner@example.com");
+    const res = await call(
+      zoneA.slug,
+      `/api/tenant/contributions?chapterId=${zoneB.chapterId}`,
+    );
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("chapter_not_found");
+  });
+
+  it("GET /contribution-batches?chapterId=<other-zone> from zone admin → 404", async () => {
+    asUser(ownerA, "owner@example.com");
+    const res = await call(
+      zoneA.slug,
+      `/api/tenant/contribution-batches?chapterId=${zoneB.chapterId}`,
+    );
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("chapter_not_found");
+  });
+
+  it("GET /contributions?chapterId=<own-chapter> from chapter treasurer → 200", async () => {
+    // Sanity for the `/church/*` happy path: the treasurer asks for their
+    // own chapter and gets a 200 (not a 403).
+    asUser(treasurerA, "treasurer@example.com");
+    const res = await call(
+      zoneA.slug,
+      `/api/tenant/contributions?chapterId=${zoneA.chapterId}`,
+    );
+    expect(res.status).toBe(200);
+  });
 });
