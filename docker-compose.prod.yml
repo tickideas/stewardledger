@@ -24,6 +24,15 @@ x-api-env: &api-env
   AUTH_COOKIE_DOMAIN: ${AUTH_COOKIE_DOMAIN:-}
   USESEND_API_KEY: ${USESEND_API_KEY:-}
   USESEND_API_URL: ${USESEND_API_URL:-}
+  USESEND_FROM: ${USESEND_FROM:-}
+  # Optional one-shot super-admin bootstrap. When EMAIL is set the API will,
+  # on every start, ensure that user exists and has is_super_admin=true.
+  # PASSWORD is only consulted if the user does not already exist; it is
+  # never rewritten on an existing account. Safe to leave set across
+  # redeploys (idempotent), but you can clear it once the admin is logged in.
+  BOOTSTRAP_SUPER_ADMIN_EMAIL: ${BOOTSTRAP_SUPER_ADMIN_EMAIL:-}
+  BOOTSTRAP_SUPER_ADMIN_PASSWORD: ${BOOTSTRAP_SUPER_ADMIN_PASSWORD:-}
+  BOOTSTRAP_SUPER_ADMIN_NAME: ${BOOTSTRAP_SUPER_ADMIN_NAME:-}
   STORAGE_ROOT: /data/storage
 
 services:

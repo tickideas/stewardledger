@@ -20,12 +20,62 @@ export async function sendEmail(message: EmailMessage): Promise<void> {
     return;
   }
 
-  // useSend client is added when we wire up production email.
-  // Keeping the dev-only path in v0.1 so the auth flows work locally.
-  log.warn(
-    { to: message.to },
-    "useSend integration pending — implement in packages/api/src/services/email.ts",
-  );
+  if (!env.USESEND_FROM) {
+    log.error(
+      { to: message.to, subject: message.subject },
+      "USESEND_FROM is not set — refusing to send. Configure a verified sender address.",
+    );
+    return;
+  }
+
+  // useSend exposes POST {base}/api/v1/emails with bearer auth. The base
+  // URL is the origin of the useSend instance (e.g. https://send.example.org).
+  // We trim trailing slashes and append /api/v1/emails so operators can
+  // configure either form.
+  const base = env.USESEND_API_URL.replace(/\/+$/, "");
+  const endpoint = `${base}/api/v1/emails`;
+
+  const payload: Record<string, unknown> = {
+    from: env.USESEND_FROM,
+    to: message.to,
+    subject: message.subject,
+    text: message.body,
+  };
+  if (message.html) payload.html = message.html;
+
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${env.USESEND_API_KEY}`,
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    log.error(
+      { err, to: message.to, subject: message.subject, endpoint },
+      "useSend request failed",
+    );
+    return;
+  }
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    log.error(
+      {
+        to: message.to,
+        subject: message.subject,
+        status: response.status,
+        detail: detail.slice(0, 500),
+      },
+      "useSend returned non-2xx",
+    );
+    return;
+  }
+
+  log.info({ to: message.to, subject: message.subject }, "email sent via useSend");
 }
 
 export function escapeHtml(value: string): string {

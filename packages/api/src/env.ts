@@ -42,6 +42,11 @@ export const env = {
   AUTH_COOKIE_DOMAIN: optional("AUTH_COOKIE_DOMAIN", "").toLowerCase(),
   USESEND_API_KEY: optional("USESEND_API_KEY", ""),
   USESEND_API_URL: optional("USESEND_API_URL", ""),
+  // Sender for transactional mail. Must be a verified domain inside the
+  // useSend instance pointed at by USESEND_API_URL. Format accepts either
+  // a bare address (`noreply@stewardledger.church`) or a display-name
+  // form (`StewardLedger <noreply@stewardledger.church>`).
+  USESEND_FROM: optional("USESEND_FROM", ""),
   // Local filesystem root for the import-file object store. Replace with
   // S3 in production via the storage adapter in services/storage.ts.
   //

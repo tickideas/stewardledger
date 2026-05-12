@@ -117,10 +117,31 @@ The API logs magic-link and invitation emails to stdout when `USESEND_API_KEY` i
 
 ```dotenv
 USESEND_API_KEY=<replace-in-dokploy>
-USESEND_API_URL=<useSend-endpoint>
+USESEND_API_URL=https://send.example.org
+USESEND_FROM=StewardLedger <noreply@stewardledger.church>
 ```
 
-Until these are set, invitation flows and magic-link sign-ins will silently fail for users.
+`USESEND_API_URL` is the **origin** of the useSend instance; the API appends `/api/v1/emails` internally. `USESEND_FROM` must be an address on a domain you have verified inside that useSend instance. Until all three are set, invitation flows and magic-link sign-ins will silently fail for users (the API logs the email instead of sending).
+
+### Bootstrap super-admin from env
+
+For a fresh environment you can provision the first platform super-admin directly from Dokploy env vars — no shell access required. On every start, the API checks these three variables:
+
+```dotenv
+BOOTSTRAP_SUPER_ADMIN_EMAIL=you@example.com
+BOOTSTRAP_SUPER_ADMIN_PASSWORD=<strong-random-password>
+BOOTSTRAP_SUPER_ADMIN_NAME=Your Name
+```
+
+Behaviour is idempotent:
+
+- The hook only runs when `NODE_ENV=production` (which `docker-compose.prod.yml` sets). In local dev, use `pnpm create-admin` instead.
+- If `BOOTSTRAP_SUPER_ADMIN_EMAIL` is empty, the hook is skipped.
+- If the user does not exist, the API creates it with the given password and flips `is_super_admin = true`.
+- If the user already exists, the API only flips `is_super_admin = true`. **The password is never overwritten on an existing account** — reset it via the normal forgot-password flow.
+- Failures (DB down, weak password rejected by Better Auth, etc.) log an error but do not crash the API.
+
+Once you have signed in at `https://<app-domain>/login`, you can clear `BOOTSTRAP_SUPER_ADMIN_PASSWORD` from Dokploy. Leaving `BOOTSTRAP_SUPER_ADMIN_EMAIL` set is harmless — it just re-asserts the flag on every redeploy.
 
 ## First deployment
 
