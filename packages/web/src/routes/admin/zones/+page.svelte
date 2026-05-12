@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, ApiError } from "$lib/api";
   import { fmtMoney } from "$lib/format";
+  import InviteZoneModal from "./invite-zone-modal.svelte";
 
   type Subtotal = { currencyCode: string; total: string; count: number };
 
@@ -33,6 +34,21 @@
   let loading = $state(false);
   let loadingMore = $state(false);
   let query = $state("");
+  let inviteOpen = $state(false);
+  let inviteFlash = $state<string | null>(null);
+  let inviteFlashTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function onInvited() {
+    inviteFlash = "Invitation sent. The new zone is in pending_setup until the contact accepts.";
+    // Refresh from the top so the new pending_setup zone shows up.
+    refresh();
+    // Clear the banner after a few seconds; the table itself is the persistent confirmation.
+    if (inviteFlashTimer) clearTimeout(inviteFlashTimer);
+    inviteFlashTimer = setTimeout(() => {
+      inviteFlash = null;
+      inviteFlashTimer = null;
+    }, 6000);
+  }
 
   // Server-side search via the API. We debounce in-component so typing
   // doesn't fire a request per keystroke.
@@ -72,6 +88,7 @@
     refresh();
     return () => {
       if (searchDebounce) clearTimeout(searchDebounce);
+      if (inviteFlashTimer) clearTimeout(inviteFlashTimer);
     };
   });
 
@@ -98,21 +115,40 @@
 </script>
 
 <div class="py-8">
-  <div class="flex items-baseline justify-between">
+  <div class="flex items-baseline justify-between gap-4">
     <div>
       <h1 class="text-2xl font-semibold tracking-tight">Zones</h1>
       <p class="mt-1 text-sm text-slate-600">
         All tenants on this StewardLedger deployment. Read-only cross-zone view.
       </p>
     </div>
-    <input
-      type="search"
-      value={query}
-      oninput={(e) => onQueryInput((e.target as HTMLInputElement).value)}
-      placeholder="Search by name, slug, region"
-      class="w-64 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-    />
+    <div class="flex items-center gap-3">
+      <input
+        type="search"
+        value={query}
+        oninput={(e) => onQueryInput((e.target as HTMLInputElement).value)}
+        placeholder="Search by name, slug, region"
+        class="w-64 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+      />
+      <button
+        type="button"
+        onclick={() => (inviteOpen = true)}
+        class="inline-flex items-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+      >
+        Invite zone
+      </button>
+    </div>
   </div>
+
+  {#if inviteFlash}
+    <p
+      class="mt-4 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
+    >
+      {inviteFlash}
+    </p>
+  {/if}
+
+  <InviteZoneModal bind:open={inviteOpen} oninvited={onInvited} />
 
   {#if loadError}
     <p class="mt-6 text-sm text-red-600">{loadError}</p>
@@ -123,7 +159,8 @@
       {#if query.trim().length > 0}
         No zones match <code>{query}</code>.
       {:else}
-        No zones yet. Run <code>pnpm seed:demo</code> or sign up at <code>/signup</code>.
+        No zones yet. Run <code>pnpm seed:demo</code>, or use
+        <strong>Invite zone</strong> to onboard one.
       {/if}
     </p>
   {:else}

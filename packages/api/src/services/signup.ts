@@ -3,15 +3,14 @@
 // and emails the primary contact a zone_owner invitation. No Better Auth user
 // is created here — that happens when the invitation is accepted.
 
-import { BRAND_WORDMARK, ZONE_ROLES, type ZoneSignupInput } from "@stewardledger/shared";
-import { eq } from "drizzle-orm";
-import { regions, zones } from "@stewardledger/db/schema";
 import type { Database } from "@stewardledger/db";
+import { regions, zones } from "@stewardledger/db/schema";
+import { ZONE_ROLES, type ZoneSignupInput } from "@stewardledger/shared";
+import { eq } from "drizzle-orm";
 
-import { env } from "../env";
-import { brandedEmailHtml, escapeHtml, sendEmail } from "./email";
+import { writeAudit } from "./audit";
 import { seedZoneGivingSetup } from "./giving-setup-seed";
-import { createInvitation } from "./invitations";
+import { createInvitation, sendZoneOwnerInviteEmail } from "./invitations";
 import { seedZoneLookups } from "./lookup-seed";
 import { assertNameAvailable, NameTakenError } from "./names";
 import { seedZonePeriods } from "./period-seed";
@@ -31,9 +30,15 @@ export interface SignupResult {
   invitationId: string;
 }
 
+export interface SignupOptions {
+  /** Platform admin who initiated the invite. Null for public signup. */
+  invitedByUserId?: string | null;
+}
+
 export async function signupZone(
   database: Database,
   input: ZoneSignupInput,
+  options: SignupOptions = {},
 ): Promise<SignupResult> {
   // Slug uniqueness — fast pre-check, but the unique index is the source of truth.
   const slugCollision = await database
@@ -101,46 +106,31 @@ export async function signupZone(
       zoneId: zone.id,
       email: input.primaryContactEmail,
       roleCode: ZONE_ROLES.ZONE_OWNER,
-      createdByUserId: null,
+      createdByUserId: options.invitedByUserId ?? null,
     });
 
-    const acceptUrl = buildAcceptUrl(input.slug, invitation.token);
-    await sendEmail({
+    await writeAudit(tx, {
+      zoneId: zone.id,
+      actorUserId: options.invitedByUserId ?? null,
+      action: "zone.invite",
+      entityType: "zone",
+      entityId: zone.id,
+      after: {
+        slug: input.slug,
+        name: input.name,
+        primaryContactEmail: input.primaryContactEmail,
+        invitationId: invitation.id,
+      },
+    });
+
+    await sendZoneOwnerInviteEmail({
       to: input.primaryContactEmail,
-      subject: `Set up your ${BRAND_WORDMARK} zone`,
-      body:
-        `Hi ${input.primaryContactName},\n\n` +
-        `${input.name} is ready to set up on ${BRAND_WORDMARK}.\n\n` +
-        `Accept your owner invitation and choose a password:\n${acceptUrl}\n\n` +
-        `This link expires in 7 days.`,
-      html: brandedEmailHtml({
-        zoneName: input.name,
-        body: `
-          <p>Hi ${escapeHtml(input.primaryContactName)},</p>
-          <p><strong>${escapeHtml(input.name)}</strong> is ready to set up on ${BRAND_WORDMARK}.</p>
-          <p>
-            <a href="${acceptUrl}"
-               style="display:inline-block;background:#0f1f3a;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;">
-              Accept owner invitation
-            </a>
-          </p>
-          <p style="color:#6b7280;font-size:13px;">This link expires in 7 days.</p>
-        `,
-      }),
+      contactName: input.primaryContactName,
+      zoneSlug: input.slug,
+      zoneName: input.name,
+      token: invitation.token,
     });
 
     return { zoneId: zone.id, invitationId: invitation.id };
   });
-}
-
-function buildAcceptUrl(slug: string, token: string): string {
-  // For local dev (PUBLIC_TENANT_DOMAIN=localhost) the marketing host is the
-  // app URL; for prod the zone subdomain hosts the accept page.
-  if (env.PUBLIC_TENANT_DOMAIN === "localhost") {
-    return `${env.PUBLIC_APP_URL}/invite/${encodeURIComponent(token)}`;
-  }
-  const url = new URL(env.PUBLIC_APP_URL);
-  url.host = `${slug}.${env.PUBLIC_TENANT_DOMAIN}`;
-  url.pathname = `/invite/${encodeURIComponent(token)}`;
-  return url.toString();
 }

@@ -2,30 +2,31 @@
 // Tenant-scoped API. Mounted under tenantMiddleware + requireSession + requireTenantAuth.
 
 import { zValidator } from "@hono/zod-validator";
+import { chapters, invitations, zones } from "@stewardledger/db/schema";
 import {
-  ZONE_ROLES,
+  type AuthorizedContext,
   chapterCreateSchema,
   invitationCreateSchema,
-  type AuthorizedContext,
+  ZONE_ROLES,
 } from "@stewardledger/shared";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { Hono } from "hono";
-import { chapters, invitations, zones } from "@stewardledger/db/schema";
 import { db } from "../db";
 import { hasAnyRole, requireSession, requireTenantAuth } from "../middleware/auth";
-import { tenantMiddleware, type TenantBindings } from "../middleware/tenant";
+import { type TenantBindings, tenantMiddleware } from "../middleware/tenant";
 import { writeAudit } from "../services/audit";
 import { nextChapterReferenceCode } from "../services/chapter-codes";
+import { brandedEmailHtml, escapeHtml, sendEmail } from "../services/email";
 import {
+  buildAcceptUrl,
   createInvitation,
   isChapterRole,
+  revokeOpenInvitations,
 } from "../services/invitations";
-import { brandedEmailHtml, escapeHtml, sendEmail } from "../services/email";
-import { env } from "../env";
 import { tenantContributionsRouter } from "./tenant-contributions";
+import { tenantGivingRouter } from "./tenant-giving";
 import { tenantGivingEventsRouter } from "./tenant-giving-events";
 import { tenantGivingMethodsRouter } from "./tenant-giving-methods";
-import { tenantGivingRouter } from "./tenant-giving";
 import { tenantImportsRouter } from "./tenant-imports";
 import { tenantMembersRouter } from "./tenant-members";
 import { tenantReportsRouter } from "./tenant-reports";
@@ -243,36 +244,25 @@ tenantRouter.post("/invitations/:id/revoke", async (c) => {
     return c.json({ error: { code: "forbidden", message: "Zone admin required" } }, 403);
   }
   const id = c.req.param("id");
-  const result = await db
-    .update(invitations)
-    .set({ revokedAt: new Date(), revokedByUserId: ctx.userId })
-    .where(
-      and(
-        eq(invitations.id, id),
-        eq(invitations.zoneId, ctx.zoneId),
-        isNull(invitations.acceptedAt),
-        isNull(invitations.revokedAt),
-      ),
-    )
-    .returning({ id: invitations.id });
-  if (!result[0])
-    return c.json({ error: { code: "not_found", message: "Invitation not revocable" } }, 404);
-  await writeAudit(db, {
-    zoneId: ctx.zoneId,
-    actorUserId: ctx.userId,
-    action: "invitation.revoke",
-    entityType: "invitation",
-    entityId: id,
+  const revoked = await db.transaction(async (tx) => {
+    const { revokedIds } = await revokeOpenInvitations(
+      tx,
+      { zoneId: ctx.zoneId, invitationId: id },
+      ctx.userId,
+    );
+    if (revokedIds.length === 0) return null;
+    await writeAudit(tx, {
+      zoneId: ctx.zoneId,
+      actorUserId: ctx.userId,
+      action: "invitation.revoke",
+      entityType: "invitation",
+      entityId: id,
+    });
+    return revokedIds[0];
   });
+  if (!revoked) {
+    return c.json({ error: { code: "not_found", message: "Invitation not revocable" } }, 404);
+  }
   return c.json({ status: "revoked" });
 });
 
-function buildAcceptUrl(slug: string, token: string): string {
-  if (env.PUBLIC_TENANT_DOMAIN === "localhost") {
-    return `${env.PUBLIC_APP_URL}/invite/${encodeURIComponent(token)}`;
-  }
-  const url = new URL(env.PUBLIC_APP_URL);
-  url.host = `${slug}.${env.PUBLIC_TENANT_DOMAIN}`;
-  url.pathname = `/invite/${encodeURIComponent(token)}`;
-  return url.toString();
-}

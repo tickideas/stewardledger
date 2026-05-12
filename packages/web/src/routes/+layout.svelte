@@ -32,13 +32,13 @@
     }
   });
 
-  // Authenticated users hitting /login or /signup get punted to the app
-  // shell. Tenant-bound users land on the zone area, where chapters are the
-  // first setup/management surface.
+  // Authenticated users hitting /login get punted to the app shell.
+  // Tenant-bound users land on the zone area, where chapters are the first
+  // setup/management surface.
   $effect(() => {
     if (session.current.status !== "authenticated") return;
     const path = page.url.pathname;
-    if (path === "/login" || path === "/signup" || path.startsWith("/signup/")) {
+    if (path === "/login") {
       goto(authenticatedLandingPath(session.current), { replaceState: true });
     }
   });
@@ -96,7 +96,6 @@
             Sign out
           </button>
         {:else if session.current.status === "anonymous" || session.current.status === "no_zone" || session.current.status === "error"}
-          <a href="/signup" class="hover:text-slate-900">Set up a zone</a>
           <a href="/login" class="hover:text-slate-900">Sign in</a>
         {/if}
       </nav>

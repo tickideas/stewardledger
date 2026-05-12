@@ -5,21 +5,25 @@
 
 import { zValidator } from "@hono/zod-validator";
 import {
-  PLATFORM_ROLES,
-  regionCreateSchema,
-  regionPromoteSchema,
-  regionUpdateSchema,
-} from "@stewardledger/shared";
-import { and, asc, count, desc, eq, ilike, inArray, isNull, lt, or, sql, sum } from "drizzle-orm";
-import { Hono, type Context } from "hono";
-import { z } from "zod";
-import {
   chapters,
   contributions,
+  invitations,
   members,
   regions,
   zones,
 } from "@stewardledger/db/schema";
+import {
+  PLATFORM_ROLES,
+  regionCreateSchema,
+  regionPromoteSchema,
+  regionUpdateSchema,
+  ZONE_ROLES,
+  zoneOwnerInviteResendSchema,
+  zoneSignupSchema,
+} from "@stewardledger/shared";
+import { and, asc, count, desc, eq, ilike, inArray, isNull, lt, or, sql, sum } from "drizzle-orm";
+import { type Context, Hono } from "hono";
+import { z } from "zod";
 import { db } from "../db";
 import { log } from "../logger";
 import {
@@ -28,7 +32,13 @@ import {
   type SessionUser,
 } from "../middleware/auth";
 import { writeAudit } from "../services/audit";
+import {
+  createInvitation,
+  revokeOpenInvitations,
+  sendZoneOwnerInviteEmail,
+} from "../services/invitations";
 import { assertNameAvailable, NameTakenError } from "../services/names";
+import { SignupError, signupZone } from "../services/signup";
 
 export const adminRouter = new Hono();
 
@@ -276,37 +286,59 @@ adminRouter.get("/zones/:slug", async (c) => {
     return c.json({ error: { code: "not_found", message: "Zone not found" } }, 404);
   }
 
-  const [chapterRows, memberCountsByChapter, contributionAggRows] = await Promise.all([
-    db
-      .select({
-        id: chapters.id,
-        referenceCode: chapters.referenceCode,
-        name: chapters.name,
-        countryCode: chapters.countryCode,
-        dateFrom: chapters.dateFrom,
-        dateTo: chapters.dateTo,
-        createdAt: chapters.createdAt,
-      })
-      .from(chapters)
-      .where(and(eq(chapters.zoneId, zone.id), isNull(chapters.deletedAt)))
-      .orderBy(asc(chapters.name)),
-    db
-      .select({ chapterId: members.chapterId, n: count(members.id) })
-      .from(members)
-      .where(and(eq(members.zoneId, zone.id), isNull(members.deletedAt)))
-      .groupBy(members.chapterId),
-    // Group by currency so a zone with mixed-currency contributions doesn't
-    // get a meaningless total like USD + GBP. See list endpoint for context.
-    db
-      .select({
-        currencyCode: contributions.currencyCode,
-        total: sum(contributions.totalAmount),
-        n: count(contributions.id),
-      })
-      .from(contributions)
-      .where(and(eq(contributions.zoneId, zone.id), eq(contributions.status, "posted")))
-      .groupBy(contributions.currencyCode),
-  ]);
+  const [chapterRows, memberCountsByChapter, contributionAggRows, openInvitationRows] =
+    await Promise.all([
+      db
+        .select({
+          id: chapters.id,
+          referenceCode: chapters.referenceCode,
+          name: chapters.name,
+          countryCode: chapters.countryCode,
+          dateFrom: chapters.dateFrom,
+          dateTo: chapters.dateTo,
+          createdAt: chapters.createdAt,
+        })
+        .from(chapters)
+        .where(and(eq(chapters.zoneId, zone.id), isNull(chapters.deletedAt)))
+        .orderBy(asc(chapters.name)),
+      db
+        .select({ chapterId: members.chapterId, n: count(members.id) })
+        .from(members)
+        .where(and(eq(members.zoneId, zone.id), isNull(members.deletedAt)))
+        .groupBy(members.chapterId),
+      // Group by currency so a zone with mixed-currency contributions doesn't
+      // get a meaningless total like USD + GBP. See list endpoint for context.
+      db
+        .select({
+          currencyCode: contributions.currencyCode,
+          total: sum(contributions.totalAmount),
+          n: count(contributions.id),
+        })
+        .from(contributions)
+        .where(and(eq(contributions.zoneId, zone.id), eq(contributions.status, "posted")))
+        .groupBy(contributions.currencyCode),
+      // Open invitations — used by the admin UI to surface resend/revoke
+      // affordances for zones whose owner hasn't accepted yet. The same
+      // partial unique index that guards open invitations bounds this set.
+      db
+        .select({
+          id: invitations.id,
+          email: invitations.email,
+          roleCode: invitations.roleCode,
+          chapterId: invitations.chapterId,
+          expiresAt: invitations.expiresAt,
+          createdAt: invitations.createdAt,
+        })
+        .from(invitations)
+        .where(
+          and(
+            eq(invitations.zoneId, zone.id),
+            isNull(invitations.acceptedAt),
+            isNull(invitations.revokedAt),
+          ),
+        )
+        .orderBy(desc(invitations.createdAt)),
+    ]);
 
   // Use a typed Map<string | null> so unassigned-member rows are explicit
   // rather than coerced through the empty-string sentinel.
@@ -341,7 +373,236 @@ adminRouter.get("/zones/:slug", async (c) => {
       postedContributionCount: totalContributionCount,
       postedContributionSubtotals: subtotals,
     },
+    openInvitations: openInvitationRows.map((r) => ({
+      ...r,
+      expiresAt: r.expiresAt.toISOString(),
+      createdAt: r.createdAt.toISOString(),
+      expired: r.expiresAt.getTime() < Date.now(),
+    })),
   });
+});
+
+// ─── Onboarding (closed signup) ──────────────────────────────
+
+/**
+ * Platform admin creates a new zone on behalf of an external contact and
+ * emails them a zone-owner invitation. This is the *only* way to bring a
+ * new zone online — StewardLedger is closed / invitation-only.
+ *
+ * Super-admin only. The created invitation records the admin as
+ * `created_by_user_id`; the audit trail records the action as
+ * `zone.invite`.
+ */
+adminRouter.post(
+  "/zones/invite",
+  zValidator("json", zoneSignupSchema),
+  async (c) => {
+    const denied = superAdminGate(c);
+    if (denied) return denied;
+    const user = c.get("user") as SessionUser;
+    const input = c.req.valid("json");
+    logAdminAccess(c, "admin.zones.invite", {
+      zoneSlug: input.slug,
+      primaryContactEmail: input.primaryContactEmail,
+    });
+    try {
+      const result = await signupZone(db, input, { invitedByUserId: user.id });
+      return c.json({ status: "invited", zoneId: result.zoneId }, 201);
+    } catch (err) {
+      if (err instanceof SignupError) {
+        return c.json({ error: { code: err.code, message: err.message } }, 409);
+      }
+      throw err;
+    }
+  },
+);
+
+/**
+ * Re-issue the zone-owner invitation for a pending zone. Use this when the
+ * original email was lost, expired, or sent to the wrong address. Revokes
+ * every currently-open `zone_owner` invitation on the zone before creating
+ * a new one so the unique-open-per-(zone,email,chapter,role) index stays
+ * satisfied and so the audit trail clearly shows which token was replaced.
+ *
+ * Super-admin only. Refuses on zones that have already activated — once an
+ * owner has accepted, ownership is a tenant-side concern (managed via the
+ * tenant invitations API or future ownership-transfer flow).
+ *
+ * ResendPreconditionError is a sentinel used inside the resend transaction
+ * to bubble precondition failures (zone disappeared / activated) back to
+ * the handler as 404 / 409. Throwing keeps SELECT FOR UPDATE + revoke +
+ * insert atomic; returning null could accidentally commit partial work.
+ */
+class ResendPreconditionError extends Error {
+  constructor(
+    readonly code: "not_found" | "zone_already_active",
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+adminRouter.post(
+  "/zones/:slug/owner-invitations",
+  zValidator("json", zoneOwnerInviteResendSchema),
+  async (c) => {
+    const denied = superAdminGate(c);
+    if (denied) return denied;
+    const user = c.get("user") as SessionUser;
+    const slug = c.req.param("slug");
+    const input = c.req.valid("json");
+    logAdminAccess(c, "admin.zones.owner_invite_resend", { zoneSlug: slug, email: input.email });
+
+    let result: { invitation: Awaited<ReturnType<typeof createInvitation>>; revokedCount: number; zoneName: string; zoneSlug: string };
+    try {
+      result = await db.transaction(async (tx) => {
+        // SELECT FOR UPDATE so an in-flight invitation-accept can't flip the
+        // zone to active between our status check and the revoke/insert.
+        // Without this, we could resend onto an already-activated zone.
+        const [zone] = await tx
+          .select({ id: zones.id, slug: zones.slug, name: zones.name, status: zones.status })
+          .from(zones)
+          .where(and(eq(zones.slug, slug), isNull(zones.deletedAt)))
+          .for("update")
+          .limit(1);
+        if (!zone) {
+          throw new ResendPreconditionError("not_found", "Zone not found");
+        }
+        if (zone.status !== "pending_setup") {
+          throw new ResendPreconditionError(
+            "zone_already_active",
+            "This zone has already activated; the owner has accepted their invitation.",
+          );
+        }
+
+        // Revoke every open owner invitation on the zone. We don't filter by
+        // email — if the admin is correcting a typo, the previous email's
+        // token must also stop working.
+        const { revokedIds } = await revokeOpenInvitations(
+          tx,
+          { zoneId: zone.id, roleCode: ZONE_ROLES.ZONE_OWNER },
+          user.id,
+        );
+
+        const inv = await createInvitation(tx, {
+          zoneId: zone.id,
+          email: input.email,
+          roleCode: ZONE_ROLES.ZONE_OWNER,
+          createdByUserId: user.id,
+        });
+
+        await writeAudit(tx, {
+          zoneId: zone.id,
+          actorUserId: user.id,
+          action: "zone.owner_invite.resend",
+          entityType: "invitation",
+          entityId: inv.id,
+          after: {
+            email: input.email,
+            revokedInvitationIds: revokedIds,
+          },
+        });
+
+        return {
+          invitation: inv,
+          revokedCount: revokedIds.length,
+          zoneName: zone.name,
+          zoneSlug: zone.slug,
+        };
+      });
+    } catch (err) {
+      if (err instanceof ResendPreconditionError) {
+        return c.json(
+          { error: { code: err.code, message: err.message } },
+          err.code === "not_found" ? 404 : 409,
+        );
+      }
+      throw err;
+    }
+
+    // Email goes after commit so we never send a link for a token that
+    // ultimately rolled back. If the send itself fails the DB state is
+    // still valid — the admin can re-trigger from the UI — so we surface
+    // a non-fatal warning rather than 500ing.
+    let emailWarning: string | null = null;
+    try {
+      await sendZoneOwnerInviteEmail({
+        to: input.email,
+        contactName: input.primaryContactName ?? null,
+        zoneSlug: result.zoneSlug,
+        zoneName: result.zoneName,
+        token: result.invitation.token,
+      });
+    } catch (err) {
+      log.error(
+        { err, zoneSlug: result.zoneSlug, invitationId: result.invitation.id },
+        "owner invite resend: email send failed",
+      );
+      emailWarning = "email_send_failed";
+    }
+
+    return c.json(
+      {
+        status: "resent",
+        invitationId: result.invitation.id,
+        expiresAt: result.invitation.expiresAt.toISOString(),
+        revokedCount: result.revokedCount,
+        ...(emailWarning ? { warning: emailWarning } : {}),
+      },
+      201,
+    );
+  },
+);
+
+/**
+ * Revoke a specific invitation on a zone. Cross-tenant admin variant of the
+ * existing tenant route — callable for any role code so an admin can clean
+ * up an erroneous team invite from the cross-zone dashboard if a tenant
+ * admin can't be reached.
+ */
+adminRouter.post("/zones/:slug/invitations/:id/revoke", async (c) => {
+  const denied = superAdminGate(c);
+  if (denied) return denied;
+  const user = c.get("user") as SessionUser;
+  const slug = c.req.param("slug");
+  const invitationId = c.req.param("id");
+  logAdminAccess(c, "admin.zones.invitation_revoke", { zoneSlug: slug, invitationId });
+
+  const revoked = await db.transaction(async (tx) => {
+    const [zone] = await tx
+      .select({ id: zones.id })
+      .from(zones)
+      .where(and(eq(zones.slug, slug), isNull(zones.deletedAt)))
+      .limit(1);
+    if (!zone) return { kind: "zone_not_found" as const };
+
+    const { revokedIds } = await revokeOpenInvitations(
+      tx,
+      { zoneId: zone.id, invitationId },
+      user.id,
+    );
+    if (revokedIds.length === 0) return { kind: "invitation_not_found" as const };
+
+    await writeAudit(tx, {
+      zoneId: zone.id,
+      actorUserId: user.id,
+      action: "invitation.revoke",
+      entityType: "invitation",
+      entityId: invitationId,
+    });
+    return { kind: "ok" as const };
+  });
+
+  if (revoked.kind === "zone_not_found") {
+    return c.json({ error: { code: "not_found", message: "Zone not found" } }, 404);
+  }
+  if (revoked.kind === "invitation_not_found") {
+    return c.json(
+      { error: { code: "not_found", message: "Invitation not revocable" } },
+      404,
+    );
+  }
+  return c.json({ status: "revoked" });
 });
 
 // ─── Regions CRUD ─────────────────────────────────────────────────────

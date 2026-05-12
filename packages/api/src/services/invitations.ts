@@ -4,21 +4,25 @@
 // is stored. The raw token only appears in the outbound email URL.
 
 import { createHash, randomBytes } from "node:crypto";
+import type { Database, Db } from "@stewardledger/db";
 import {
+  invitations,
+  roles,
+  userRoleBindings,
+  user as userTable,
+  zones,
+} from "@stewardledger/db/schema";
+import {
+  BRAND_WORDMARK,
   CHAPTER_ROLES,
   INVITATION_TOKEN_BYTES,
   INVITATION_VALIDITY_HOURS,
   ZONE_ROLES,
 } from "@stewardledger/shared";
 import { and, eq, isNull } from "drizzle-orm";
-import {
-  invitations,
-  roles,
-  user as userTable,
-  userRoleBindings,
-  zones,
-} from "@stewardledger/db/schema";
-import type { Db, Database } from "@stewardledger/db";
+
+import { env } from "../env";
+import { brandedEmailHtml, escapeHtml, sendEmail } from "./email";
 
 export interface CreatedInvitation {
   id: string;
@@ -49,6 +53,40 @@ export class InvitationError extends Error {
   ) {
     super(message);
   }
+}
+
+export interface RevokeFilter {
+  zoneId: string;
+  /** Optional: limit to a specific invitation id. */
+  invitationId?: string;
+  /** Optional: limit to one role code (e.g. owner-only resend). */
+  roleCode?: string;
+}
+
+/**
+ * Revoke every currently-open invitation that matches `filter`. Open means
+ * neither accepted nor revoked. Caller must pass a transaction handle when
+ * the revoke is part of a larger atomic operation (e.g. resend), so the
+ * revoke and the follow-on insert/audit commit together.
+ */
+export async function revokeOpenInvitations(
+  database: Db,
+  filter: RevokeFilter,
+  revokedByUserId: string,
+): Promise<{ revokedIds: string[] }> {
+  const conditions = [
+    eq(invitations.zoneId, filter.zoneId),
+    isNull(invitations.acceptedAt),
+    isNull(invitations.revokedAt),
+  ];
+  if (filter.invitationId) conditions.push(eq(invitations.id, filter.invitationId));
+  if (filter.roleCode) conditions.push(eq(invitations.roleCode, filter.roleCode));
+  const rows = await database
+    .update(invitations)
+    .set({ revokedAt: new Date(), revokedByUserId })
+    .where(and(...conditions))
+    .returning({ id: invitations.id });
+  return { revokedIds: rows.map((r) => r.id) };
 }
 
 export async function createInvitation(
@@ -202,4 +240,65 @@ export async function applyAcceptedInvitation(
 
 export function isChapterRole(code: string): boolean {
   return (Object.values(CHAPTER_ROLES) as string[]).includes(code);
+}
+
+/**
+ * Resolve the public URL the invited user follows to accept the invitation.
+ * In local dev (`PUBLIC_TENANT_DOMAIN=localhost`) we host the accept page on
+ * the marketing origin; in prod each zone's subdomain hosts it.
+ */
+export function buildAcceptUrl(slug: string, token: string): string {
+  if (env.PUBLIC_TENANT_DOMAIN === "localhost") {
+    return `${env.PUBLIC_APP_URL}/invite/${encodeURIComponent(token)}`;
+  }
+  const url = new URL(env.PUBLIC_APP_URL);
+  url.host = `${slug}.${env.PUBLIC_TENANT_DOMAIN}`;
+  url.pathname = `/invite/${encodeURIComponent(token)}`;
+  return url.toString();
+}
+
+export interface ZoneOwnerInviteEmail {
+  to: string;
+  /** Optional greeting name. When omitted the email uses a neutral salutation. */
+  contactName?: string | null;
+  zoneSlug: string;
+  zoneName: string;
+  token: string;
+}
+
+/**
+ * Send the zone-owner invitation email. Used both at zone creation and when
+ * an admin re-issues an invitation from /admin/zones/[slug].
+ */
+export async function sendZoneOwnerInviteEmail(args: ZoneOwnerInviteEmail): Promise<void> {
+  const acceptUrl = buildAcceptUrl(args.zoneSlug, args.token);
+  const greetingLine = args.contactName ? `Hi ${args.contactName},\n\n` : "";
+  const greetingHtml = args.contactName
+    ? `<p>Hi ${escapeHtml(args.contactName)},</p>`
+    : "";
+  await sendEmail({
+    to: args.to,
+    subject: `You're invited to set up ${args.zoneName} on ${BRAND_WORDMARK}`,
+    body:
+      greetingLine +
+      `You've been invited to set up ${args.zoneName} on ${BRAND_WORDMARK}.\n\n` +
+      `Click the link below to accept the invitation, choose a password, and finish setting up your zone:\n` +
+      `${acceptUrl}\n\n` +
+      `This link expires in 7 days. If you weren't expecting this email, you can safely ignore it.`,
+    html: brandedEmailHtml({
+      zoneName: args.zoneName,
+      body: `
+        ${greetingHtml}
+        <p>You've been invited to set up <strong>${escapeHtml(args.zoneName)}</strong> on ${escapeHtml(BRAND_WORDMARK)}.</p>
+        <p>Click the button below to accept the invitation, choose a password, and finish setting up your zone.</p>
+        <p>
+          <a href="${acceptUrl}"
+             style="display:inline-block;background:#0f1f3a;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;">
+            Accept invitation
+          </a>
+        </p>
+        <p style="color:#6b7280;font-size:13px;">This link expires in 7 days. If you weren't expecting this email, you can safely ignore it.</p>
+      `,
+    }),
+  });
 }

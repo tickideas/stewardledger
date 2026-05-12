@@ -1,6 +1,7 @@
 // packages/api/scripts/make-super-admin.ts
 // Elevate an existing Better Auth user to platform super-admin. The user
-// must already exist (they signed up via /signup or accepted an invite).
+// must already exist (they accepted an invitation or were created via
+// `pnpm create-admin`).
 //
 // Usage:
 //   pnpm make-super-admin -- you@example.com --confirm
@@ -47,7 +48,7 @@ try {
     .limit(1);
   if (rows.length === 0) {
     console.error(
-      `No user found with email ${email}. Sign them up first at /signup or accept an invite.`,
+      `No user found with email ${email}. Have them accept an invitation first, or create the user via 'pnpm create-admin'.`,
     );
     process.exit(1);
   }
