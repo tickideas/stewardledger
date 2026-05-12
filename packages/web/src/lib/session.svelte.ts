@@ -1,11 +1,19 @@
 // packages/web/src/lib/session.svelte.ts
-// Client-side session store. The API lives on a different origin
-// (host-only cookies per ARCHITECTURE.md §12) so SvelteKit SSR cannot
-// read the session cookie — gating happens in the browser.
+// Client-side session store. `hooks.server.ts` already fetches the user's
+// zones during SSR (subject to `AUTH_COOKIE_DOMAIN` scoping the Better
+// Auth cookie to both origins — see ARCHITECTURE.md §12 and
+// DEPLOYMENT.md “Cookie scope”) and the root layout seeds this store via
+// `hydrateSession()`. `loadSession({ force })` is reserved for post-
+// mutation refreshes (login, account page, zone switch).
+// RELEVANT FILES: ./session-paths.ts, ../hooks.server.ts, ../routes/+layout.svelte
 
 import { setActiveChapter } from "$lib/active-chapter.svelte";
 import { PUBLIC_API_URL } from "$lib/env";
-import { ACTIVE_CHAPTER_KEY, ACTIVE_ZONE_KEY } from "$lib/session-paths";
+import {
+  ACTIVE_CHAPTER_KEY,
+  ACTIVE_ZONE_KEY,
+  type ServerSession,
+} from "$lib/session-paths";
 
 /**
  * A zone the user is bound to, with the role bindings that apply within it.
@@ -91,6 +99,77 @@ export function landingInputFor(state: SessionState):
 export const session = $state<{ current: SessionState }>({
   current: { status: "loading", zones: [], activeZoneSlug: null },
 });
+
+/**
+ * Synchronously seed the session store from an SSR-resolved snapshot. This
+ * is the cold-path companion to `loadSession()`: `hooks.server.ts` already
+ * hit `/api/public/session-zones` to populate `event.locals.session`, and
+ * `+layout.server.ts` forwards that to the browser as `data.session`. Calling
+ * `hydrateSession(data.session)` from the root layout lets the store skip
+ * the duplicate client-side fetch so the first paint is already
+ * `authenticated` (or `anonymous`) instead of `loading`.
+ *
+ * Subsequent refresh paths (post-sign-in, post-zone-switch, profile update)
+ * still go through `loadSession({ force: true })` because they need a fresh
+ * server read.
+ */
+export function hydrateSession(snapshot: ServerSession | null): void {
+  // Invalidate any concurrent loadSession() so its eventual response can't
+  // overwrite the hydrated state with stale data from a slower request.
+  sessionEpoch++;
+  inflight = null;
+
+  if (!snapshot) {
+    session.current = { status: "anonymous", zones: [], activeZoneSlug: null };
+    return;
+  }
+
+  const isSuperAdminFlag = snapshot.isSuperAdmin === true;
+  // Mirror the `loadSession()` shim: render a placeholder identity when the
+  // API build pre-dates the `user` field rather than blanking the profile.
+  const user: SessionUser = snapshot.user
+    ? { id: snapshot.user.id, email: snapshot.user.email, name: snapshot.user.name }
+    : { id: "", email: "", name: null };
+
+  const items: Zone[] = snapshot.items.map((z) => ({
+    id: z.id ?? "",
+    slug: z.slug,
+    name: z.name ?? z.slug,
+    zoneRoles: z.zoneRoles ?? [],
+    chapterRoles: (z.chapterRoles ?? []).map((r) => ({
+      chapterId: r.chapterId,
+      chapterName: r.chapterName ?? "",
+      roleCode: r.roleCode,
+    })),
+  }));
+
+  if (items.length === 0) {
+    if (isSuperAdminFlag) {
+      session.current = {
+        status: "authenticated",
+        zones: [],
+        activeZoneSlug: null,
+        isSuperAdmin: true,
+        user,
+      };
+      return;
+    }
+    session.current = { status: "no_zone", zones: [], activeZoneSlug: null, user };
+    return;
+  }
+
+  const stored =
+    typeof localStorage !== "undefined" ? localStorage.getItem(ACTIVE_ZONE_KEY) : null;
+  const fallback = items[0]?.slug ?? null;
+  const activeZoneSlug = stored && items.some((z) => z.slug === stored) ? stored : fallback;
+  session.current = {
+    status: "authenticated",
+    zones: items,
+    activeZoneSlug,
+    isSuperAdmin: isSuperAdminFlag,
+    user,
+  };
+}
 
 let inflight: Promise<void> | null = null;
 // Bumped by `signOut()` (and anything else that invalidates a session) so a

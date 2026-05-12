@@ -11,10 +11,19 @@ import { env } from "./env";
 import { log } from "./logger";
 import { sendEmail } from "./services/email";
 
+// Cross-subdomain cookie support. Enabled only when AUTH_COOKIE_DOMAIN is
+// set in env — e.g. `.example.com` to share the session cookie between
+// `app.example.com` (web) and `api.example.com` (API). Leave unset for
+// same-origin deployments.
+const crossSubDomainCookies = env.AUTH_COOKIE_DOMAIN
+  ? { enabled: true as const, domain: env.AUTH_COOKIE_DOMAIN }
+  : undefined;
+
 export const auth = betterAuth({
   appName: BRAND_WORDMARK,
   baseURL: env.PUBLIC_API_URL,
   secret: env.AUTH_SECRET,
+  advanced: crossSubDomainCookies ? { crossSubDomainCookies } : undefined,
   database: drizzleAdapter(db, {
     provider: "pg",
     schema: {

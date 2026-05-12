@@ -254,6 +254,37 @@ describe("tenant member routes — cross-tenant fuzz", () => {
     expect(denied.status).toBe(403);
   });
 
+  // ─── Chapter-scope filter (requireChapterScope) ─────────────────────
+
+  it("GET /members?chapterId=<other-zone> → 404 chapter_not_found", async () => {
+    // Zone admin in zone A hand-edits a URL pointing at zone B's chapter.
+    // Previously: silently returned empty (zoneId filter masked it).
+    // Now: 404 with a typed code so the UI can surface a clear error.
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+    const res = await call(zoneA.slug, `/api/tenant/members?chapterId=${chapterB}`);
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("chapter_not_found");
+  });
+
+  it("GET /members?chapterId=<other-in-zone> from chapter-only user → 403", async () => {
+    // userChapterA is bound to chapterA only; chapterAOther is in the same
+    // zone but not on their roster. Returns 403, not 404 — the chapter
+    // exists, they just can't see it.
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userChapterA, "chapter@x"));
+    const res = await call(zoneA.slug, `/api/tenant/members?chapterId=${chapterAOther}`);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("forbidden");
+  });
+
+  it("GET /members?chapterId=<own-chapter> from chapter-only user → 200", async () => {
+    // Sanity: the happy path the `/church/*` surface relies on.
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userChapterA, "chapter@x"));
+    const res = await call(zoneA.slug, `/api/tenant/members?chapterId=${chapterA}`);
+    expect(res.status).toBe(200);
+  });
+
   // ─── Cross-tenant id smuggling ──────────────────────────────────────
 
   it("POST /members with another zone's chapter_id → 404", async () => {

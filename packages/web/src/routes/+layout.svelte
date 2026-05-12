@@ -4,18 +4,24 @@
   import { page } from "$app/state";
   import {
     authenticatedLandingPath,
+    hydrateSession,
     isProtectedPath,
     landingInputFor,
-    loadSession,
     session,
     signOut,
   } from "$lib/session.svelte";
   import { roleForPath } from "$lib/nav";
+  import type { LayoutProps } from "./$types";
 
-  let { children } = $props();
+  let { children, data }: LayoutProps = $props();
 
+  // Hydrate the client store directly from the SSR snapshot. `hooks.server.ts`
+  // already fetched `/api/public/session-zones`; doing it again from the
+  // browser would double the load on that endpoint and flash a `loading`
+  // state on first paint. Re-running on `data.session` change covers the
+  // `invalidateAll()` path (e.g. after a chapter switch).
   $effect(() => {
-    loadSession();
+    hydrateSession(data.session);
   });
 
   $effect(() => {

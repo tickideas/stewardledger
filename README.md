@@ -101,15 +101,18 @@ Create a platform admin with `pnpm create-admin`, sign in at `/login`, then open
 
 ## Status
 
-**Phase 5 — contributions.** Phases 1–4 are closed (foundations,
-tenancy/onboarding, members, giving setup & periods). Phase 5 ships the
-draft → posted → voided/reversed state machine end-to-end: services,
-tenant API, posted-immutability triggers, full role bundles, and the
-treasurer SvelteKit UI for the Sunday close (batch list, new-batch form,
-batch detail with inline add-row, contribution detail, and a member
-statement preview). A local platform-admin zones dashboard and deterministic
-demo seeding scripts are also in place for operator demos. Bulk import /
-dup-detection (Phase 6) and full reports (Phase 7) come next. See
+**Phases 1–6 closed; Phase 7 (Reports v1) in progress.** Foundations,
+tenancy/onboarding, members, giving setup & periods, contributions, and
+the import pipeline are all live. The treasurer SvelteKit UI ships the
+draft → posted → voided/reversed Sunday-close flow end-to-end and the
+import dashboard handles statement upload → match → schedule → commit /
+rollback. The per-role admin UI redesign (PR #13) added cross-subdomain
+session cookies (`AUTH_COOKIE_DOMAIN`), SSR-hydrated client session
+store, chapter-scope enforcement on tenant reads, and an editable
+`/church/settings` covering banking, roster, scoped invitations, and
+batch templates for the Sunday-close flow. Reports v1 (Phase 7) is the
+current focus — member-statement / import-reconciliation / member-list
+Excel exports have landed; PDF + the remaining reports come next. See
 [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md)
 for the full plan.
 

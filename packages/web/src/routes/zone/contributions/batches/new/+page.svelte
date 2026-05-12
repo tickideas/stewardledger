@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
-  import { api, ApiError } from "$lib/api";
+  import { page } from "$app/state";
+  import { api, ApiError, isAbortError } from "$lib/api";
   import { SOURCE_TYPES } from "@stewardledger/shared";
 
   type Chapter = { id: string; name: string };
@@ -12,11 +13,21 @@
   };
   type ServiceType = { id: string; name: string };
   type PaymentMethod = { id: string; name: string; code: string };
+  type TemplatePayload = {
+    sourceType: (typeof SOURCE_TYPES)[number];
+    defaultCurrency?: string | null;
+    paymentMethodId?: string | null;
+    serviceTypeId?: string | null;
+    referenceCode?: string;
+    notes?: string;
+  };
+  type BatchTemplate = { id: string; name: string; payload: TemplatePayload };
 
   let chapters = $state<Chapter[]>([]);
   let events = $state<ServiceEvent[]>([]);
   let serviceTypes = $state<ServiceType[]>([]);
   let paymentMethods = $state<PaymentMethod[]>([]);
+  let templates = $state<BatchTemplate[]>([]);
 
   let chapterId = $state("");
   let serviceEventId = $state("");
@@ -24,14 +35,19 @@
   let sourceType = $state<(typeof SOURCE_TYPES)[number]>("envelope");
   let referenceCode = $state("");
   let notes = $state("");
+  let templateId = $state("");
 
   let creating = $state(false);
   let createError = $state<string | null>(null);
   let loadError = $state<string | null>(null);
 
-  // Stale-response token — last-request-wins for `loadEvents`, which is
-  // re-fired every time the chapter changes.
+  // Stale-response tokens — last-request-wins for both `loadEvents` and
+  // `loadTemplates`, which re-fire every time the chapter changes.
   let eventsToken = 0;
+  let templatesToken = 0;
+  // The query-string `?templateId=` is honoured once, the moment its
+  // chapter's templates first land. After that the user owns the picker.
+  let appliedFromQuery = false;
 
   async function loadAll() {
     loadError = null;
@@ -44,8 +60,17 @@
       chapters = chRes.items;
       paymentMethods = smRes.items;
       serviceTypes = stRes.items;
-      // Default to first chapter so the events list renders something useful.
-      if (!chapterId && chapters.length > 0) chapterId = chapters[0].id;
+      // Honour `?chapterId=` (deep-link from `/church/contributions`) when
+      // it points at a chapter the caller can actually see; otherwise pick
+      // the first chapter so the dependent selects render something.
+      const queryChapter = page.url.searchParams.get("chapterId");
+      if (!chapterId) {
+        if (queryChapter && chapters.some((c) => c.id === queryChapter)) {
+          chapterId = queryChapter;
+        } else if (chapters.length > 0) {
+          chapterId = chapters[0].id;
+        }
+      }
     } catch (err) {
       // Without this, the page renders empty selects and the treasurer
       // has no way to know whether they lack a role or the network blipped.
@@ -54,6 +79,70 @@
           ? `Could not load form data: ${err.message}`
           : "Could not load form data.";
     }
+  }
+
+  async function loadTemplates() {
+    const my = ++templatesToken;
+    if (!chapterId) {
+      templates = [];
+      return;
+    }
+    try {
+      const res = await api.get<{ items: BatchTemplate[] }>(
+        `/api/tenant/chapters/${chapterId}/batch-templates`,
+      );
+      if (my !== templatesToken) return;
+      templates = res.items;
+      // First time the chapter's templates land, honour `?templateId=`
+      // from the URL so a deep-link from `/church/settings` can prefill.
+      if (!appliedFromQuery) {
+        const queryTpl = page.url.searchParams.get("templateId");
+        if (queryTpl && templates.some((t) => t.id === queryTpl)) {
+          templateId = queryTpl;
+          applyTemplate(queryTpl);
+        }
+        appliedFromQuery = true;
+      }
+    } catch (err) {
+      if (isAbortError(err)) return;
+      if (my !== templatesToken) return;
+      templates = [];
+      // Soft-fail: the form still works without templates. We leave a
+      // breadcrumb so a treasurer who *expects* templates can still see
+      // the cause in devtools without a UI-level error banner.
+      console.warn(
+        "[new-batch] could not load templates:",
+        err instanceof ApiError ? err.message : err,
+      );
+    }
+  }
+
+  /**
+   * Apply a template to the form. Always overwrites every prefilled field
+   * so switching from template A to template B doesn't leave A's payment
+   * method stuck — the picker should feel like a clean reset every time.
+   * A stale id (deleted payment method since the template was saved)
+   * simply renders as the empty option in the select; the server treats
+   * null/empty as “no method”. We don't validate against
+   * `paymentMethods` here because it may not have loaded yet on the
+   * cold-path `?templateId=` deep-link.
+   */
+  function applyTemplate(id: string) {
+    const t = templates.find((x) => x.id === id);
+    if (!t) return;
+    sourceType = t.payload.sourceType;
+    paymentMethodId = t.payload.paymentMethodId ?? "";
+    referenceCode = t.payload.referenceCode ?? "";
+    notes = t.payload.notes ?? "";
+  }
+
+  function onTemplateChange() {
+    if (!templateId) {
+      // “No template” — leave the form alone. Treasurer may have already
+      // typed something they want to keep.
+      return;
+    }
+    applyTemplate(templateId);
   }
 
   async function loadEvents() {
@@ -96,6 +185,7 @@
   $effect(() => {
     void chapterId;
     loadEvents();
+    loadTemplates();
   });
 
   function eventLabel(e: ServiceEvent): string {
@@ -144,6 +234,25 @@
   {/if}
 
   <form class="mt-6 space-y-4" onsubmit={submit}>
+    {#if templates.length > 0}
+      <label class="block">
+        <span class="text-sm font-medium text-slate-700">Template (optional)</span>
+        <select
+          bind:value={templateId}
+          onchange={onTemplateChange}
+          class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        >
+          <option value="">No template</option>
+          {#each templates as t (t.id)}
+            <option value={t.id}>{t.name}</option>
+          {/each}
+        </select>
+        <p class="mt-1 text-xs text-slate-500">
+          Picks the source, currency, reference, and notes from this preset.
+        </p>
+      </label>
+    {/if}
+
     <label class="block">
       <span class="text-sm font-medium text-slate-700">Chapter</span>
       <select

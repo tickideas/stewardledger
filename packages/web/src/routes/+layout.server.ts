@@ -7,7 +7,13 @@
 // `+layout.server.ts` files so the rule reads next to the routes it guards.
 
 import { redirect } from "@sveltejs/kit";
-import { isProtectedPath, isSafeInternalPath, isSuperAdminOnlyPath } from "$lib/session-paths";
+import {
+  authenticatedLandingPath,
+  isProtectedPath,
+  isSafeInternalPath,
+  isSuperAdminOnlyPath,
+  landingInputFromServerSession,
+} from "$lib/session-paths";
 import type { LayoutServerLoad } from "./$types";
 
 export const load: LayoutServerLoad = async ({ locals, url }) => {
@@ -19,11 +25,23 @@ export const load: LayoutServerLoad = async ({ locals, url }) => {
     redirect(303, `/login${nextParam}`);
   }
 
-  if (isSuperAdminOnlyPath(path) && !session?.isSuperAdmin) {
-    // Already authenticated (path is also protected → guarded above); just
-    // not a super-admin. Bounce to a safe surface they DO have access to.
-    redirect(303, "/zone/chapters");
+  // Super-admin-only paths are also protected paths (verified by
+  // `route-partitioning` tests), so by the time we reach here `session`
+  // is guaranteed non-null — the unauthenticated branch above already
+  // redirected anyone without a session. Narrow with `session && …` so
+  // TS agrees, and bounce to *their* landing surface (a chapter-only
+  // admin lands on /church/overview instead of /zone/chapters), keeping
+  // their `?zone=` if they had one in the URL.
+  if (session && isSuperAdminOnlyPath(path) && !session.isSuperAdmin) {
+    const zoneFromQuery = url.searchParams.get("zone");
+    redirect(
+      303,
+      authenticatedLandingPath(landingInputFromServerSession(session, zoneFromQuery)),
+    );
   }
 
-  return {};
+  // Ship the SSR-resolved session to the browser so the client store can
+  // hydrate without a second `/api/public/session-zones` round-trip.
+  // `null` is the wire signal for “anonymous / session lookup failed”.
+  return { session };
 };

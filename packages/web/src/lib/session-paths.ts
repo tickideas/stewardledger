@@ -1,8 +1,10 @@
 // packages/web/src/lib/session-paths.ts
-// Pure helpers for route classification + safe-redirect validation. No Svelte
-// runes, no I/O — kept side-effect-free so it can be unit-tested directly and
-// (eventually) reused server-side once a same-origin proxy or shared cookie
-// domain lets us gate routes in `hooks.server.ts`.
+// Pure helpers for route classification + safe-redirect validation. No
+// Svelte runes, no I/O — kept side-effect-free so it can be unit-tested
+// directly and reused both server-side (in `+layout.server.ts`) and on the
+// client (`session.svelte.ts`). Used by SSR redirects, the client session
+// store, and the SSR → client `data.session` hydration path.
+// RELEVANT FILES: ./session.svelte.ts, ../routes/+layout.server.ts, ../hooks.server.ts
 
 /** Route prefixes that require an authenticated session. */
 export const PROTECTED_PREFIXES = [
@@ -110,17 +112,26 @@ export function primaryRole(s: AuthenticatedLandingInput): PrimaryRole | null {
 }
 
 /**
- * Minimal view of the user's full multi-zone session, sufficient for the
- * server-side role gate. Mirrors the `/api/public/session-zones` payload
- * (and the client's `Zone[]` projection) without depending on it directly.
+ * View of the user's full multi-zone session as ferried from SSR to the
+ * browser. Mirrors the `/api/public/session-zones` wire payload one-to-one
+ * so the client session store can hydrate from `data.session` without a
+ * second round-trip on cold page loads.
+ *
+ * Gate functions (`canAccessRoleAnyZone`, `landingInputFromServerSession`)
+ * read only `isSuperAdmin` + the role arrays on each zone; the extra
+ * `id`/`name`/`chapterName`/`user` fields are optional so tests can keep
+ * supplying the minimal fixture shape.
  */
 export type ServerSession = {
   isSuperAdmin: boolean;
   items: Array<{
+    id?: string;
     slug: string;
+    name?: string;
     zoneRoles: string[];
-    chapterRoles: Array<{ chapterId: string; roleCode: string }>;
+    chapterRoles: Array<{ chapterId: string; chapterName?: string; roleCode: string }>;
   }>;
+  user?: { id: string; email: string; name: string | null } | null;
 };
 
 /**

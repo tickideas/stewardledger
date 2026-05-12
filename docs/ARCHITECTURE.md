@@ -29,7 +29,7 @@
 | ORM / migrations | **Drizzle** + `drizzle-kit` | Schema-first, codegen, push and migrate. |
 | Validation | **Zod** | Shared schemas between API and UI. |
 | Auth | **Better Auth** | Email OTP + magic link + password; same as echurcher. |
-| Sessions | Cookie-based, host-only | Same hardening as echurcher. |
+| Sessions | Cookie-based; host-only by default, parent-domain scoping via `AUTH_COOKIE_DOMAIN` for split-host deploys | Same hardening as echurcher. See §12 + `docs/DEPLOYMENT.md`. |
 | Background jobs | **pg-boss** | Postgres-native queues; no Redis required for v1. |
 | Email | **useSend** | Self-hosted; share echurcher's instance. |
 | Object storage | S3-compatible | R2 / Backblaze B2 / MinIO. Used for uploaded files and generated reports. |
@@ -289,11 +289,12 @@ s3://steward-prod/
 - Better Auth on the API.
 - Current web sign-in uses email + password. OTP and magic-link plugins are configured at the API layer for future/alternate flows, but users do not receive generated passwords.
 - User passwords are created during invitation acceptance. A zone owner, zone admin, or platform operator sends an invitation; the recipient opens the invitation URL and chooses their own password. Subsequent login uses the invited email address and that chosen password.
-- Session cookies are host-only. Custom domains work because we never set `Domain=`.
+- Session cookies default to host-only. Custom domains work because we never set `Domain=` for them.
 - 35-day session by default; configurable per zone in v1.1.
 - Session expiring banner triggered 5 minutes before expiry.
 - Sign-in is global (one user, many zones). After authenticating, if the user has bindings in multiple zones, they pick one to enter.
-- Local development and the current split-host deployment model run API and web on different origins (`:3000` and `:5173`, later `api.*` and app/custom-domain hosts). Because the Better Auth cookie is host-only, SvelteKit SSR does not read the API session cookie. The web app therefore performs route gating client-side through `/api/public/session-zones` with `credentials: "include"`; API middleware remains the authoritative security boundary.
+- **Cookie topology**. Local development and split-host production run API and web on different origins (`:3000` and `:5173`, later `api.*` and app/custom-domain hosts). To let the SvelteKit SSR layer forward the session cookie to the API, set `AUTH_COOKIE_DOMAIN` on the API to the shared parent (e.g. `.example.com`); Better Auth picks this up via `advanced.crossSubDomainCookies` so the cookie is scoped to both origins. Same-origin deployments leave it empty. `packages/web/src/lib/cookie-scope.ts` classifies (web, api) host pairs and `hooks.server.ts` fires a single cold-start warning per worker if the topology looks misconfigured. See `docs/DEPLOYMENT.md` “Cookie scope”.
+- **SSR-hydrated client store**. `hooks.server.ts` calls `/api/public/session-zones` once per request, stores the full wire payload on `event.locals.session`, and the root SSR layout returns it to the browser. `+layout.svelte` then seeds the client runes store via `hydrateSession(data.session)` so cold page loads do not issue a second round-trip after mount. Post-mutation refreshes (login, account page) still call `loadSession({ force: true })`. API middleware remains the authoritative security boundary — the SSR pass and the client store are both convenience caches.
 - `/api/public/session-zones` returns active zone bindings only (revoked bindings and soft-deleted zones are excluded) plus the `isSuperAdmin` flag. Platform-only super-admins can be authenticated with zero zone bindings and land on `/admin/zones` instead of tenant pages.
 
 ### 12.1 Middleware stack
@@ -307,9 +308,11 @@ Four Hono middlewares compose every request, in this order:
 | `requireTenantAuth` | `auth: AuthorizedContext` (union of role codes + chapter ids in this zone) | tenant routes |
 | `requirePlatformRole(...)` | (asserts only) | admin routes |
 
+A helper `requireChapterScope(ctx, chapterId, readRoles)` builds on the auth context to gate **chapter-scoped reads**: it returns a discriminated union (`{ ok: true }` / `{ status: 404, code: "chapter_not_found" }` / `{ status: 403, code: "forbidden" }`) and is wired into the list endpoints for members, contributions, contribution batches, imports, and chapter batch templates. Cross-zone ids surface as 404 to avoid leaking that the chapter exists; in-zone-but-unauthorised callers see 403.
+
 Route groups:
 
-- `/api/public/*` — no tenant. Anonymous invitation-accept and region-typeahead helpers; `/api/public/session-zones` optionally requires a Better Auth session and reports the caller's active zone bindings for the client-side gate. **There is no public signup endpoint** — StewardLedger is invitation-only; new zones are created by a platform admin via `POST /api/admin/zones/invite`.
+- `/api/public/*` — no tenant. Anonymous invitation-accept and region-typeahead helpers; `/api/public/session-zones` optionally requires a Better Auth session and reports the caller's active zone bindings. The SvelteKit SSR layer calls it once per request to seed the client store; client code falls back to it whenever a forced refresh is needed (login, account page). **There is no public signup endpoint** — StewardLedger is invitation-only; new zones are created by a platform admin via `POST /api/admin/zones/invite`.
 - `/api/tenant/*` — `tenantMiddleware → requireSession → requireTenantAuth`.
 - `/api/admin/*` — `requireSession → requirePlatformRole(super_admin, region_curator, ...)`. Cross-zone reads are allowed here and only here. `/api/admin/zones`, `/api/admin/zones/:slug`, and `/api/admin/zones/invite` are currently super-admin-only; the list endpoint uses cursor pagination on `(created_at, id)` plus per-currency contribution subtotals.
 
@@ -320,7 +323,7 @@ All user onboarding goes through the `invitations` table (see DOMAIN-MODEL.md §
 - **Admin-issued zone onboarding** (`POST /api/admin/zones/invite`, super-admin only) creates the zone in `pending_setup`, seeds roles/lookups/giving setup/periods, writes a `zone_owner` invitation pinned to the primary contact email, and emails an opaque 32-byte URL-safe token. The raw token only appears in the email; the DB stores its SHA-256 hash. Every call writes a `zone.invite` audit event attributing the action to the admin.
 - **Owner-invite resend** (`POST /api/admin/zones/:slug/owner-invitations`, super-admin only, while the zone is still `pending_setup`) revokes every open `zone_owner` invitation for the zone and emits a fresh one. Use this to correct a wrong email or replace a lost/expired link — the old token stops working immediately. Writes a `zone.owner_invite.resend` audit event recording the revoked invitation ids.
 - **Cross-tenant invitation revoke** (`POST /api/admin/zones/:slug/invitations/:id/revoke`, super-admin only) revokes a specific open invitation on any zone. Used by the platform-admin dashboard; the tenant-side equivalent at `POST /api/tenant/invitations/:id/revoke` is preferred when a zone admin is available.
-- **Team invitations** are issued by zone owners/admins via `POST /api/tenant/invitations` and follow the same accept flow.
+- **Team invitations** are issued by zone owners/admins via `POST /api/tenant/invitations`. `chapter_admin` callers are accepted too — they can list / create / revoke invitations clamped to their bound chapter, with the API enforcing the clamp regardless of the request payload. All paths follow the same accept flow.
 - **Acceptance** runs Better Auth `signUpEmail` with the email pinned by the invitation, then writes the role binding atomically. A `zone_owner` accept also flips the zone from `pending_setup` to `active` and sets `users.default_zone_id`.
 - **Demo seed data** creates zones, chapters, members, and contributions only. It does not create church or zone login accounts. To access a demo zone, create a platform admin with `pnpm create-admin`, open `/onboarding/invites?zone=<demo-slug>`, invite the desired zone-wide or chapter-scoped user, then accept the logged invitation URL to create the password.
 - **Chapter onboarding** is only for zones with no chapters. The web app checks `/api/tenant/chapters` before rendering the first-chapter form and redirects to the zone area when any chapter already exists.

@@ -8,6 +8,66 @@ follows phased releases per [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ### Added
 
+- **Per-role admin UI redesign — session foundation + editable church settings + batch templates** (PR #13):
+  - **Cross-subdomain session cookies.** Better Auth now honours a new
+    `AUTH_COOKIE_DOMAIN` env via `advanced.crossSubDomainCookies`
+    (`packages/api/src/auth.ts`, `packages/api/src/env.ts`). Production
+    deployments with web on `app.example.com` and API on
+    `api.example.com` can now share the session cookie by setting
+    `AUTH_COOKIE_DOMAIN=.example.com`. Same-origin deployments leave it
+    empty and behave as before. New `packages/web/src/lib/cookie-scope.ts`
+    classifies (webHost, apiHost) pairs as same-origin / shared-parent /
+    unrelated with a naive 2-trailing-label suffix check (no PSL
+    dependency). `hooks.server.ts` fires a single cold-start warning per
+    worker if the topology looks misconfigured. 13 unit tests cover the
+    diagnostic. Docs in `docs/DEPLOYMENT.md` “Cookie scope”.
+  - **SSR-hydrated client session store.** `ServerSession` was widened
+    to the full wire shape in `packages/web/src/lib/session-paths.ts`,
+    the root SSR layout returns `{ session }` from `+layout.server.ts`,
+    and `+layout.svelte` now calls a new
+    `hydrateSession(data.session)` helper to seed the runes store
+    synchronously. Cold page loads no longer issue a second
+    `/api/public/session-zones` round-trip after mount. Post-mutation
+    refreshes (login, account page) still call `loadSession({force:true})`.
+  - **`requireChapterScope` middleware** in
+    `packages/api/src/middleware/auth.ts` returns a `ChapterScopeResult`
+    discriminated union: 404 `chapter_not_found` for cross-zone ids (no
+    information leak), 403 `forbidden` for in-zone-unauthorised callers.
+    Wired into `GET /members`, `/contributions`, `/contribution-batches`,
+    and `/imports`. The import service gained an optional `chapterId`
+    filter; `importListQuerySchema` accepts it. A chapter-scoped role
+    can no longer read another chapter's rows by tampering with the
+    query string. 9 new tests across the affected routes.
+  - **Editable `/church/settings`.** Full rewrite of
+    `packages/web/src/routes/church/settings/+page.svelte` as a chapter
+    card + banking form + roster table + invitations form. New tenant
+    endpoints in `packages/api/src/routes/tenant.ts`: `GET /chapters/:id`,
+    `PATCH /chapters/:id/banking` (stored in `chapters.metadata.banking`),
+    `GET /chapters/:id/roster`, `DELETE /chapters/:id/roster/:bindingId`
+    (with a self-lockout guard so a `chapter_admin` can't revoke their
+    own binding when acting as chapter admin). Invitation list / create /
+    revoke is now scoped for `chapter_admin` too, clamped to their
+    chapter. New shared schemas `chapterBankingReferenceSchema` +
+    `chapterBankingSettingsSchema`. Write bucket:
+    `CHAPTER_SETTINGS_WRITE_ROLES = [zone_owner, zone_admin, chapter_admin]`.
+    New audit actions: `chapter.banking.update`, `chapter.roster.revoke`.
+    7 new tenant API tests.
+  - **Batch templates for Sunday close.** New
+    `chapter_batch_templates` table (`packages/db/src/schema/batch-templates.ts`,
+    migration `0001_jazzy_nico_minoru.sql`) with unique `(chapter_id, name)`.
+    New endpoints `GET/POST/DELETE /api/tenant/chapters/:id/batch-templates`
+    using the same chapter-settings write bucket; duplicate names → 409
+    `template_name_exists`. New shared schemas
+    `contributionBatchTemplate{Payload,Create}Schema`. `/church/settings`
+    gained a templates table + create form;
+    `/zone/contributions/batches/new` honours `?chapterId=` and
+    `?templateId=` deep-links and shows a picker that prefills source /
+    payment method / reference / notes. New audit actions:
+    `chapter.batch_template.{create,delete}`. 4 new tenant API tests.
+  - **Verification.** 235/235 API tests passing (231 → 235; +24 across
+    the slice, balanced by replacing some legacy fixtures). Web vitest
+    68/68. svelte-check / tsc / web build all clean.
+
 - **Phase 5 treasurer UI — round-2 hardening:**
   - **`packages/web/src/lib/contributions/member-selection.ts`** — pure
     resolution helper extracted from the batch detail's add-row flow.

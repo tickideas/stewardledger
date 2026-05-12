@@ -34,7 +34,7 @@ import {
   zones,
 } from "@stewardledger/db/schema";
 import { db } from "../db";
-import { hasAnyRole } from "../middleware/auth";
+import { hasAnyRole, requireChapterScope } from "../middleware/auth";
 import { writeAudit } from "../services/audit";
 import { nextMemberReferenceCode } from "../services/member-codes";
 import {
@@ -191,13 +191,27 @@ tenantMembersRouter.get(
     if (!hasZoneMemberRead(ctx) && !hasChapterMemberRead(ctx)) return forbidden(c);
     const q = c.req.valid("query");
 
+    // When the caller pins to a specific chapter, validate it against the
+    // zone + their bindings. Replaces the silent “wrong-zone chapter id
+    // → empty result” behaviour that masked typos and hand-edited URLs on
+    // the `/church/*` surface.
+    if (q.chapterId) {
+      const scope = await requireChapterScope(ctx, q.chapterId, ZONE_MEMBER_READ_ROLES);
+      if (!scope.ok) {
+        return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
+      }
+    }
+
     const conditions = [eq(members.zoneId, ctx.zoneId), isNull(members.deletedAt)];
     if (hasZoneMemberRead(ctx)) {
       if (q.chapterId) conditions.push(eq(members.chapterId, q.chapterId));
     } else {
       if (ctx.chapterIds.length === 0) return forbidden(c);
-      if (q.chapterId && !ctx.chapterIds.includes(q.chapterId)) return forbidden(c);
-      conditions.push(q.chapterId ? eq(members.chapterId, q.chapterId) : inArray(members.chapterId, ctx.chapterIds));
+      conditions.push(
+        q.chapterId
+          ? eq(members.chapterId, q.chapterId)
+          : inArray(members.chapterId, ctx.chapterIds),
+      );
     }
     if (q.isActive !== undefined) conditions.push(eq(members.isActive, q.isActive));
     if (q.q) {

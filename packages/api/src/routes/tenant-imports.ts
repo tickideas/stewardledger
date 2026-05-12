@@ -14,7 +14,7 @@ import {
   type AuthorizedContext,
 } from "@stewardledger/shared";
 import { Hono } from "hono";
-import { hasAnyRole } from "../middleware/auth";
+import { hasAnyRole, requireChapterScope } from "../middleware/auth";
 import { db } from "../db";
 import {
   ImportError,
@@ -285,6 +285,12 @@ tenantImportsRouter.get(
     const ctx = c.get("auth") as AuthorizedContext;
     if (!hasZoneRead(ctx) && !hasChapterRead(ctx)) return forbidden(c);
     const q = c.req.valid("query");
+    if (q.chapterId) {
+      const scope = await requireChapterScope(ctx, q.chapterId, IMPORT_ZONE_READ_ROLES);
+      if (!scope.ok) {
+        return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
+      }
+    }
     const result = await listImports(db, ctx.zoneId, q, {
       chapterIds: hasZoneRead(ctx) ? undefined : ctx.chapterIds,
     });

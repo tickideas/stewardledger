@@ -2,17 +2,33 @@
 // Tenant-scoped API. Mounted under tenantMiddleware + requireSession + requireTenantAuth.
 
 import { zValidator } from "@hono/zod-validator";
-import { chapters, invitations, zones } from "@stewardledger/db/schema";
+import {
+  chapterBatchTemplates,
+  chapters,
+  invitations,
+  roles as rolesTable,
+  user as userTable,
+  userRoleBindings,
+  zones,
+} from "@stewardledger/db/schema";
 import {
   type AuthorizedContext,
+  CHAPTER_ROLES,
+  chapterBankingSettingsSchema,
   chapterCreateSchema,
+  contributionBatchTemplateCreateSchema,
   invitationCreateSchema,
   ZONE_ROLES,
 } from "@stewardledger/shared";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
-import { hasAnyRole, requireSession, requireTenantAuth } from "../middleware/auth";
+import {
+  hasAnyRole,
+  requireChapterScope,
+  requireSession,
+  requireTenantAuth,
+} from "../middleware/auth";
 import { type TenantBindings, tenantMiddleware } from "../middleware/tenant";
 import { writeAudit } from "../services/audit";
 import { nextChapterReferenceCode } from "../services/chapter-codes";
@@ -58,16 +74,33 @@ tenantRouter.get("/me", async (c) => {
 
 // ─── Chapters ─────────────────────────────────────────────────────────
 
+// Roles that can read any chapter in the zone. Mirrors the list used by
+// the chapter-list GET handler so `requireChapterScope` agrees with the
+// implicit “which chapters can I see” gate.
+const CHAPTER_READ_ZONE_ROLES = [
+  ZONE_ROLES.ZONE_OWNER,
+  ZONE_ROLES.ZONE_ADMIN,
+  ZONE_ROLES.ZONE_FINANCE_ADMIN,
+  ZONE_ROLES.ZONE_AUDITOR,
+  ZONE_ROLES.ZONE_PASTOR_VIEWER,
+] as const;
+
+// Banking + roster writes. Chapter admins manage their own chapter; zone
+// owners/admins manage any chapter in the zone. Finance admins are NOT
+// included — they can read banking refs but shouldn't grant roles.
+const CHAPTER_SETTINGS_WRITE_ROLES = [
+  ZONE_ROLES.ZONE_OWNER,
+  ZONE_ROLES.ZONE_ADMIN,
+  CHAPTER_ROLES.CHAPTER_ADMIN,
+] as const;
+
+function forbidden(c: { json: (b: unknown, s: number) => Response }, msg = "Insufficient role") {
+  return c.json({ error: { code: "forbidden", message: msg } }, 403);
+}
+
 tenantRouter.get("/chapters", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
-  const zoneWide = hasAnyRole(
-    ctx,
-    ZONE_ROLES.ZONE_OWNER,
-    ZONE_ROLES.ZONE_ADMIN,
-    ZONE_ROLES.ZONE_FINANCE_ADMIN,
-    ZONE_ROLES.ZONE_AUDITOR,
-    ZONE_ROLES.ZONE_PASTOR_VIEWER,
-  );
+  const zoneWide = hasAnyRole(ctx, ...CHAPTER_READ_ZONE_ROLES);
   if (!zoneWide && ctx.chapterIds.length === 0) return c.json({ items: [] });
   const conditions = [eq(chapters.zoneId, ctx.zoneId), isNull(chapters.deletedAt)];
   if (!zoneWide) conditions.push(inArray(chapters.id, ctx.chapterIds));
@@ -129,12 +162,408 @@ tenantRouter.post("/chapters", zValidator("json", chapterCreateSchema), async (c
   return c.json({ chapter: result }, 201);
 });
 
+/**
+ * One chapter, with everything `/church/settings` needs in a single read:
+ *   - the registry record (referenceCode, name, etc.)
+ *   - the editable banking block, lifted out of `metadata.banking`
+ *
+ * Anyone who can scope to the chapter sees it; banking edits are gated
+ * separately on the PATCH endpoint below.
+ */
+tenantRouter.get("/chapters/:id", async (c) => {
+  const ctx = c.get("auth") as AuthorizedContext;
+  const id = c.req.param("id");
+  const scope = await requireChapterScope(ctx, id, CHAPTER_READ_ZONE_ROLES);
+  if (!scope.ok)
+    return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
+  const [row] = await db
+    .select({
+      id: chapters.id,
+      referenceCode: chapters.referenceCode,
+      name: chapters.name,
+      countryCode: chapters.countryCode,
+      dateFrom: chapters.dateFrom,
+      dateTo: chapters.dateTo,
+      metadata: chapters.metadata,
+      createdAt: chapters.createdAt,
+      updatedAt: chapters.updatedAt,
+    })
+    .from(chapters)
+    .where(and(eq(chapters.id, id), isNull(chapters.deletedAt)))
+    .limit(1);
+  if (!row) return c.json({ error: { code: "not_found", message: "Chapter not found" } }, 404);
+  const meta = (row.metadata ?? {}) as { banking?: unknown };
+  // If older data is malformed we hand back the defaults rather than
+  // 500ing the whole settings page; the next PATCH will rewrite it.
+  const parsed = chapterBankingSettingsSchema.safeParse(meta.banking);
+  const banking = parsed.success
+    ? { primaryCurrency: parsed.data.primaryCurrency ?? null, references: parsed.data.references ?? [] }
+    : { primaryCurrency: null, references: [] };
+  return c.json({
+    chapter: {
+      id: row.id,
+      referenceCode: row.referenceCode,
+      name: row.name,
+      countryCode: row.countryCode,
+      dateFrom: row.dateFrom,
+      dateTo: row.dateTo,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      banking,
+    },
+  });
+});
+
+tenantRouter.patch(
+  "/chapters/:id/banking",
+  zValidator("json", chapterBankingSettingsSchema),
+  async (c) => {
+    const ctx = c.get("auth") as AuthorizedContext;
+    const id = c.req.param("id");
+    // Fast-fail on role *before* hitting the DB for the chapter lookup.
+    // Auditors / pastor-viewers can read banking but shouldn't pay the
+    // extra round-trip just to land on a 403.
+    if (!hasAnyRole(ctx, ...CHAPTER_SETTINGS_WRITE_ROLES)) return forbidden(c);
+    const scope = await requireChapterScope(ctx, id, CHAPTER_READ_ZONE_ROLES);
+    if (!scope.ok)
+      return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
+    const input = c.req.valid("json");
+
+    const result = await db.transaction(async (tx) => {
+      const [existing] = await tx
+        .select({ metadata: chapters.metadata })
+        .from(chapters)
+        .where(
+          and(eq(chapters.id, id), eq(chapters.zoneId, ctx.zoneId), isNull(chapters.deletedAt)),
+        )
+        .limit(1);
+      if (!existing) return null;
+      const prevMeta = (existing.metadata ?? {}) as Record<string, unknown>;
+      const prevBanking = (prevMeta.banking as unknown) ?? null;
+      // Normalise: undefined keys become null/empty so stored data is tidy.
+      const nextBanking = {
+        primaryCurrency: input.primaryCurrency ?? null,
+        references: input.references ?? [],
+      };
+      const nextMeta = { ...prevMeta, banking: nextBanking };
+      await tx
+        .update(chapters)
+        .set({ metadata: nextMeta, updatedAt: new Date() })
+        .where(eq(chapters.id, id));
+      await writeAudit(tx, {
+        zoneId: ctx.zoneId,
+        actorUserId: ctx.userId,
+        action: "chapter.banking.update",
+        entityType: "chapter",
+        entityId: id,
+        before: prevBanking,
+        after: nextBanking,
+      });
+      return nextBanking;
+    });
+    if (!result)
+      return c.json({ error: { code: "not_found", message: "Chapter not found" } }, 404);
+    return c.json({ banking: result });
+  },
+);
+
+/**
+ * Roster: every active user with a chapter-scope role binding in this
+ * chapter. Returns one row per (user, role) so the UI shows all bindings
+ * explicitly — the same user with two chapter roles appears twice.
+ */
+tenantRouter.get("/chapters/:id/roster", async (c) => {
+  const ctx = c.get("auth") as AuthorizedContext;
+  const id = c.req.param("id");
+  const scope = await requireChapterScope(ctx, id, CHAPTER_READ_ZONE_ROLES);
+  if (!scope.ok)
+    return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
+  const rows = await db
+    .select({
+      bindingId: userRoleBindings.id,
+      userId: userTable.id,
+      email: userTable.email,
+      name: userTable.name,
+      roleId: rolesTable.id,
+      roleCode: rolesTable.code,
+      roleName: rolesTable.name,
+      grantedAt: userRoleBindings.grantedAt,
+    })
+    .from(userRoleBindings)
+    .innerJoin(userTable, eq(userRoleBindings.userId, userTable.id))
+    .innerJoin(rolesTable, eq(userRoleBindings.roleId, rolesTable.id))
+    .where(
+      and(
+        eq(userRoleBindings.zoneId, ctx.zoneId),
+        eq(userRoleBindings.chapterId, id),
+        isNull(userRoleBindings.revokedAt),
+      ),
+    )
+    .orderBy(asc(userTable.email), asc(rolesTable.code));
+  return c.json({ items: rows });
+});
+
+/**
+ * Revoke a chapter-scope binding. Same write-gate as banking; chapter
+ * admins manage their own chapter, zone admins manage any chapter.
+ * Cannot revoke the caller's own `chapter_admin` binding when they're
+ * acting through that role — that would lock them out of the page they
+ * just used. Zone admins can still revoke it (they're not affected).
+ */
+tenantRouter.delete("/chapters/:id/roster/:bindingId", async (c) => {
+  const ctx = c.get("auth") as AuthorizedContext;
+  const chapterId = c.req.param("id");
+  const bindingId = c.req.param("bindingId");
+  if (!hasAnyRole(ctx, ...CHAPTER_SETTINGS_WRITE_ROLES)) return forbidden(c);
+  const scope = await requireChapterScope(ctx, chapterId, CHAPTER_READ_ZONE_ROLES);
+  if (!scope.ok)
+    return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
+
+  const result = await db.transaction(async (tx) => {
+    const [binding] = await tx
+      .select({
+        id: userRoleBindings.id,
+        userId: userRoleBindings.userId,
+        chapterId: userRoleBindings.chapterId,
+        roleId: userRoleBindings.roleId,
+        roleCode: rolesTable.code,
+        roleScope: rolesTable.scope,
+      })
+      .from(userRoleBindings)
+      .innerJoin(rolesTable, eq(userRoleBindings.roleId, rolesTable.id))
+      .where(
+        and(
+          eq(userRoleBindings.id, bindingId),
+          eq(userRoleBindings.zoneId, ctx.zoneId),
+          eq(userRoleBindings.chapterId, chapterId),
+          isNull(userRoleBindings.revokedAt),
+        ),
+      )
+      .limit(1);
+    if (!binding) return { kind: "not_found" as const };
+    if (binding.roleScope !== "chapter") return { kind: "forbidden" as const };
+
+    const callerIsZoneAdmin = hasAnyRole(ctx, ZONE_ROLES.ZONE_OWNER, ZONE_ROLES.ZONE_ADMIN);
+    if (
+      !callerIsZoneAdmin &&
+      binding.userId === ctx.userId &&
+      binding.roleCode === CHAPTER_ROLES.CHAPTER_ADMIN
+    ) {
+      return { kind: "self_lockout" as const };
+    }
+
+    await tx
+      .update(userRoleBindings)
+      .set({ revokedAt: new Date() })
+      .where(eq(userRoleBindings.id, binding.id));
+    await writeAudit(tx, {
+      zoneId: ctx.zoneId,
+      actorUserId: ctx.userId,
+      action: "chapter.roster.revoke",
+      entityType: "user_role_binding",
+      entityId: binding.id,
+      before: {
+        userId: binding.userId,
+        chapterId: binding.chapterId,
+        roleCode: binding.roleCode,
+      },
+    });
+    return { kind: "ok" as const };
+  });
+  if (result.kind === "not_found")
+    return c.json({ error: { code: "not_found", message: "Binding not found" } }, 404);
+  if (result.kind === "forbidden")
+    return c.json(
+      {
+        error: { code: "forbidden", message: "Only chapter-scope bindings can be revoked here" },
+      },
+      403,
+    );
+  if (result.kind === "self_lockout")
+    return c.json(
+      {
+        error: {
+          code: "self_lockout",
+          message: "Cannot revoke your own chapter_admin binding.",
+        },
+      },
+      409,
+    );
+  return c.json({ status: "revoked" });
+});
+
+// ─── Batch templates ─────────────────────────────────────────────────
+
+/** List a chapter's batch templates. Anyone scoped to the chapter can read. */
+tenantRouter.get("/chapters/:id/batch-templates", async (c) => {
+  const ctx = c.get("auth") as AuthorizedContext;
+  const chapterId = c.req.param("id");
+  const scope = await requireChapterScope(ctx, chapterId, CHAPTER_READ_ZONE_ROLES);
+  if (!scope.ok)
+    return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
+  const rows = await db
+    .select({
+      id: chapterBatchTemplates.id,
+      name: chapterBatchTemplates.name,
+      payload: chapterBatchTemplates.payload,
+      createdAt: chapterBatchTemplates.createdAt,
+      updatedAt: chapterBatchTemplates.updatedAt,
+    })
+    .from(chapterBatchTemplates)
+    .where(
+      and(
+        eq(chapterBatchTemplates.zoneId, ctx.zoneId),
+        eq(chapterBatchTemplates.chapterId, chapterId),
+      ),
+    )
+    .orderBy(asc(chapterBatchTemplates.name));
+  return c.json({ items: rows });
+});
+
+/** Create a batch template. Same write-bucket as banking. */
+tenantRouter.post(
+  "/chapters/:id/batch-templates",
+  zValidator("json", contributionBatchTemplateCreateSchema),
+  async (c) => {
+    const ctx = c.get("auth") as AuthorizedContext;
+    const chapterId = c.req.param("id");
+    if (!hasAnyRole(ctx, ...CHAPTER_SETTINGS_WRITE_ROLES)) return forbidden(c);
+    const scope = await requireChapterScope(ctx, chapterId, CHAPTER_READ_ZONE_ROLES);
+    if (!scope.ok)
+      return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
+    const input = c.req.valid("json");
+
+    type TemplateInsertRow = {
+      id: string;
+      name: string;
+      payload: unknown;
+      createdAt: Date;
+      updatedAt: Date;
+    };
+    let result: { kind: "ok"; row: TemplateInsertRow } | { kind: "duplicate" };
+    try {
+      result = await db.transaction(async (tx) => {
+        const [row] = await tx
+          .insert(chapterBatchTemplates)
+          .values({
+            zoneId: ctx.zoneId,
+            chapterId,
+            name: input.name,
+            // Validated above by `contributionBatchTemplateCreateSchema`
+            // (`.strict()`), so `input.payload` lands in the `payload jsonb`
+            // column as a known-good object without further coercion.
+            payload: input.payload,
+            createdByUserId: ctx.userId,
+          })
+          .returning({
+            id: chapterBatchTemplates.id,
+            name: chapterBatchTemplates.name,
+            payload: chapterBatchTemplates.payload,
+            createdAt: chapterBatchTemplates.createdAt,
+            updatedAt: chapterBatchTemplates.updatedAt,
+          });
+        await writeAudit(tx, {
+          zoneId: ctx.zoneId,
+          actorUserId: ctx.userId,
+          action: "chapter.batch_template.create",
+          entityType: "chapter_batch_template",
+          entityId: row.id,
+          after: { name: row.name, payload: row.payload },
+        });
+        return { kind: "ok" as const, row };
+      });
+    } catch (err) {
+      // Unique (chapter_id, name) collision → 409. The error escapes the
+      // transaction wrapper, so we have to catch it here rather than inside.
+      const direct = (err as { code?: string }).code;
+      const cause = (err as { cause?: { code?: string } }).cause?.code;
+      if (direct === "23505" || cause === "23505") {
+        result = { kind: "duplicate" };
+      } else {
+        throw err;
+      }
+    }
+    if (result.kind === "duplicate")
+      return c.json(
+        {
+          error: {
+            code: "template_name_exists",
+            message: "A template with that name already exists.",
+          },
+        },
+        409,
+      );
+    return c.json({ template: result.row }, 201);
+  },
+);
+
+/** Hard-delete a batch template. Audited. */
+tenantRouter.delete("/chapters/:id/batch-templates/:templateId", async (c) => {
+  const ctx = c.get("auth") as AuthorizedContext;
+  const chapterId = c.req.param("id");
+  const templateId = c.req.param("templateId");
+  if (!hasAnyRole(ctx, ...CHAPTER_SETTINGS_WRITE_ROLES)) return forbidden(c);
+  const scope = await requireChapterScope(ctx, chapterId, CHAPTER_READ_ZONE_ROLES);
+  if (!scope.ok)
+    return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
+
+  const result = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .delete(chapterBatchTemplates)
+      .where(
+        and(
+          eq(chapterBatchTemplates.id, templateId),
+          eq(chapterBatchTemplates.zoneId, ctx.zoneId),
+          eq(chapterBatchTemplates.chapterId, chapterId),
+        ),
+      )
+      .returning({
+        id: chapterBatchTemplates.id,
+        name: chapterBatchTemplates.name,
+        payload: chapterBatchTemplates.payload,
+      });
+    if (!row) return null;
+    await writeAudit(tx, {
+      zoneId: ctx.zoneId,
+      actorUserId: ctx.userId,
+      action: "chapter.batch_template.delete",
+      entityType: "chapter_batch_template",
+      entityId: row.id,
+      before: { name: row.name, payload: row.payload },
+    });
+    return row;
+  });
+  if (!result)
+    return c.json({ error: { code: "not_found", message: "Template not found" } }, 404);
+  return c.json({ status: "deleted" });
+});
+
 // ─── Invitations ──────────────────────────────────────────────────────
 
 tenantRouter.get("/invitations", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
-  if (!hasAnyRole(ctx, ZONE_ROLES.ZONE_OWNER, ZONE_ROLES.ZONE_ADMIN)) {
-    return c.json({ error: { code: "forbidden", message: "Zone admin required" } }, 403);
+  const isZoneAdmin = hasAnyRole(ctx, ZONE_ROLES.ZONE_OWNER, ZONE_ROLES.ZONE_ADMIN);
+  const isChapterAdmin = ctx.roleCodes.includes(CHAPTER_ROLES.CHAPTER_ADMIN);
+  if (!isZoneAdmin && !isChapterAdmin) {
+    return c.json({ error: { code: "forbidden", message: "Admin role required" } }, 403);
+  }
+  // Optional `?chapterId=` filter for the church-admin surface, which
+  // shows only the active chapter's open invitations. Honoured for zone
+  // admins too. Chapter admins are clamped to their bindings below.
+  const requested = c.req.query("chapterId");
+  if (requested) {
+    const scope = await requireChapterScope(ctx, requested, CHAPTER_READ_ZONE_ROLES);
+    if (!scope.ok)
+      return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
+  }
+  const conditions = [eq(invitations.zoneId, ctx.zoneId)];
+  if (requested) {
+    conditions.push(eq(invitations.chapterId, requested));
+  } else if (!isZoneAdmin) {
+    // Chapter admin without a filter → only see invitations for chapters
+    // they administer. Empty list when they're somehow unbound.
+    if (ctx.chapterIds.length === 0) return c.json({ items: [] });
+    conditions.push(inArray(invitations.chapterId, ctx.chapterIds));
   }
   const rows = await db
     .select({
@@ -148,17 +577,31 @@ tenantRouter.get("/invitations", async (c) => {
       createdAt: invitations.createdAt,
     })
     .from(invitations)
-    .where(eq(invitations.zoneId, ctx.zoneId))
+    .where(and(...conditions))
     .orderBy(desc(invitations.createdAt));
   return c.json({ items: rows });
 });
 
 tenantRouter.post("/invitations", zValidator("json", invitationCreateSchema), async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
-  if (!hasAnyRole(ctx, ZONE_ROLES.ZONE_OWNER, ZONE_ROLES.ZONE_ADMIN)) {
-    return c.json({ error: { code: "forbidden", message: "Zone admin required" } }, 403);
+  const isZoneAdmin = hasAnyRole(ctx, ZONE_ROLES.ZONE_OWNER, ZONE_ROLES.ZONE_ADMIN);
+  const isChapterAdmin = ctx.roleCodes.includes(CHAPTER_ROLES.CHAPTER_ADMIN);
+  if (!isZoneAdmin && !isChapterAdmin) {
+    return c.json({ error: { code: "forbidden", message: "Admin role required" } }, 403);
   }
   const input = c.req.valid("json");
+
+  // Chapter admins may only invite chapter-scope roles INTO a chapter they
+  // administer. Zone-scope role invites and any chapter they don't own
+  // require a zone admin.
+  if (!isZoneAdmin) {
+    if (!isChapterRole(input.roleCode)) {
+      return forbidden(c, "Chapter admins can only invite chapter roles");
+    }
+    if (!input.chapterId || !ctx.chapterIds.includes(input.chapterId)) {
+      return forbidden(c, "Chapter admins can only invite into their own chapter");
+    }
+  }
 
   // Cross-tenant fuzz guard: if the input has a chapterId, it MUST belong to
   // this zone. The shared schema checks shape; the DB check enforces tenancy.
@@ -240,10 +683,29 @@ tenantRouter.post("/invitations", zValidator("json", invitationCreateSchema), as
 
 tenantRouter.post("/invitations/:id/revoke", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
-  if (!hasAnyRole(ctx, ZONE_ROLES.ZONE_OWNER, ZONE_ROLES.ZONE_ADMIN)) {
-    return c.json({ error: { code: "forbidden", message: "Zone admin required" } }, 403);
+  const isZoneAdmin = hasAnyRole(ctx, ZONE_ROLES.ZONE_OWNER, ZONE_ROLES.ZONE_ADMIN);
+  const isChapterAdmin = ctx.roleCodes.includes(CHAPTER_ROLES.CHAPTER_ADMIN);
+  if (!isZoneAdmin && !isChapterAdmin) {
+    return c.json({ error: { code: "forbidden", message: "Admin role required" } }, 403);
   }
   const id = c.req.param("id");
+
+  // Chapter admins can only revoke invitations attached to a chapter they
+  // administer. Look it up first so we surface a clean 403 (vs returning
+  // the generic “not revocable” that revokeOpenInvitations gives back).
+  if (!isZoneAdmin) {
+    const [target] = await db
+      .select({ chapterId: invitations.chapterId })
+      .from(invitations)
+      .where(and(eq(invitations.id, id), eq(invitations.zoneId, ctx.zoneId)))
+      .limit(1);
+    if (!target)
+      return c.json({ error: { code: "not_found", message: "Invitation not found" } }, 404);
+    if (!target.chapterId || !ctx.chapterIds.includes(target.chapterId)) {
+      return forbidden(c, "Chapter admins can only revoke their own chapter's invitations");
+    }
+  }
+
   const revoked = await db.transaction(async (tx) => {
     const { revokedIds } = await revokeOpenInvitations(
       tx,

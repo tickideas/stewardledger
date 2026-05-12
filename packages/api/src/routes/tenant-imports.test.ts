@@ -437,4 +437,58 @@ describe("tenant import routes", () => {
     expect(ids.has(jobA)).toBe(true);
     expect(ids.has(jobB)).toBe(false);
   });
+
+  // ─── Chapter-scope filter (requireChapterScope on the list endpoint) ──────
+
+  it("GET /imports?chapterId=<own-chapter> pins the list to one chapter", async () => {
+    // Owner has zone-wide read — normally sees every import. With
+    // ?chapterId=A pinned, the response only carries A's jobs.
+    asUser(ownerA, "owner@example.com");
+    const fa = buildCsv(zoneA.memberRef, today);
+    fa.set("chapterId", zoneA.chapterIdA);
+    const ra = await call(zoneA.slug, "/api/tenant/imports", { multipart: fa });
+    expect(ra.status).toBe(201);
+    const { importJobId: jobA } = (await ra.json()) as { importJobId: string };
+
+    const fb = buildCsv(zoneA.memberRef, today);
+    fb.set("chapterId", zoneA.chapterIdB);
+    const rb = await call(zoneA.slug, "/api/tenant/imports", { multipart: fb });
+    expect(rb.status).toBe(201);
+    const { importJobId: jobB } = (await rb.json()) as { importJobId: string };
+
+    const list = await call(
+      zoneA.slug,
+      `/api/tenant/imports?limit=200&chapterId=${zoneA.chapterIdA}`,
+    );
+    expect(list.status).toBe(200);
+    const { items } = (await list.json()) as { items: { id: string }[] };
+    const ids = new Set(items.map((i) => i.id));
+    expect(ids.has(jobA)).toBe(true);
+    expect(ids.has(jobB)).toBe(false);
+  });
+
+  it("GET /imports?chapterId=<other-zone> → 404 chapter_not_found", async () => {
+    // ownerA hand-edits the URL to point at a chapter that doesn't belong
+    // to zone A (here a UUIDv4 that lives in no zone). Same code path as
+    // a cross-zone smuggling attempt.
+    asUser(ownerA, "owner@example.com");
+    const ghostId = crypto.randomUUID();
+    const res = await call(zoneA.slug, `/api/tenant/imports?chapterId=${ghostId}`);
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("chapter_not_found");
+  });
+
+  it("GET /imports?chapterId=<other-in-zone> from chapter-only user → 403", async () => {
+    // Treasurer A asks for chapter B's imports. Chapter exists in the
+    // zone but they have no binding to it → 403, not 404.
+    asUser(treasurerA, "treasurer@example.com");
+    const res = await call(
+      zoneA.slug,
+      `/api/tenant/imports?chapterId=${zoneA.chapterIdB}`,
+    );
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("forbidden");
+  });
 });
