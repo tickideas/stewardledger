@@ -120,6 +120,28 @@ chapter_name_history
   created_at
 ```
 
+`chapters.metadata.banking` holds the chapter's banking reference singleton (`bankName`, `accountName`, `accountNumber`, `sortCode`, `iban`, `swift`, `currency`, `notes`). It is edited via `PATCH /api/tenant/chapters/:id/banking` and audited as `chapter.banking.update`. Storing this in `metadata` rather than a dedicated table reflects its singleton-per-chapter nature.
+
+```sql
+chapter_batch_templates
+  id uuid pk
+  zone_id uuid not null
+  chapter_id uuid not null references chapters(id) on delete cascade
+  name text not null
+  payload jsonb not null                  -- { sourceType, defaultCurrency?, paymentMethodId?, serviceTypeId?, referenceCode?, notes? }
+  created_by_user_id uuid null
+  created_at, updated_at
+  unique (chapter_id, name)
+  index (chapter_id)
+```
+
+Lightweight per-chapter presets for the Sunday-close flow. Managed via
+`GET/POST/DELETE /api/tenant/chapters/:id/batch-templates` (write bucket:
+`zone_owner` / `zone_admin` / `chapter_admin`). The treasurer's
+`/zone/contributions/batches/new` page honours `?chapterId=` and
+`?templateId=` deep-links and a stale referenced id (e.g. a deleted
+payment method) is silently ignored at apply-time.
+
 ### 2.5 Roles & bindings
 
 ```sql
@@ -682,6 +704,8 @@ audit_events
 ```
 
 Append-only. Never updated. Retained per tenant retention policy.
+
+Action codes are dotted strings rooted at the entity type. Phase 2 / chapter-settings additions: `chapter.banking.update`, `chapter.roster.revoke`, `chapter.batch_template.create`, `chapter.batch_template.delete`. Existing Phase 5 / contributions actions remain `contribution.{create,update,post,void,reverse}` and `import.{commit,rollback}` (see §6 and §7).
 
 ---
 
