@@ -83,7 +83,7 @@
 <div class="max-w-md mx-auto px-6 py-24">
   <h1 class="text-3xl font-semibold tracking-tight">Sign in to StewardLedger</h1>
   <p class="mt-2 text-sm text-slate-600">
-    Enter the email and password you used when accepting your invitation.
+    Use the email from your invitation and the password you created when accepting it.
   </p>
   {#if banner}
     <p

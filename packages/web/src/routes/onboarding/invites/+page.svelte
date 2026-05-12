@@ -80,7 +80,9 @@
   <p class="text-xs font-medium text-slate-500 uppercase tracking-wide">Step 2 of 2</p>
   <h1 class="mt-2 text-2xl font-semibold tracking-tight">Invite your team</h1>
   <p class="mt-2 text-sm text-slate-600">
-    Add zonal admins and chapter treasurers. They'll get an email link to set their password.
+    Add zone-wide users or chapter-scoped users. StewardLedger does not generate passwords:
+    each invited user opens their invitation link, creates their own password, and then signs in
+    with that email and password.
   </p>
 
   <form class="mt-6 grid grid-cols-12 gap-3" onsubmit={submit}>
@@ -130,6 +132,15 @@
   {#if errorMsg}
     <p class="mt-3 text-sm text-red-600">{errorMsg}</p>
   {/if}
+
+  <div class="mt-5 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+    <p class="font-medium text-slate-900">How login access is created</p>
+    <p class="mt-1">
+      Zone users are invited with a zone-wide role. Church users are invited with a chapter role
+      and a selected chapter. In local development, the invitation URL is printed in the API logs
+      when email sending is not configured.
+    </p>
+  </div>
 
   <h2 class="mt-10 text-sm font-semibold text-slate-700 uppercase tracking-wide">Pending invitations</h2>
   {#if invitations.length === 0}

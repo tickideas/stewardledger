@@ -287,7 +287,8 @@ s3://steward-prod/
 ## 12. Auth and session
 
 - Better Auth on the API.
-- Email OTP for finance roles by default; password optional.
+- Current web sign-in uses email + password. OTP and magic-link plugins are configured at the API layer for future/alternate flows, but users do not receive generated passwords.
+- User passwords are created during invitation acceptance. A zone owner, zone admin, or platform operator sends an invitation; the recipient opens the invitation URL and chooses their own password. Subsequent login uses the invited email address and that chosen password.
 - Session cookies are host-only. Custom domains work because we never set `Domain=`.
 - 35-day session by default; configurable per zone in v1.1.
 - Session expiring banner triggered 5 minutes before expiry.
@@ -319,6 +320,7 @@ All user onboarding goes through the `invitations` table (see DOMAIN-MODEL.md §
 - **Public signup** writes a `zone_owner` invitation pinned to the primary contact email and emails an opaque 32-byte URL-safe token. The raw token only appears in the email; the DB stores its SHA-256 hash.
 - **Team invitations** are issued by zone owners/admins via `POST /api/tenant/invitations` and follow the same accept flow.
 - **Acceptance** runs Better Auth `signUpEmail` with the email pinned by the invitation, then writes the role binding atomically. A `zone_owner` accept also flips the zone from `pending_setup` to `active` and sets `users.default_zone_id`.
+- **Demo seed data** creates zones, chapters, members, and contributions only. It does not create church or zone login accounts. To access a demo zone, create a platform admin with `pnpm create-admin`, open `/onboarding/invites?zone=<demo-slug>`, invite the desired zone-wide or chapter-scoped user, then accept the logged invitation URL to create the password.
 
 ---
 

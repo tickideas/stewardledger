@@ -93,6 +93,12 @@ pnpm create-admin -- --email you@example.com --password-env ADMIN_PASSWORD --nam
 pnpm make-super-admin -- you@example.com --confirm # Elevate an existing user after printing bindings
 ```
 
+### Demo access
+
+`pnpm seed:demo -- --reset` creates demo tenant data, not login accounts. The seeded demo zones are `demo-grace-uk`, `demo-lighthouse-us`, and `demo-river-ng`.
+
+Create a platform admin with `pnpm create-admin`, sign in at `/login`, then open `/onboarding/invites?zone=<demo-slug>` to invite a demo user. Choose a zone-wide role for zone access, or choose a chapter role and chapter for church-level access. The invitee opens the invitation URL, creates their own password, and then signs in with their email and chosen password. In local development, invitation URLs are printed in the API logs when email sending is not configured.
+
 ## Status
 
 **Phase 5 — contributions.** Phases 1–4 are closed (foundations,

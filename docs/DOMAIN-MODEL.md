@@ -177,8 +177,9 @@ invitations
 ```
 
 - A successful **public signup** writes one invitation for the primary contact email pinned to `zone_owner` and emails them a magic-link-style accept URL. No Better Auth user is created at signup.
-- On accept (`POST /api/public/invitations/accept`): Better Auth `signUpEmail` runs with the email pinned by the invitation, then `applyAcceptedInvitation` writes a `user_role_bindings` row, marks the invite accepted, and — for `zone_owner` invites — promotes the zone from `pending_setup` to `active`.
+- On accept (`POST /api/public/invitations/accept`): the invited person supplies their name and chooses a password. Better Auth `signUpEmail` runs with the email pinned by the invitation, then `applyAcceptedInvitation` writes a `user_role_bindings` row, marks the invite accepted, and — for `zone_owner` invites — promotes the zone from `pending_setup` to `active`.
 - Team invitations follow the same shape but are created via `POST /api/tenant/invitations` (zone_owner / zone_admin only); the API forbids inviting a second `zone_owner`.
+- Demo seeding creates tenant data only, not user accounts. Demo church/zone login accounts must be created by invitation acceptance, or accessed by a platform super-admin.
 
 ---
 
