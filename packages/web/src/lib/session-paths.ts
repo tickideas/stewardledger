@@ -6,11 +6,10 @@
 
 /** Route prefixes that require an authenticated session. */
 export const PROTECTED_PREFIXES = [
-  "/members",
-  "/contributions",
-  "/imports",
-  "/reports",
   "/admin",
+  "/zone",
+  "/church",
+  "/account",
   "/onboarding",
 ] as const;
 
@@ -29,6 +28,13 @@ export const PUBLIC_PREFIXES = [
 
 /** localStorage key for the active zone slug. Single source of truth. */
 export const ACTIVE_ZONE_KEY = "stewardledger.activeZoneSlug";
+
+/**
+ * localStorage key for the active chapter id (church-admin surface only).
+ * A user with multiple chapter bindings within their active zone picks one
+ * from the sidebar switcher; we persist it so the choice survives reloads.
+ */
+export const ACTIVE_CHAPTER_KEY = "stewardledger.activeChapterId";
 
 export function isProtectedPath(pathname: string): boolean {
   return PROTECTED_PREFIXES.some(
@@ -60,19 +66,145 @@ export function isSuperAdminOnlyPath(pathname: string): boolean {
   return pathname === "/admin/zones" || pathname.startsWith("/admin/zones/");
 }
 
+/**
+ * The primary dashboard surface a session belongs to. Resolved from the
+ * highest-scope role binding the user holds in their active zone, falling
+ * back to platform for super-admins without a zone, and to `null` for users
+ * with no usable bindings at all (rendered as the no_zone state upstream).
+ *
+ * Precedence: platform > zonal > church.
+ */
+export type PrimaryRole = "platform" | "zonal" | "church";
+
 export type AuthenticatedLandingInput = {
   activeZoneSlug: string | null;
   isSuperAdmin: boolean;
+  /**
+   * Bindings within the currently-active zone. Optional so callers that
+   * don't yet have role data (legacy tests, intermediate code paths) keep
+   * working with the historical "any zone binding → zonal" behaviour.
+   */
+  activeZoneRoles?: string[];
+  /**
+   * Chapter role bindings within the currently-active zone. Used to detect
+   * chapter-only admins so we can land them on /church instead of /zone.
+   * `chapterName` is optional on this input because the routing helpers
+   * don't need it; the sidebar switcher reads it from the session store.
+   */
+  activeZoneChapterRoles?: Array<{ chapterId: string; roleCode: string }>;
 };
 
 /**
- * Canonical post-auth landing rule. Platform-only super-admins have no tenant
- * context, so tenant routes such as /members cannot work for them.
+ * Resolve the primary dashboard surface for a session. Used both for the
+ * post-auth landing decision and (potentially) for any UI that wants to
+ * know "which sidebar should this user see by default".
+ */
+export function primaryRole(s: AuthenticatedLandingInput): PrimaryRole | null {
+  if (s.isSuperAdmin) return "platform";
+  if (s.activeZoneRoles && s.activeZoneRoles.length > 0) return "zonal";
+  if (s.activeZoneChapterRoles && s.activeZoneChapterRoles.length > 0) return "church";
+  // Tenant-bound user with no resolved role data — fall back to zonal so
+  // existing tenant-bound flows keep working until the API ships roles.
+  if (s.activeZoneSlug) return "zonal";
+  return null;
+}
+
+/**
+ * Minimal view of the user's full multi-zone session, sufficient for the
+ * server-side role gate. Mirrors the `/api/public/session-zones` payload
+ * (and the client's `Zone[]` projection) without depending on it directly.
+ */
+export type ServerSession = {
+  isSuperAdmin: boolean;
+  items: Array<{
+    slug: string;
+    zoneRoles: string[];
+    chapterRoles: Array<{ chapterId: string; roleCode: string }>;
+  }>;
+};
+
+/**
+ * Server-side variant of `canAccessRole` that considers **every** zone the
+ * user belongs to (the SSR layer has no `localStorage`, hence no active
+ * zone). A user passes the gate if ANY of their zones qualifies; the client
+ * shell then refines based on the user's chosen active zone.
+ *
+ * This is the correct SSR rule: at the moment the server renders, we don't
+ * yet know which zone the user will pick, so we err on "could plausibly use
+ * this surface" and let the client redirect if the picked zone says no.
+ */
+export function canAccessRoleAnyZone(s: ServerSession, role: PrimaryRole): boolean {
+  if (s.isSuperAdmin) return true;
+  if (role === "platform") return false;
+  if (role === "zonal") return s.items.some((z) => z.zoneRoles.length > 0);
+  if (role === "church") {
+    return s.items.some((z) => z.zoneRoles.length > 0 || z.chapterRoles.length > 0);
+  }
+  return false;
+}
+
+/**
+ * Build an `AuthenticatedLandingInput` from a server session. Picks the
+ * `?zone=` slug if present and known, else the first item. Lets the SSR
+ * layer reuse `authenticatedLandingPath` to compute the redirect target
+ * without duplicating the routing rule.
+ */
+export function landingInputFromServerSession(
+  s: ServerSession,
+  zoneFromQuery: string | null,
+): AuthenticatedLandingInput {
+  const picked = (zoneFromQuery && s.items.find((z) => z.slug === zoneFromQuery)) || s.items[0] || null;
+  return {
+    activeZoneSlug: picked?.slug ?? null,
+    isSuperAdmin: s.isSuperAdmin,
+    activeZoneRoles: picked?.zoneRoles ?? [],
+    activeZoneChapterRoles: picked?.chapterRoles ?? [],
+  };
+}
+
+/**
+ * True iff the session is allowed to render the given dashboard surface.
+ *
+ *  - `platform`   only super-admins
+ *  - `zonal`      super-admins OR users with any zone-scope role
+ *  - `church`     super-admins OR users with ANY tenant binding
+ *                 (zone admins routinely drill into a chapter view)
+ *
+ * Surfaces the user is NOT allowed to enter trigger a same-tab redirect to
+ * their `authenticatedLandingPath` in the shell layout's effect.
+ */
+export function canAccessRole(s: AuthenticatedLandingInput, role: PrimaryRole): boolean {
+  if (s.isSuperAdmin) return true;
+  const hasZoneRoles = (s.activeZoneRoles?.length ?? 0) > 0;
+  const hasChapterRoles = (s.activeZoneChapterRoles?.length ?? 0) > 0;
+  // Without explicit role data we degrade to "any tenant binding" — lets
+  // existing zone-bound flows keep working until every code path is wired.
+  // Detect this by `activeZoneRoles === undefined`: the caller never supplied
+  // role data, so we can't tell zonal apart from chapter-only and we err
+  // permissive for both surfaces.
+  const hasLegacyTenantBinding =
+    s.activeZoneSlug !== null && s.activeZoneRoles === undefined;
+  switch (role) {
+    case "platform":
+      return false; // only super-admins reach /admin/*
+    case "zonal":
+      return hasZoneRoles || hasLegacyTenantBinding;
+    case "church":
+      return hasZoneRoles || hasChapterRoles || hasLegacyTenantBinding;
+  }
+}
+
+/**
+ * Canonical post-auth landing rule. Platform super-admins land on the
+ * platform surface; zone-scoped admins land on the zonal dashboard;
+ * chapter-only admins land on the church dashboard. A safe `next` overrides
+ * the default *within* the surface the user is allowed to reach.
  */
 export function authenticatedLandingPath(
   session: AuthenticatedLandingInput,
   next?: string | null,
 ): string {
+  // Platform-only super-admins: tenant routes cannot work for them.
   if (session.isSuperAdmin && !session.activeZoneSlug) {
     if (next && isSafeInternalPath(next) && isSuperAdminOnlyPath(next)) return next;
     return "/admin/zones";
@@ -80,8 +212,14 @@ export function authenticatedLandingPath(
 
   if (next && isSafeInternalPath(next) && isProtectedPath(next)) return next;
 
-  if (session.activeZoneSlug) {
-    return `/members?zone=${encodeURIComponent(session.activeZoneSlug)}`;
-  }
-  return "/members";
+  const role = primaryRole(session);
+  if (role === "platform") return "/admin/zones";
+
+  const zoneQs = session.activeZoneSlug
+    ? `?zone=${encodeURIComponent(session.activeZoneSlug)}`
+    : "";
+  if (role === "church") return `/church/overview${zoneQs}`;
+  // Default: zonal. Covers explicit zone bindings AND the legacy
+  // "tenant-bound but no role data yet" path.
+  return `/zone/chapters${zoneQs}`;
 }

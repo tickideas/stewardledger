@@ -5,24 +5,19 @@
   import {
     authenticatedLandingPath,
     isProtectedPath,
-    isSuperAdmin,
+    landingInputFor,
     loadSession,
     session,
     signOut,
   } from "$lib/session.svelte";
+  import { roleForPath } from "$lib/nav";
 
   let { children } = $props();
 
-  // Kick off session resolution on first client render. SSR cannot see the
-  // API's host-only session cookie (different origin), so gating happens here.
   $effect(() => {
     loadSession();
   });
 
-  // Redirect unauthenticated visitors away from protected paths the moment
-  // we know they're anonymous. Guarded so we never bounce away from /login
-  // itself (avoids a self-redirect loop) and so transient `error` states
-  // don't kick a still-signed-in user back to the login screen.
   $effect(() => {
     const status = session.current.status;
     const path = page.url.pathname;
@@ -32,19 +27,15 @@
     }
   });
 
-  // Authenticated users hitting /login get punted to the app shell.
-  // Tenant-bound users land on the zone area, where chapters are the first
-  // setup/management surface.
   $effect(() => {
     if (session.current.status !== "authenticated") return;
     const path = page.url.pathname;
     if (path === "/login") {
-      goto(authenticatedLandingPath(session.current), { replaceState: true });
+      const input = landingInputFor(session.current);
+      if (input) goto(authenticatedLandingPath(input), { replaceState: true });
     }
   });
 
-  // Users with a session but no zone bindings: keep them on /login with a
-  // banner-equivalent state. Anywhere protected, bounce home.
   $effect(() => {
     if (session.current.status !== "no_zone") return;
     const path = page.url.pathname;
@@ -53,17 +44,14 @@
     }
   });
 
-  // /admin/* gating lives in /admin/+layout.svelte so it can short-circuit
-  // BEFORE child pages mount + fetch. Putting it here caused a flash of the
-  // child page's error state before the redirect won.
-
   const isAuthed = $derived(session.current.status === "authenticated");
-  const showAdminLink = $derived(isSuperAdmin(session.current));
-  const activeZone = $derived(
-    session.current.status === "authenticated"
-      ? session.current.zones.find((z) => z.slug === session.current.activeZoneSlug) ?? null
-      : null,
-  );
+
+  const path = $derived(page.url.pathname);
+  // Each dashboard owns its own shell (sidebar + content). The root layout
+  // only renders chrome for routes that have no dashboard surface of their
+  // own — marketing-ish, login, invite, etc.
+  const role = $derived(roleForPath(path));
+  const showChrome = $derived(role === "public");
 
   async function handleSignOut() {
     await signOut();
@@ -71,44 +59,47 @@
   }
 </script>
 
-<div class="min-h-screen flex flex-col">
-  <header class="border-b bg-white">
-    <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-      <a href="/" class="text-xl font-semibold tracking-tight">StewardLedger</a>
-      <nav class="text-sm text-slate-600 flex items-center gap-4">
+<div class="sl-app flex min-h-screen flex-col">
+  {#if showChrome}
+  <header class="border-b border-[var(--rule)] bg-[var(--paper)]/80 backdrop-blur-sm">
+    <div class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-6 gap-y-4 px-5 py-5 sm:px-8">
+      <a href="/" class="group flex items-center gap-3">
+        <span
+          class="inline-flex h-7 w-7 items-center justify-center rounded-[2px] border border-[var(--ink)] bg-[var(--ink)] text-[11px] font-medium text-[var(--paper)] sl-display"
+          style="letter-spacing:0"
+        >S</span>
+        <span class="sl-display text-[19px] font-medium tracking-tight text-[var(--ink)]">
+          Steward<span class="sl-serif-italic font-normal text-[var(--brass-deep)]">Ledger</span>
+        </span>
+      </a>
+
+      <nav class="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-x-5 gap-y-3 sm:gap-x-7">
         {#if isAuthed}
-          <a href="/members" class="hover:text-slate-900">Zone</a>
-          <a href="/contributions" class="hover:text-slate-900">Contributions</a>
-          <a href="/imports" class="hover:text-slate-900">Imports</a>
-          <a href="/reports" class="hover:text-slate-900">Reports</a>
-          {#if showAdminLink}
-            <a href="/admin/zones" class="text-amber-700 hover:text-amber-900">Admin</a>
-          {/if}
-          {#if activeZone}
-            <span class="text-slate-400">·</span>
-            <span class="text-slate-500" title={activeZone.slug}>{activeZone.name}</span>
-          {/if}
           <button
             type="button"
             onclick={handleSignOut}
-            class="hover:text-slate-900 underline-offset-2 hover:underline"
+            class="text-[13px] text-[var(--ink-mute)] hover:text-[var(--ink)] transition-colors"
           >
             Sign out
           </button>
         {:else if session.current.status === "anonymous" || session.current.status === "no_zone" || session.current.status === "error"}
-          <a href="/login" class="hover:text-slate-900">Sign in</a>
+          <a href="/login" class="sl-btn sl-btn-ghost">Sign in</a>
         {/if}
       </nav>
     </div>
   </header>
+  {/if}
 
   <main class="flex-1">
     {@render children?.()}
   </main>
 
-  <footer class="border-t bg-white">
-    <div class="max-w-6xl mx-auto px-6 py-6 text-xs text-slate-500 text-center">
-      Powered by StewardLedger &middot; stewardledger.church
+  {#if showChrome}
+  <footer class="mt-16 border-t border-[var(--rule)]">
+    <div class="mx-auto flex max-w-7xl flex-col items-center justify-between gap-2 px-8 py-8 text-[11px] text-[var(--ink-mute)] sm:flex-row">
+      <span class="sl-eyebrow">Steward<span class="sl-serif-italic normal-case tracking-normal" style="font-size:13px">Ledger</span></span>
+      <span class="sl-mono" style="font-size:10.5px;letter-spacing:0.04em">stewardledger.church</span>
     </div>
   </footer>
+  {/if}
 </div>

@@ -59,7 +59,7 @@
     {#each rows as r (r.id)}
       <tr class="hover:bg-slate-50">
         <td class="py-2 text-slate-700">
-          <a href={`/contributions/${r.id}`} class="hover:underline">{r.contributionDate}</a>
+          <a href={`/zone/contributions/${r.id}`} class="hover:underline">{r.contributionDate}</a>
         </td>
         <td class="py-2">{memberName(r.memberId)}</td>
         <td class="py-2 text-slate-600">{r.sourceType}</td>

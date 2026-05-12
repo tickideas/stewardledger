@@ -18,7 +18,7 @@
 
       const chapters = await api.get<{ items: Array<{ id: string }> }>("/api/tenant/chapters");
       if (chapters.items.length > 0) {
-        await goto(`/members/chapters?zone=${encodeURIComponent(zoneSlug)}`, { replaceState: true });
+        await goto(`/zone/chapters?zone=${encodeURIComponent(zoneSlug)}`, { replaceState: true });
       }
     } catch (err) {
       errorMsg =

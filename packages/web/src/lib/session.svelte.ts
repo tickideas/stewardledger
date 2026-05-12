@@ -3,10 +3,29 @@
 // (host-only cookies per ARCHITECTURE.md §12) so SvelteKit SSR cannot
 // read the session cookie — gating happens in the browser.
 
+import { setActiveChapter } from "$lib/active-chapter.svelte";
 import { PUBLIC_API_URL } from "$lib/env";
-import { ACTIVE_ZONE_KEY } from "$lib/session-paths";
+import { ACTIVE_CHAPTER_KEY, ACTIVE_ZONE_KEY } from "$lib/session-paths";
 
-export type Zone = { id: string; slug: string; name: string };
+/**
+ * A zone the user is bound to, with the role bindings that apply within it.
+ *  - `zoneRoles`  — zone-scope codes (zone_admin, zone_owner, ...)
+ *  - `chapterRoles` — chapter-scope codes paired with the chapter they bind to
+ *
+ * Both arrays may be empty for super-admins, who reach every zone without a
+ * binding.
+ */
+export type ChapterRole = { chapterId: string; chapterName: string; roleCode: string };
+export type Zone = {
+  id: string;
+  slug: string;
+  name: string;
+  zoneRoles: string[];
+  chapterRoles: ChapterRole[];
+};
+
+/** Identity surfaced to the UI (sidebar profile menu, etc.). */
+export type SessionUser = { id: string; email: string; name: string | null };
 
 /**
  * Session state machine. Only `authenticated` carries `isSuperAdmin`; all
@@ -26,18 +45,47 @@ export type Zone = { id: string; slug: string; name: string };
 export type SessionState =
   | { status: "loading"; zones: never[]; activeZoneSlug: null }
   | { status: "anonymous"; zones: never[]; activeZoneSlug: null }
-  | { status: "no_zone"; zones: never[]; activeZoneSlug: null }
+  | { status: "no_zone"; zones: never[]; activeZoneSlug: null; user: SessionUser | null }
   | {
       status: "authenticated";
       zones: Zone[];
       activeZoneSlug: string | null;
       isSuperAdmin: boolean;
+      user: SessionUser;
     }
   | { status: "error"; zones: never[]; activeZoneSlug: null; reason: string };
 
 /** True iff the current session is authenticated AND a platform super-admin. */
 export function isSuperAdmin(state: SessionState): boolean {
   return state.status === "authenticated" && state.isSuperAdmin;
+}
+
+/**
+ * Adapt the authenticated session into the shape the pure routing helpers
+ * (`canAccessRole`, `primaryRole`, `authenticatedLandingPath`) consume. Pulls
+ * the role bindings from the user's *active* zone — there's exactly one of
+ * those at a time, and that's the zone any role decision is scoped to.
+ *
+ * Returns `null` for unauthenticated / loading / no-zone / error states so
+ * callers can short-circuit without re-checking the union.
+ */
+export function landingInputFor(state: SessionState):
+  | {
+      activeZoneSlug: string | null;
+      isSuperAdmin: boolean;
+      activeZoneRoles: string[];
+      activeZoneChapterRoles: Array<{ chapterId: string; roleCode: string }>;
+    }
+  | null {
+  if (state.status !== "authenticated") return null;
+  const zone = state.zones.find((z) => z.slug === state.activeZoneSlug);
+  return {
+    activeZoneSlug: state.activeZoneSlug,
+    isSuperAdmin: state.isSuperAdmin,
+    activeZoneRoles: zone?.zoneRoles ?? [],
+    activeZoneChapterRoles:
+      zone?.chapterRoles.map((r) => ({ chapterId: r.chapterId, roleCode: r.roleCode })) ?? [],
+  };
 }
 
 export const session = $state<{ current: SessionState }>({
@@ -80,11 +128,48 @@ export function loadSession(opts: { force?: boolean } = {}): Promise<void> {
         return;
       }
 
-      const body = (await res.json()) as { items: Zone[]; isSuperAdmin?: boolean };
+      type WireZone = {
+        id: string;
+        slug: string;
+        name: string;
+        zoneRoles?: string[];
+        chapterRoles?: Array<{
+          chapterId: string;
+          chapterName?: string;
+          roleCode: string;
+        }>;
+      };
+      const body = (await res.json()) as {
+        items: WireZone[];
+        isSuperAdmin?: boolean;
+        user?: { id: string; email: string; name: string | null };
+      };
       if (epoch !== sessionEpoch) return; // superseded between fetch + parse
       const isSuperAdminFlag = body.isSuperAdmin === true;
+      // The endpoint always returns a `user` when the request is authenticated.
+      // The empty-string fallback is a transitional shim for the brief window
+      // where the web build can be ahead of the deployed API: rather than
+      // blank the whole UI, we render "Account" placeholders in the profile
+      // menu and let the next session refresh fix it. Remove once every
+      // environment runs an API build that ships `user` in the response.
+      const user: SessionUser = body.user
+        ? { id: body.user.id, email: body.user.email, name: body.user.name }
+        : { id: "", email: "", name: null };
+      // Normalise the wire shape into the Zone type — missing role arrays on
+      // an older API build degrade to "no bindings known" rather than crashing.
+      const items: Zone[] = body.items.map((z) => ({
+        id: z.id,
+        slug: z.slug,
+        name: z.name,
+        zoneRoles: z.zoneRoles ?? [],
+        chapterRoles: (z.chapterRoles ?? []).map((r) => ({
+          chapterId: r.chapterId,
+          chapterName: r.chapterName ?? "",
+          roleCode: r.roleCode,
+        })),
+      }));
 
-      if (body.items.length === 0) {
+      if (items.length === 0) {
         // Super-admins may legitimately have zero zone bindings (platform-only
         // users). Treat them as authenticated so /admin is reachable.
         if (isSuperAdminFlag) {
@@ -93,25 +178,27 @@ export function loadSession(opts: { force?: boolean } = {}): Promise<void> {
             zones: [],
             activeZoneSlug: null,
             isSuperAdmin: true,
+            user,
           };
           return;
         }
         // Authenticated but bound to no zone — surface explicitly instead of
         // showing protected nav links that will fail every API call.
-        session.current = { status: "no_zone", zones: [], activeZoneSlug: null };
+        session.current = { status: "no_zone", zones: [], activeZoneSlug: null, user };
         return;
       }
 
       const stored =
         typeof localStorage !== "undefined" ? localStorage.getItem(ACTIVE_ZONE_KEY) : null;
-      const fallback = body.items[0]?.slug ?? null;
+      const fallback = items[0]?.slug ?? null;
       const activeZoneSlug =
-        stored && body.items.some((z) => z.slug === stored) ? stored : fallback;
+        stored && items.some((z) => z.slug === stored) ? stored : fallback;
       session.current = {
         status: "authenticated",
-        zones: body.items,
+        zones: items,
         activeZoneSlug,
         isSuperAdmin: isSuperAdminFlag,
+        user,
       };
     } catch (err) {
       if (epoch !== sessionEpoch) return;
@@ -134,15 +221,26 @@ export async function signOut(): Promise<void> {
   inflight = null;
   // Flip local state immediately so the navbar updates without waiting on
   // the round-trip. The server-side cookie clear below is best-effort.
+  // The chapter rune is cleared through `setActiveChapter`, which handles
+  // its own localStorage write — forgetting the rune leaves the next
+  // sign-in briefly pointing at the previous user's chapter id, which
+  // then resolves to null against the new user's bindings (one-tick flicker).
   if (typeof localStorage !== "undefined") {
     localStorage.removeItem(ACTIVE_ZONE_KEY);
   }
+  setActiveChapter(null);
   session.current = { status: "anonymous", zones: [], activeZoneSlug: null };
 
   try {
+    // Better Auth requires `Content-Type: application/json` (else 415) AND
+    // a JSON body (else 500), even though sign-out takes no parameters.
+    // Without this the server never clears the session cookie and the next
+    // `loadSession()` happily re-authenticates the user on refresh.
     await fetch(`${PUBLIC_API_URL}/api/auth/sign-out`, {
       method: "POST",
       credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: "{}",
     });
   } catch (err) {
     console.warn(
@@ -154,8 +252,11 @@ export async function signOut(): Promise<void> {
 
 export {
   authenticatedLandingPath,
+  canAccessRole,
   isProtectedPath,
   isSafeInternalPath,
   isSuperAdminOnlyPath,
+  primaryRole,
+  ACTIVE_CHAPTER_KEY,
   ACTIVE_ZONE_KEY,
 } from "$lib/session-paths";
