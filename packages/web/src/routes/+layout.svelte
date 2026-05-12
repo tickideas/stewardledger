@@ -51,7 +51,6 @@
   );
 
   const path = $derived(page.url.pathname);
-  const isLanding = $derived(path === "/");
 
   function isActive(prefix: string): boolean {
     if (prefix === "/") return path === "/";
@@ -135,12 +134,10 @@
     {@render children?.()}
   </main>
 
-  {#if !isLanding}
-    <footer class="mt-16 border-t border-[var(--rule)]">
-      <div class="mx-auto flex max-w-7xl flex-col items-center justify-between gap-2 px-8 py-8 text-[11px] text-[var(--ink-mute)] sm:flex-row">
-        <span class="sl-eyebrow">Steward<span class="sl-serif-italic normal-case tracking-normal" style="font-size:13px">Ledger</span></span>
-        <span class="sl-mono" style="font-size:10.5px;letter-spacing:0.04em">stewardledger.church</span>
-      </div>
-    </footer>
-  {/if}
+  <footer class="mt-16 border-t border-[var(--rule)]">
+    <div class="mx-auto flex max-w-7xl flex-col items-center justify-between gap-2 px-8 py-8 text-[11px] text-[var(--ink-mute)] sm:flex-row">
+      <span class="sl-eyebrow">Steward<span class="sl-serif-italic normal-case tracking-normal" style="font-size:13px">Ledger</span></span>
+      <span class="sl-mono" style="font-size:10.5px;letter-spacing:0.04em">stewardledger.church</span>
+    </div>
+  </footer>
 </div>
