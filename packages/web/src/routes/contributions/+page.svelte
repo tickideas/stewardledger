@@ -1,7 +1,8 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { api, ApiError, isAbortError } from "$lib/api";
-  import { formatMoney } from "@stewardledger/shared";
+  import { statusBadgeClass } from "$lib/ui";
+  import { formatMoney, money, sumByCurrency } from "@stewardledger/shared";
 
   type Batch = {
     id: string;
@@ -122,18 +123,6 @@
     return chapters.find((c) => c.id === chapterIdValue)?.name ?? "—";
   }
 
-  function statusBadgeClass(s: string): string {
-    switch (s) {
-      case "posted":    return "sl-badge sl-badge-ok";
-      case "approved":  return "sl-badge sl-badge-info";
-      case "submitted": return "sl-badge sl-badge-warn";
-      case "voided":    return "sl-badge sl-badge-mute";
-      case "reversed":  return "sl-badge sl-badge-bad";
-      case "draft":
-      default:          return "sl-badge sl-badge-mute";
-    }
-  }
-
   function fmt(amount: string, currency: string): string {
     return formatMoney({ amount, currency });
   }
@@ -143,27 +132,23 @@
   }
 
   // Derived headline: posted totals, grouped by currency.
-  const postedByCurrency = $derived.by(() => {
-    if (tab !== "contributions") return [] as { currency: string; total: number; count: number }[];
-    const acc = new Map<string, { total: number; count: number }>();
-    for (const c of contributions) {
-      if (c.status !== "posted") continue;
-      const cur = acc.get(c.currencyCode) ?? { total: 0, count: 0 };
-      cur.total += parseFloat(c.totalAmount);
-      cur.count += 1;
-      acc.set(c.currencyCode, cur);
-    }
-    return [...acc.entries()].map(([currency, v]) => ({ currency, ...v }));
-  });
+  const postedByCurrency = $derived.by(() =>
+    tab === "contributions"
+      ? sumByCurrency(
+          contributions
+            .filter((c) => c.status === "posted")
+            .map((c) => money(c.totalAmount, c.currencyCode)),
+        )
+      : [],
+  );
 
-  const batchCashTotal = $derived.by(() => {
-    const acc = new Map<string, number>();
-    for (const b of batches) {
-      if (!b.cashTotal) continue;
-      acc.set(b.currencyCode, (acc.get(b.currencyCode) ?? 0) + parseFloat(b.cashTotal));
-    }
-    return [...acc.entries()];
-  });
+  const batchCashTotal = $derived.by(() =>
+    sumByCurrency(
+      batches
+        .filter((b) => b.cashTotal !== null)
+        .map((b) => money(b.cashTotal ?? "0", b.currencyCode)),
+    ),
+  );
 </script>
 
 <div class="mx-auto max-w-7xl px-8 py-10">
@@ -208,8 +193,8 @@
         {#if batchCashTotal.length === 0}
           <span class="text-[var(--ink-faint)]">—</span>
         {:else}
-          {#each batchCashTotal as [cur, total], i}
-            <span class:block={i > 0}>{fmt(total.toFixed(2), cur)}</span>
+          {#each batchCashTotal as total, i}
+            <span class:block={i > 0}>{formatMoney(total)}</span>
           {/each}
         {/if}
       </div>
@@ -219,8 +204,8 @@
       <span class="sl-eyebrow">Posted · this view</span>
       <div class="mt-3 sl-display sl-num text-[28px] leading-tight text-[var(--brass-deep)]">
         {#if tab === "contributions" && postedByCurrency.length > 0}
-          {#each postedByCurrency as p, i}
-            <span class:block={i > 0}>{fmt(p.total.toFixed(2), p.currency)}</span>
+          {#each postedByCurrency as total, i}
+            <span class:block={i > 0}>{formatMoney(total)}</span>
           {/each}
         {:else}
           <span class="text-[var(--ink-faint)]">—</span>

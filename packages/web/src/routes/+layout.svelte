@@ -66,7 +66,7 @@
 
 <div class="sl-app flex min-h-screen flex-col">
   <header class="border-b border-[var(--rule)] bg-[var(--paper)]/80 backdrop-blur-sm">
-    <div class="mx-auto flex max-w-7xl items-center justify-between gap-6 px-8 py-5">
+    <div class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-6 gap-y-4 px-5 py-5 sm:px-8">
       <a href="/" class="group flex items-center gap-3">
         <span
           class="inline-flex h-7 w-7 items-center justify-center rounded-[2px] border border-[var(--ink)] bg-[var(--ink)] text-[11px] font-medium text-[var(--paper)] sl-display"
@@ -77,7 +77,7 @@
         </span>
       </a>
 
-      <nav class="flex items-center gap-7">
+      <nav class="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-x-5 gap-y-3 sm:gap-x-7">
         {#if isAuthed}
           <a
             href="/members"
@@ -111,9 +111,9 @@
           <span class="h-4 w-px bg-[var(--rule-strong)]"></span>
 
           {#if activeZone}
-            <div class="flex items-center gap-2 text-[12px]">
-              <span class="sl-eyebrow" style="font-size:9.5px">Zone</span>
-              <span class="text-[var(--ink)]" title={activeZone.slug}>{activeZone.name}</span>
+            <div class="hidden max-w-44 min-w-0 items-center gap-2 text-[12px] md:flex">
+              <span class="sl-eyebrow shrink-0" style="font-size:9.5px">Zone</span>
+              <span class="truncate text-[var(--ink)]" title={activeZone.slug}>{activeZone.name}</span>
             </div>
           {/if}
 

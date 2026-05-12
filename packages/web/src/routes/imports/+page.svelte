@@ -2,6 +2,7 @@
   import { goto } from "$app/navigation";
   import { api, ApiError, isAbortError } from "$lib/api";
   import { PUBLIC_API_URL } from "$lib/env";
+  import { statusBadgeClass } from "$lib/ui";
   import { CHAPTER_ROLES, ZONE_ROLES, type AuthorizedContext } from "@stewardledger/shared";
 
   type Job = {
@@ -151,16 +152,6 @@
     }
   }
 
-  function statusBadgeClass(s: string): string {
-    switch (s) {
-      case "committed":   return "sl-badge sl-badge-ok";
-      case "scheduled":   return "sl-badge sl-badge-info";
-      case "matched":     return "sl-badge sl-badge-warn";
-      case "failed":      return "sl-badge sl-badge-bad";
-      case "rolled_back": return "sl-badge sl-badge-mute";
-      default:            return "sl-badge sl-badge-mute";
-    }
-  }
 </script>
 
 <div class="mx-auto max-w-7xl px-8 py-10">

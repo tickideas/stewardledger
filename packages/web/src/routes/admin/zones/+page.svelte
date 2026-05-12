@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, ApiError } from "$lib/api";
   import { fmtMoney } from "$lib/format";
+  import { statusBadgeClass } from "$lib/ui";
   import InviteZoneModal from "./invite-zone-modal.svelte";
 
   type Subtotal = { currencyCode: string; total: string; count: number };
@@ -90,16 +91,6 @@
     query = value;
     if (searchDebounce) clearTimeout(searchDebounce);
     searchDebounce = setTimeout(() => refresh(), 200);
-  }
-
-  function statusBadgeClass(status: string): string {
-    switch (status) {
-      case "active":        return "sl-badge sl-badge-ok";
-      case "pending_setup": return "sl-badge sl-badge-warn";
-      case "past_due":      return "sl-badge sl-badge-warn";
-      case "suspended":     return "sl-badge sl-badge-bad";
-      default:              return "sl-badge sl-badge-mute";
-    }
   }
 
   // Aggregate KPIs across the loaded page — gives the dashboard headline numbers
