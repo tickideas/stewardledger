@@ -140,9 +140,15 @@ export async function signOut(): Promise<void> {
   session.current = { status: "anonymous", zones: [], activeZoneSlug: null };
 
   try {
+    // Better Auth requires `Content-Type: application/json` (else 415) AND
+    // a JSON body (else 500), even though sign-out takes no parameters.
+    // Without this the server never clears the session cookie and the next
+    // `loadSession()` happily re-authenticates the user on refresh.
     await fetch(`${PUBLIC_API_URL}/api/auth/sign-out`, {
       method: "POST",
       credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: "{}",
     });
   } catch (err) {
     console.warn(
