@@ -110,17 +110,26 @@ export function primaryRole(s: AuthenticatedLandingInput): PrimaryRole | null {
 }
 
 /**
- * Minimal view of the user's full multi-zone session, sufficient for the
- * server-side role gate. Mirrors the `/api/public/session-zones` payload
- * (and the client's `Zone[]` projection) without depending on it directly.
+ * View of the user's full multi-zone session as ferried from SSR to the
+ * browser. Mirrors the `/api/public/session-zones` wire payload one-to-one
+ * so the client session store can hydrate from `data.session` without a
+ * second round-trip on cold page loads.
+ *
+ * Gate functions (`canAccessRoleAnyZone`, `landingInputFromServerSession`)
+ * read only `isSuperAdmin` + the role arrays on each zone; the extra
+ * `id`/`name`/`chapterName`/`user` fields are optional so tests can keep
+ * supplying the minimal fixture shape.
  */
 export type ServerSession = {
   isSuperAdmin: boolean;
   items: Array<{
+    id?: string;
     slug: string;
+    name?: string;
     zoneRoles: string[];
-    chapterRoles: Array<{ chapterId: string; roleCode: string }>;
+    chapterRoles: Array<{ chapterId: string; chapterName?: string; roleCode: string }>;
   }>;
+  user?: { id: string; email: string; name: string | null } | null;
 };
 
 /**

@@ -25,5 +25,8 @@ export const load: LayoutServerLoad = async ({ locals, url }) => {
     redirect(303, "/zone/chapters");
   }
 
-  return {};
+  // Ship the SSR-resolved session to the browser so the client store can
+  // hydrate without a second `/api/public/session-zones` round-trip.
+  // `null` is the wire signal for “anonymous / session lookup failed”.
+  return { session };
 };
