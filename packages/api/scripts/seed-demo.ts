@@ -8,13 +8,16 @@
 //   pnpm seed:demo -- --reset       # delete demo zones first
 //
 // All demo zones use slugs prefixed with "demo-" so the cleanup is
-// unambiguous and never touches a real tenant.
+// unambiguous and never touches a real tenant. The script refuses to run
+// against NODE_ENV=production unless --force-production is passed, and
+// prints the database host before doing anything destructive.
 
 import { config } from "dotenv";
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { dirname } from "node:path";
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
 import {
   accounts,
   chapters,
@@ -25,31 +28,52 @@ import {
   givingTypes,
   members,
   paymentMethods,
-  serviceEvents,
-  serviceTypes,
   zones,
 } from "@stewardledger/db/schema";
+import * as schema from "@stewardledger/db/schema";
+import { dropDemoZones } from "../src/services/demo-seed";
+import { seedZoneGivingSetup } from "../src/services/giving-setup-seed";
+import { seedZoneLookups } from "../src/services/lookup-seed";
+import { seedZonePeriods } from "../src/services/period-seed";
+import { seedZoneRoles } from "../src/services/role-seed";
+import { nextChapterReferenceCode } from "../src/services/chapter-codes";
 
 // Load .env from repo root.
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../../..");
 config({ path: resolve(repoRoot, ".env") });
 
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import * as schema from "@stewardledger/db/schema";
-import { seedZoneGivingSetup } from "../src/services/giving-setup-seed";
-import { seedZoneLookups } from "../src/services/lookup-seed";
-import { seedZonePeriods } from "../src/services/period-seed";
-import { seedZoneRoles } from "../src/services/role-seed";
-import { nextChapterReferenceCode } from "../src/services/chapter-codes";
-import { nextMemberReferenceCode } from "../src/services/member-codes";
+const DEMO_SLUG_PREFIX = "demo-";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
   console.error("DATABASE_URL is required");
   process.exit(1);
 }
+const args = new Set(process.argv.slice(2));
+const isReset = args.has("--reset");
+
+// Hard guard: never silently mutate a production database. The reset path
+// temporarily disables posted-contribution triggers; running that against
+// real data would be catastrophic.
+if (process.env.NODE_ENV === "production" && !args.has("--force-production")) {
+  console.error(
+    "Refusing to run against NODE_ENV=production. Pass --force-production if you really mean it.",
+  );
+  process.exit(1);
+}
+const dbHost = (() => {
+  try {
+    return new URL(databaseUrl).host;
+  } catch {
+    return "<unparseable DATABASE_URL>";
+  }
+})();
+console.log(`[seed:demo] target database: ${dbHost} (NODE_ENV=${process.env.NODE_ENV ?? "unset"})`);
+if (isReset) {
+  console.log(`[seed:demo] --reset: will delete existing zones with slug prefix "${DEMO_SLUG_PREFIX}"`);
+}
+
 const client = postgres(databaseUrl);
 const db = drizzle(client, { schema });
 
@@ -63,7 +87,7 @@ interface DemoZoneSpec {
   chapters: { name: string; memberCount: number }[];
 }
 
-const SPECS: DemoZoneSpec[] = [
+const SPECS: readonly DemoZoneSpec[] = [
   {
     slug: "demo-grace-uk",
     name: "Grace Christian Centre UK",
@@ -151,45 +175,37 @@ function hashSlug(slug: string): number {
   return h >>> 0;
 }
 
-async function dropExistingDemoZones(slugs: string[]): Promise<void> {
-  if (slugs.length === 0) return;
-  // Find ids first, then cascade delete in a transaction with triggers
-  // temporarily relaxed (posted contributions are immutable; we own the
-  // demo data and can wipe it).
+async function dropExistingDemoZones(slugs: readonly string[]): Promise<void> {
+  const { deletedZones } = await dropDemoZones(db, slugs, DEMO_SLUG_PREFIX);
+  if (deletedZones > 0) {
+    console.log(`[seed:demo] removed ${deletedZones} existing demo zone(s)`);
+  }
+}
+
+/** Return the union of last year + this year of seeded Sundays for a zone. */
+async function loadSundays(
+  zoneId: string,
+  spec: DemoZoneSpec,
+): Promise<{ id: string; date: string }[]> {
+  const today = new Date().toISOString().slice(0, 10);
+  // Always seed last year as well so a January run still finds recent
+  // Sundays. seedZonePeriods is idempotent on (zone, date) — re-running for
+  // the current year is a no-op.
+  await seedZonePeriods(
+    db,
+    zoneId,
+    { fiscalYearStartMonth: 1, ministryYearStartMonth: 3 },
+    new Date(new Date().getUTCFullYear() - 1, 0, 1),
+  );
+
+  void spec;
   const rows = await db
-    .select({ id: zones.id, slug: zones.slug })
-    .from(zones)
-    .where(inArray(zones.slug, slugs));
-  if (rows.length === 0) return;
-  const ids = rows.map((r) => r.id);
-  const TRIGGER_BOOTSTRAP_LOCK_TAG = "stewardledger.applyContributionTriggers";
-  await db.transaction(async (tx) => {
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtext(${TRIGGER_BOOTSTRAP_LOCK_TAG}))`,
-    );
-    const guards = [
-      ["contributions", "contributions_posted_guard"],
-      ["contributions", "contributions_no_delete_when_posted"],
-      ["contribution_lines", "contribution_lines_posted_guard"],
-    ] as const;
-    for (const [t, n] of guards) {
-      await tx.execute(sql.raw(`alter table ${t} disable trigger ${n}`));
-    }
-    try {
-      // Delete in FK-safe order via drizzle's inArray.
-      await tx.delete(contributionLines).where(inArray(contributionLines.zoneId, ids));
-      await tx.delete(contributionMembers).where(inArray(contributionMembers.zoneId, ids));
-      await tx.delete(contributions).where(inArray(contributions.zoneId, ids));
-      await tx.delete(members).where(inArray(members.zoneId, ids));
-      await tx.delete(chapters).where(inArray(chapters.zoneId, ids));
-      await tx.delete(zones).where(inArray(zones.id, ids));
-    } finally {
-      for (const [t, n] of guards) {
-        await tx.execute(sql.raw(`alter table ${t} enable trigger ${n}`));
-      }
-    }
-  });
-  console.log(`[seed:demo] removed ${rows.length} existing demo zone(s)`);
+    .select({ id: givingPeriods.id, date: givingPeriods.date })
+    .from(givingPeriods)
+    .where(and(eq(givingPeriods.zoneId, zoneId), eq(givingPeriods.weekday, 7))) // ISO 7 = Sun
+    .orderBy(givingPeriods.date);
+  // Only past-or-today Sundays — demo contributions must never be future-dated.
+  return rows.filter((p) => p.date <= today);
 }
 
 async function seedZone(spec: DemoZoneSpec): Promise<void> {
@@ -213,7 +229,7 @@ async function seedZone(spec: DemoZoneSpec): Promise<void> {
     })
     .returning({ id: zones.id });
 
-  // 2. Seed everything signup would normally seed.
+  // 2. Seed everything signup would normally seed (current year only).
   await seedZoneRoles(db, zone.id);
   await seedZoneLookups(db, zone.id);
   await seedZoneGivingSetup(db, zone.id, spec.currency);
@@ -241,21 +257,23 @@ async function seedZone(spec: DemoZoneSpec): Promise<void> {
     .where(eq(paymentMethods.zoneId, zone.id));
   const cashMethodId = paymentMethodRows.find((p) => p.code === "cash")!.id;
 
-  const serviceTypeRows = await db
-    .select({ id: serviceTypes.id, name: serviceTypes.name })
-    .from(serviceTypes)
-    .where(eq(serviceTypes.zoneId, zone.id));
-  const sundayServiceTypeId = serviceTypeRows.find((s) => s.name === "Sunday Service")!.id;
+  // Last 12 past-or-today Sundays across this year + last year. Never future.
+  const allPastSundays = await loadSundays(zone.id, spec);
+  const periodsToUse = allPastSundays.slice(-12);
+  if (periodsToUse.length === 0) {
+    throw new Error(
+      `[seed:demo] no past Sundays available for zone ${spec.slug}; seedZonePeriods produced nothing usable`,
+    );
+  }
+  // Assert all picked dates are in the past — invariant.
+  const today = new Date().toISOString().slice(0, 10);
+  for (const p of periodsToUse) {
+    if (p.date > today) {
+      throw new Error(`[seed:demo] invariant: picked future date ${p.date}`);
+    }
+  }
 
-  // Use Sundays from the seeded calendar year so contributions land on real
-  // giving_periods rows. weekday is ISO (1=Mon…7=Sun).
-  const periodRows = await db
-    .select({ id: givingPeriods.id, date: givingPeriods.date })
-    .from(givingPeriods)
-    .where(and(eq(givingPeriods.zoneId, zone.id), eq(givingPeriods.weekday, 7)))
-    .orderBy(givingPeriods.date);
-
-  // 4. Create chapters and members.
+  // 4. Create chapters and members. Member inserts are batched per chapter.
   for (const chSpec of spec.chapters) {
     const refCode = await nextChapterReferenceCode(db, zone.id);
     const [chapter] = await db
@@ -269,106 +287,128 @@ async function seedZone(spec: DemoZoneSpec): Promise<void> {
       })
       .returning({ id: chapters.id });
 
-    const memberIds: string[] = [];
-    for (let i = 0; i < chSpec.memberCount; i++) {
-      const memberRef = await nextMemberReferenceCode(db, zone.id);
-      const first = pick(FIRST_NAMES, rng);
-      const last = pick(LAST_NAMES, rng);
-      const [m] = await db
-        .insert(members)
-        .values({
+    // Member reference codes are generated by counting existing rows under
+    // a per-zone advisory lock. The lock is transaction-scoped, so we have
+    // to do the count + insert inside one tx. We allocate codes locally
+    // from `count + 1`, build the rows, and insert in a single batch.
+    const memberIds: string[] = await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${zone.id}))`);
+      const [{ count }] = await tx
+        .select({ count: sql<number>`count(*)::int` })
+        .from(members)
+        .where(eq(members.zoneId, zone.id));
+      const startAt = (count ?? 0) + 1;
+      const memberRows: typeof members.$inferInsert[] = [];
+      for (let i = 0; i < chSpec.memberCount; i++) {
+        memberRows.push({
           zoneId: zone.id,
           chapterId: chapter.id,
-          referenceCode: memberRef,
-          firstName: first,
-          lastName: last,
+          referenceCode: `M${String(startAt + i).padStart(7, "0")}`,
+          firstName: pick(FIRST_NAMES, rng),
+          lastName: pick(LAST_NAMES, rng),
           gender: rng() < 0.5 ? "M" : "F",
           isActive: true,
-        })
+        });
+      }
+      const inserted = await tx
+        .insert(members)
+        .values(memberRows)
         .returning({ id: members.id });
-      memberIds.push(m.id);
-    }
+      return inserted.map((m) => m.id);
+    });
 
-    // 5. A handful of posted contributions per chapter, randomly distributed
-    //    across recent Sundays for visual variety in the dashboard.
-    const today = new Date().toISOString().slice(0, 10);
-    const recentPeriods = periodRows.filter((p) => p.date <= today).slice(-12);
-    const periodsToUse = recentPeriods.length > 0 ? recentPeriods : periodRows.slice(-12);
+    // 5. A handful of posted contributions per chapter, distributed across
+    //    recent Sundays. Built in three phases because the posted-guard
+    //    trigger forbids inserting lines under a parent that's already
+    //    posted: insert all parents as `draft`, insert lines/members, then
+    //    UPDATE them all to `posted` in a single statement.
     const numContribs = Math.max(8, Math.floor(chSpec.memberCount * 0.8));
+    const draftRows: typeof contributions.$inferInsert[] = [];
+    const draftMeta: { givingTypeId: string; amount: string; memberId: string | null }[] = [];
     for (let i = 0; i < numContribs; i++) {
       const memberId = memberIds[Math.floor(rng() * memberIds.length)] ?? null;
-      const period = periodsToUse[Math.floor(rng() * periodsToUse.length)];
-      if (!period) continue;
-      const contributionDate = period.date;
+      const period = periodsToUse[Math.floor(rng() * periodsToUse.length)]!;
       const givingCode = pick(GIVING_SHORT_CODES, rng);
       const givingTypeId = givingTypeByCode.get(givingCode);
       if (!givingTypeId) continue;
-      // Amount: weighted skew. Tithes tend to be higher; offerings smaller.
       const base =
         givingCode === "TITHE" ? 50 + Math.floor(rng() * 400) :
         givingCode === "OFFERING" ? 5 + Math.floor(rng() * 60) :
         givingCode === "PARTNER" ? 20 + Math.floor(rng() * 200) :
         10 + Math.floor(rng() * 100);
       const amount = `${base}.0000`;
-
-      // Optional service event linking — keep it simple, don't create one per
-      // contribution. Skip serviceEventId for the demo so we don't need to
-      // pre-create events.
-      void sundayServiceTypeId;
-      void serviceEvents;
-
-      // Insert as draft so the line + member rows can land, then promote
-      // to posted. The posted-guard trigger forbids inserts under a posted
-      // parent.
-      const [c] = await db
-        .insert(contributions)
-        .values({
-          zoneId: zone.id,
-          chapterId: chapter.id,
-          memberId,
-          sourceType: "manual",
-          paymentMethodId: cashMethodId,
-          givingPeriodId: period.id,
-          contributionDate,
-          totalAmount: amount,
-          currencyCode: spec.currency,
-          status: "draft",
-          description: `Demo ${givingCode.toLowerCase()}`,
-        })
-        .returning({ id: contributions.id });
-
-      await db.insert(contributionLines).values({
+      draftRows.push({
         zoneId: zone.id,
-        contributionId: c.id,
-        givingTypeId,
+        chapterId: chapter.id,
+        memberId,
+        sourceType: "manual",
+        paymentMethodId: cashMethodId,
+        givingPeriodId: period.id,
+        contributionDate: period.date,
+        totalAmount: amount,
+        currencyCode: spec.currency,
+        status: "draft",
+        description: `Demo ${givingCode.toLowerCase()}`,
+      });
+      draftMeta.push({ givingTypeId, amount, memberId });
+    }
+    if (draftRows.length === 0) continue;
+
+    const insertedContribs = await db
+      .insert(contributions)
+      .values(draftRows)
+      .returning({ id: contributions.id });
+
+    const lineRows: typeof contributionLines.$inferInsert[] = [];
+    const memberAllocRows: typeof contributionMembers.$inferInsert[] = [];
+    for (let i = 0; i < insertedContribs.length; i++) {
+      const cId = insertedContribs[i]!.id;
+      const meta = draftMeta[i]!;
+      lineRows.push({
+        zoneId: zone.id,
+        contributionId: cId,
+        givingTypeId: meta.givingTypeId,
         accountId: generalFundId,
-        amount,
+        amount: meta.amount,
         currencyCode: spec.currency,
       });
-      if (memberId) {
-        await db.insert(contributionMembers).values({
+      if (meta.memberId) {
+        memberAllocRows.push({
           zoneId: zone.id,
-          contributionId: c.id,
-          memberId,
+          contributionId: cId,
+          memberId: meta.memberId,
           allocationPercent: "100.00",
         });
       }
-      await db
-        .update(contributions)
-        .set({ status: "posted", postedAt: new Date() })
-        .where(eq(contributions.id, c.id));
     }
+    await db.insert(contributionLines).values(lineRows);
+    if (memberAllocRows.length > 0) {
+      await db.insert(contributionMembers).values(memberAllocRows);
+    }
+    // Promote all drafts to posted in one statement.
+    await db
+      .update(contributions)
+      .set({ status: "posted", postedAt: new Date() })
+      .where(
+        inArray(
+          contributions.id,
+          insertedContribs.map((r) => r.id),
+        ),
+      );
   }
 
   console.log(`[seed:demo] seeded ${spec.slug} — ${spec.chapters.length} chapters`);
 }
 
 async function main(): Promise<void> {
-  const args = new Set(process.argv.slice(2));
-  if (args.has("--reset")) {
+  if (isReset) {
     await dropExistingDemoZones(SPECS.map((s) => s.slug));
-  } else {
-    // Idempotent: skip any already-seeded slug.
+  }
+
+  // Build the work list without mutating SPECS. On a non-reset run, skip any
+  // slug that's already seeded.
+  let pending: readonly DemoZoneSpec[] = SPECS;
+  if (!isReset) {
     const existing = await db
       .select({ slug: zones.slug })
       .from(zones)
@@ -380,21 +420,17 @@ async function main(): Promise<void> {
           `(re-run with --reset to recreate)`,
       );
     }
-    for (const slug of skip) {
-      const idx = SPECS.findIndex((s) => s.slug === slug);
-      if (idx >= 0) SPECS.splice(idx, 1);
-    }
+    pending = SPECS.filter((s) => !skip.has(s.slug));
   }
 
-  if (SPECS.length === 0) {
+  if (pending.length === 0) {
     console.log("[seed:demo] nothing to do");
     return;
   }
-
-  for (const spec of SPECS) {
+  for (const spec of pending) {
     await seedZone(spec);
   }
-  console.log(`[seed:demo] done. ${SPECS.length} zone(s) seeded.`);
+  console.log(`[seed:demo] done. ${pending.length} zone(s) seeded.`);
 }
 
 try {

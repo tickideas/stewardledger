@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from "$lib/api";
+  import { fmtMoney } from "$lib/format";
 
   type ZoneRow = {
     id: string;
@@ -19,35 +20,58 @@
     postedContributionCount: number;
   };
 
+  type ZonesListResponse = { items: ZoneRow[]; nextCursor: string | null };
+
   let zones = $state<ZoneRow[]>([]);
+  let nextCursor = $state<string | null>(null);
   let loadError = $state<string | null>(null);
+  let loading = $state(false);
+  let loadingMore = $state(false);
   let query = $state("");
 
-  async function refresh() {
+  // Server-side search via the API. We debounce in-component so typing
+  // doesn't fire a request per keystroke.
+  let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+  // Bumped on each fresh refresh so a slower previous response can't clobber
+  // a newer one (e.g. user types fast, network is flaky).
+  let fetchEpoch = 0;
+
+  async function refresh(opts: { append?: boolean; cursor?: string | null } = {}) {
+    const epoch = ++fetchEpoch;
+    if (opts.append) loadingMore = true;
+    else loading = true;
     try {
-      const res = await api.get<{ items: ZoneRow[] }>("/api/admin/zones");
-      zones = res.items;
+      const params = new URLSearchParams();
+      if (opts.cursor) params.set("cursor", opts.cursor);
+      const trimmed = query.trim();
+      if (trimmed.length > 0) params.set("q", trimmed);
+      const qs = params.toString();
+      const path = qs ? `/api/admin/zones?${qs}` : "/api/admin/zones";
+      const res = await api.get<ZonesListResponse>(path);
+      if (epoch !== fetchEpoch) return; // superseded
+      zones = opts.append ? [...zones, ...res.items] : res.items;
+      nextCursor = res.nextCursor;
       loadError = null;
     } catch (err) {
+      if (epoch !== fetchEpoch) return;
       loadError = err instanceof ApiError ? err.message : "Could not load zones.";
+    } finally {
+      if (epoch === fetchEpoch) {
+        loading = false;
+        loadingMore = false;
+      }
     }
   }
+
   $effect(() => {
     refresh();
   });
 
-  const filtered = $derived(
-    query.trim().length === 0
-      ? zones
-      : zones.filter((z) => {
-          const q = query.trim().toLowerCase();
-          return (
-            z.name.toLowerCase().includes(q) ||
-            z.slug.toLowerCase().includes(q) ||
-            (z.regionName ?? z.regionNameUnverified ?? "").toLowerCase().includes(q)
-          );
-        }),
-  );
+  function onQueryInput(value: string) {
+    query = value;
+    if (searchDebounce) clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(() => refresh(), 200);
+  }
 
   function statusClass(status: string): string {
     switch (status) {
@@ -63,20 +87,6 @@
         return "bg-slate-100 text-slate-700";
     }
   }
-
-  function fmtMoney(total: string, currency: string): string {
-    const n = Number(total);
-    if (!Number.isFinite(n)) return total;
-    try {
-      return new Intl.NumberFormat(undefined, {
-        style: "currency",
-        currency,
-        maximumFractionDigits: 0,
-      }).format(n);
-    } catch {
-      return `${currency} ${n.toFixed(0)}`;
-    }
-  }
 </script>
 
 <div class="py-8">
@@ -89,7 +99,8 @@
     </div>
     <input
       type="search"
-      bind:value={query}
+      value={query}
+      oninput={(e) => onQueryInput((e.target as HTMLInputElement).value)}
       placeholder="Search by name, slug, region"
       class="w-64 rounded-lg border border-slate-300 px-3 py-2 text-sm"
     />
@@ -97,8 +108,16 @@
 
   {#if loadError}
     <p class="mt-6 text-sm text-red-600">{loadError}</p>
+  {:else if loading && zones.length === 0}
+    <p class="mt-10 text-sm text-slate-500">Loading…</p>
   {:else if zones.length === 0}
-    <p class="mt-10 text-sm text-slate-500">No zones yet. Run <code>pnpm seed:demo</code> or sign up at <code>/signup</code>.</p>
+    <p class="mt-10 text-sm text-slate-500">
+      {#if query.trim().length > 0}
+        No zones match <code>{query}</code>.
+      {:else}
+        No zones yet. Run <code>pnpm seed:demo</code> or sign up at <code>/signup</code>.
+      {/if}
+    </p>
   {:else}
     <div class="mt-6 overflow-hidden rounded-xl border border-slate-200 bg-white">
       <table class="w-full text-sm">
@@ -114,10 +133,13 @@
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-100">
-          {#each filtered as z (z.id)}
+          {#each zones as z (z.id)}
             <tr class="hover:bg-slate-50">
               <td class="py-3 px-4">
-                <a href={`/admin/zones/${z.slug}`} class="font-medium text-slate-900 hover:underline">
+                <a
+                  href={`/admin/zones/${z.slug}`}
+                  class="font-medium text-slate-900 hover:underline"
+                >
                   {z.name}
                 </a>
                 <div class="text-xs text-slate-500">
@@ -135,7 +157,11 @@
                 {/if}
               </td>
               <td class="py-3 px-4">
-                <span class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium {statusClass(z.status)}">
+                <span
+                  class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium {statusClass(
+                    z.status,
+                  )}"
+                >
                   {z.status.replace("_", " ")}
                 </span>
               </td>
@@ -153,5 +179,18 @@
         </tbody>
       </table>
     </div>
+
+    {#if nextCursor}
+      <div class="mt-4 flex justify-center">
+        <button
+          type="button"
+          onclick={() => refresh({ append: true, cursor: nextCursor })}
+          disabled={loadingMore}
+          class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+        >
+          {loadingMore ? "Loading…" : "Load more"}
+        </button>
+      </div>
+    {/if}
   {/if}
 </div>

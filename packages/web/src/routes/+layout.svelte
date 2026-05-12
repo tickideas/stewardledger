@@ -2,7 +2,13 @@
   import "../app.css";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
-  import { isProtectedPath, loadSession, session, signOut } from "$lib/session.svelte";
+  import {
+    isProtectedPath,
+    isSuperAdmin,
+    loadSession,
+    session,
+    signOut,
+  } from "$lib/session.svelte";
 
   let { children } = $props();
 
@@ -49,17 +55,12 @@
     }
   });
 
-  // Authenticated non-super-admins on /admin/* get bounced to /members.
-  // The API enforces this server-side too; this is UX hardening.
-  $effect(() => {
-    if (session.current.status !== "authenticated") return;
-    if (session.current.isSuperAdmin) return;
-    if (page.url.pathname.startsWith("/admin")) {
-      goto("/members", { replaceState: true });
-    }
-  });
+  // /admin/* gating lives in /admin/+layout.svelte so it can short-circuit
+  // BEFORE child pages mount + fetch. Putting it here caused a flash of the
+  // child page's error state before the redirect won.
 
   const isAuthed = $derived(session.current.status === "authenticated");
+  const showAdminLink = $derived(isSuperAdmin(session.current));
   const activeZone = $derived(
     session.current.status === "authenticated"
       ? session.current.zones.find((z) => z.slug === session.current.activeZoneSlug) ?? null
@@ -82,7 +83,7 @@
           <a href="/contributions" class="hover:text-slate-900">Contributions</a>
           <a href="/imports" class="hover:text-slate-900">Imports</a>
           <a href="/reports" class="hover:text-slate-900">Reports</a>
-          {#if session.current.status === "authenticated" && session.current.isSuperAdmin}
+          {#if showAdminLink}
             <a href="/admin/zones" class="text-amber-700 hover:text-amber-900">Admin</a>
           {/if}
           {#if activeZone}

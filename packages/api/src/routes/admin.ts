@@ -10,8 +10,9 @@ import {
   regionPromoteSchema,
   regionUpdateSchema,
 } from "@stewardledger/shared";
-import { and, asc, count, desc, eq, inArray, isNull, sql, sum } from "drizzle-orm";
-import { Hono } from "hono";
+import { and, asc, count, desc, eq, ilike, inArray, isNull, lt, or, sql, sum } from "drizzle-orm";
+import { Hono, type Context } from "hono";
+import { z } from "zod";
 import {
   chapters,
   contributions,
@@ -20,6 +21,7 @@ import {
   zones,
 } from "@stewardledger/db/schema";
 import { db } from "../db";
+import { log } from "../logger";
 import {
   requirePlatformRole,
   requireSession,
@@ -36,86 +38,162 @@ adminRouter.use(
   requirePlatformRole(PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.REGION_CURATOR),
 );
 
+/**
+ * Inline check: cross-tenant endpoints admit super-admin only. Region-
+ * curator access is in-scope for a follow-up; for now they get a 403 here
+ * even though `requirePlatformRole` lets them through the router. Returns
+ * a Response (the 403) when the user fails the gate, null when they pass.
+ */
+function superAdminGate(c: Context): Response | null {
+  const user = c.get("user") as SessionUser;
+  if (!user.isSuperAdmin) {
+    return c.json({ error: { code: "forbidden", message: "Super-admin required" } }, 403);
+  }
+  return null;
+}
+
+function logAdminAccess(c: Context, event: string, extra: Record<string, unknown> = {}): void {
+  const user = c.get("user") as SessionUser;
+  log.info(
+    {
+      event,
+      userId: user.id,
+      userEmail: user.email,
+      requestId: c.req.header("x-request-id") ?? null,
+      ...extra,
+    },
+    "admin access",
+  );
+}
+
 // ─── Zones (tenants) ─────────────────────────────────────────────────
+
+// Pagination cap is intentionally low; this is an interactive dashboard, not
+// a bulk export. Bulk operations should hit a dedicated endpoint with cursor
+// + streaming.
+const ZONES_DEFAULT_LIMIT = 50;
+const ZONES_MAX_LIMIT = 100;
+
+const zonesListQuerySchema = z.object({
+  limit: z.coerce.number().int().positive().max(ZONES_MAX_LIMIT).default(ZONES_DEFAULT_LIMIT),
+  // Keyset cursor: ISO timestamp of the last-seen zone's createdAt. Returned
+  // rows are strictly older than the cursor. Stable because (createdAt, id)
+  // is unique enough for human-scale tenant counts; if collisions appear we'd
+  // switch to a composite cursor.
+  cursor: z.string().datetime().optional(),
+  q: z.string().trim().min(1).max(100).optional(),
+});
 
 /**
  * Cross-tenant zones list with denormalized counts. Read-only — every write
  * still flows through the normal tenant-scoped endpoints so audits stay
- * per-zone. Super-admin only (region-curators can scope this in a follow-up).
+ * per-zone. Super-admin only (region-curators are admitted by middleware but
+ * gated here pending region-scoped filtering).
+ *
+ * Query params: ?limit=&cursor=&q=
+ *   limit: 1..100 (default 50)
+ *   cursor: ISO timestamp; returns zones created strictly before it
+ *   q: case-insensitive match against name / slug / regionNameUnverified
  */
-adminRouter.get("/zones", async (c) => {
-  const user = c.get("user") as SessionUser;
-  if (!user.isSuperAdmin) {
-    return c.json({ error: { code: "forbidden", message: "Super-admin required" } }, 403);
-  }
+adminRouter.get(
+  "/zones",
+  zValidator("query", zonesListQuerySchema),
+  async (c) => {
+    const denied = superAdminGate(c);
+    if (denied) return denied;
+    const { limit, cursor, q } = c.req.valid("query");
+    logAdminAccess(c, "admin.zones.list", { limit, hasCursor: !!cursor, hasQuery: !!q });
 
-  const zoneRows = await db
-    .select({
-      id: zones.id,
-      slug: zones.slug,
-      name: zones.name,
-      status: zones.status,
-      countryCode: zones.countryCode,
-      defaultCurrencyCode: zones.defaultCurrencyCode,
-      regionId: zones.regionId,
-      regionName: regions.name,
-      regionNameUnverified: zones.regionNameUnverified,
-      activatedAt: zones.activatedAt,
-      createdAt: zones.createdAt,
-    })
-    .from(zones)
-    .leftJoin(regions, eq(regions.id, zones.regionId))
-    .where(isNull(zones.deletedAt))
-    .orderBy(desc(zones.createdAt));
+    const whereClauses = [isNull(zones.deletedAt)];
+    if (cursor) whereClauses.push(lt(zones.createdAt, new Date(cursor)));
+    if (q) {
+      const like = `%${q}%`;
+      const qClause = or(
+        ilike(zones.name, like),
+        ilike(zones.slug, like),
+        ilike(zones.regionNameUnverified, like),
+      );
+      if (qClause) whereClauses.push(qClause);
+    }
 
-  if (zoneRows.length === 0) return c.json({ items: [] });
-  const zoneIds = zoneRows.map((z) => z.id);
+    // Fetch one extra row so we can tell the client whether more exist
+    // without a second count() round-trip.
+    const zoneRows = await db
+      .select({
+        id: zones.id,
+        slug: zones.slug,
+        name: zones.name,
+        status: zones.status,
+        countryCode: zones.countryCode,
+        defaultCurrencyCode: zones.defaultCurrencyCode,
+        regionId: zones.regionId,
+        regionName: regions.name,
+        regionNameUnverified: zones.regionNameUnverified,
+        activatedAt: zones.activatedAt,
+        createdAt: zones.createdAt,
+      })
+      .from(zones)
+      .leftJoin(regions, eq(regions.id, zones.regionId))
+      .where(and(...whereClauses))
+      .orderBy(desc(zones.createdAt))
+      .limit(limit + 1);
 
-  // One round-trip each, then stitched in-memory. Three small grouped queries
-  // is cheaper and clearer than three correlated subqueries.
-  const chapterCounts = await db
-    .select({ zoneId: chapters.zoneId, n: count(chapters.id) })
-    .from(chapters)
-    .where(and(inArray(chapters.zoneId, zoneIds), isNull(chapters.deletedAt)))
-    .groupBy(chapters.zoneId);
-  const memberCounts = await db
-    .select({ zoneId: members.zoneId, n: count(members.id) })
-    .from(members)
-    .where(and(inArray(members.zoneId, zoneIds), isNull(members.deletedAt)))
-    .groupBy(members.zoneId);
-  const contributionTotals = await db
-    .select({
-      zoneId: contributions.zoneId,
-      total: sum(contributions.totalAmount),
-      n: count(contributions.id),
-    })
-    .from(contributions)
-    .where(and(inArray(contributions.zoneId, zoneIds), eq(contributions.status, "posted")))
-    .groupBy(contributions.zoneId);
+    const hasMore = zoneRows.length > limit;
+    const page = hasMore ? zoneRows.slice(0, limit) : zoneRows;
+    const nextCursor = hasMore ? page[page.length - 1]?.createdAt.toISOString() ?? null : null;
 
-  const chapterByZone = new Map(chapterCounts.map((r) => [r.zoneId, Number(r.n)]));
-  const memberByZone = new Map(memberCounts.map((r) => [r.zoneId, Number(r.n)]));
-  const contributionByZone = new Map(
-    contributionTotals.map((r) => [r.zoneId, { total: r.total ?? "0", count: Number(r.n) }]),
-  );
+    if (page.length === 0) return c.json({ items: [], nextCursor: null });
+    const zoneIds = page.map((z) => z.id);
 
-  const items = zoneRows.map((z) => ({
-    ...z,
-    chapterCount: chapterByZone.get(z.id) ?? 0,
-    memberCount: memberByZone.get(z.id) ?? 0,
-    postedContributionTotal: contributionByZone.get(z.id)?.total ?? "0",
-    postedContributionCount: contributionByZone.get(z.id)?.count ?? 0,
-  }));
-  return c.json({ items });
-});
+    // Three independent grouped queries — fire in parallel. Cheaper than
+    // correlated subqueries and avoids the N+1 trap.
+    const [chapterCounts, memberCounts, contributionTotals] = await Promise.all([
+      db
+        .select({ zoneId: chapters.zoneId, n: count(chapters.id) })
+        .from(chapters)
+        .where(and(inArray(chapters.zoneId, zoneIds), isNull(chapters.deletedAt)))
+        .groupBy(chapters.zoneId),
+      db
+        .select({ zoneId: members.zoneId, n: count(members.id) })
+        .from(members)
+        .where(and(inArray(members.zoneId, zoneIds), isNull(members.deletedAt)))
+        .groupBy(members.zoneId),
+      db
+        .select({
+          zoneId: contributions.zoneId,
+          total: sum(contributions.totalAmount),
+          n: count(contributions.id),
+        })
+        .from(contributions)
+        .where(and(inArray(contributions.zoneId, zoneIds), eq(contributions.status, "posted")))
+        .groupBy(contributions.zoneId),
+    ]);
+
+    const chapterByZone = new Map(chapterCounts.map((r) => [r.zoneId, Number(r.n)]));
+    const memberByZone = new Map(memberCounts.map((r) => [r.zoneId, Number(r.n)]));
+    const contributionByZone = new Map(
+      contributionTotals.map((r) => [r.zoneId, { total: r.total ?? "0.0000", count: Number(r.n) }]),
+    );
+
+    const items = page.map((z) => ({
+      ...z,
+      chapterCount: chapterByZone.get(z.id) ?? 0,
+      memberCount: memberByZone.get(z.id) ?? 0,
+      // Always a numeric string with the same scale that drizzle returns,
+      // so the client can `Number(...)` or display verbatim consistently.
+      postedContributionTotal: contributionByZone.get(z.id)?.total ?? "0.0000",
+      postedContributionCount: contributionByZone.get(z.id)?.count ?? 0,
+    }));
+    return c.json({ items, nextCursor });
+  },
+);
 
 /** Zone detail: zone row + chapters + members snapshot. */
 adminRouter.get("/zones/:slug", async (c) => {
-  const user = c.get("user") as SessionUser;
-  if (!user.isSuperAdmin) {
-    return c.json({ error: { code: "forbidden", message: "Super-admin required" } }, 403);
-  }
+  const denied = superAdminGate(c);
+  if (denied) return denied;
   const slug = c.req.param("slug");
+  logAdminAccess(c, "admin.zones.detail", { zoneSlug: slug });
 
   const [zone] = await db
     .select({
@@ -144,49 +222,55 @@ adminRouter.get("/zones/:slug", async (c) => {
     return c.json({ error: { code: "not_found", message: "Zone not found" } }, 404);
   }
 
-  const chapterRows = await db
-    .select({
-      id: chapters.id,
-      referenceCode: chapters.referenceCode,
-      name: chapters.name,
-      countryCode: chapters.countryCode,
-      dateFrom: chapters.dateFrom,
-      dateTo: chapters.dateTo,
-      createdAt: chapters.createdAt,
-    })
-    .from(chapters)
-    .where(and(eq(chapters.zoneId, zone.id), isNull(chapters.deletedAt)))
-    .orderBy(asc(chapters.name));
+  const [chapterRows, memberCountsByChapter, contributionAggRows] = await Promise.all([
+    db
+      .select({
+        id: chapters.id,
+        referenceCode: chapters.referenceCode,
+        name: chapters.name,
+        countryCode: chapters.countryCode,
+        dateFrom: chapters.dateFrom,
+        dateTo: chapters.dateTo,
+        createdAt: chapters.createdAt,
+      })
+      .from(chapters)
+      .where(and(eq(chapters.zoneId, zone.id), isNull(chapters.deletedAt)))
+      .orderBy(asc(chapters.name)),
+    db
+      .select({ chapterId: members.chapterId, n: count(members.id) })
+      .from(members)
+      .where(and(eq(members.zoneId, zone.id), isNull(members.deletedAt)))
+      .groupBy(members.chapterId),
+    db
+      .select({
+        total: sum(contributions.totalAmount),
+        n: count(contributions.id),
+      })
+      .from(contributions)
+      .where(and(eq(contributions.zoneId, zone.id), eq(contributions.status, "posted"))),
+  ]);
 
-  // Per-chapter member counts in one grouped query.
-  const memberCountsByChapter = await db
-    .select({ chapterId: members.chapterId, n: count(members.id) })
-    .from(members)
-    .where(and(eq(members.zoneId, zone.id), isNull(members.deletedAt)))
-    .groupBy(members.chapterId);
-  const byChapter = new Map(memberCountsByChapter.map((r) => [r.chapterId ?? "", Number(r.n)]));
+  // Use a typed Map<string | null> so unassigned-member rows are explicit
+  // rather than coerced through the empty-string sentinel.
+  const byChapter = new Map<string | null, number>(
+    memberCountsByChapter.map((r) => [r.chapterId, Number(r.n)]),
+  );
 
   const chaptersWithCounts = chapterRows.map((ch) => ({
     ...ch,
     memberCount: byChapter.get(ch.id) ?? 0,
   }));
-  const unassignedMembers = byChapter.get("") ?? 0;
-
-  const [contributionAgg] = await db
-    .select({
-      total: sum(contributions.totalAmount),
-      n: count(contributions.id),
-    })
-    .from(contributions)
-    .where(and(eq(contributions.zoneId, zone.id), eq(contributions.status, "posted")));
+  const unassignedMembers = byChapter.get(null) ?? 0;
+  const contributionAgg = contributionAggRows[0];
 
   return c.json({
     zone,
     chapters: chaptersWithCounts,
     totals: {
-      members: chaptersWithCounts.reduce((sum, ch) => sum + ch.memberCount, 0) + unassignedMembers,
+      members:
+        chaptersWithCounts.reduce((sum, ch) => sum + ch.memberCount, 0) + unassignedMembers,
       unassignedMembers,
-      postedContributionTotal: contributionAgg?.total ?? "0",
+      postedContributionTotal: contributionAgg?.total ?? "0.0000",
       postedContributionCount: Number(contributionAgg?.n ?? 0),
     },
   });

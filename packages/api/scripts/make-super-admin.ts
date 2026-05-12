@@ -9,20 +9,14 @@
 import { config } from "dotenv";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { eq } from "drizzle-orm";
-import postgres from "postgres";
-import * as schema from "@stewardledger/db/schema";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../../..");
 config({ path: resolve(repoRoot, ".env") });
 
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) {
-  console.error("DATABASE_URL is required");
-  process.exit(1);
-}
+const { db } = await import("../src/db");
+const schema = await import("@stewardledger/db/schema");
 
 const args = process.argv.slice(2);
 const email = args.find((a) => !a.startsWith("--"));
@@ -32,9 +26,6 @@ if (!email) {
   console.error("Usage: pnpm make-super-admin -- <email> [--revoke]");
   process.exit(1);
 }
-
-const client = postgres(databaseUrl);
-const db = drizzle(client, { schema });
 
 try {
   const rows = await db
@@ -47,7 +38,9 @@ try {
     .where(eq(schema.user.email, email))
     .limit(1);
   if (rows.length === 0) {
-    console.error(`No user found with email ${email}. Sign them up first at /signup or accept an invite.`);
+    console.error(
+      `No user found with email ${email}. Sign them up first at /signup or accept an invite.`,
+    );
     process.exit(1);
   }
   const target = rows[0];
@@ -64,6 +57,7 @@ try {
 } catch (err) {
   console.error("[make-super-admin] failed:", err);
   process.exitCode = 1;
-} finally {
-  await client.end({ timeout: 5 });
 }
+// The shared `db` keeps its pool alive; explicit exit is the only way to
+// terminate the script process.
+process.exit(process.exitCode ?? 0);

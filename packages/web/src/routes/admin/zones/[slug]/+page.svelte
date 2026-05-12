@@ -1,6 +1,7 @@
 <script lang="ts">
   import { page } from "$app/state";
   import { api, ApiError } from "$lib/api";
+  import { fmtMoney } from "$lib/format";
 
   type ChapterRow = {
     id: string;
@@ -42,33 +43,26 @@
 
   let data = $state<ZoneDetail | null>(null);
   let loadError = $state<string | null>(null);
+  // Bumped on each slug change; protects against an older in-flight response
+  // clobbering newer data if the user navigates quickly between zones.
+  let fetchEpoch = 0;
 
   $effect(() => {
     const slug = page.params.slug;
     if (!slug) return;
+    const epoch = ++fetchEpoch;
     (async () => {
       try {
-        data = await api.get<ZoneDetail>(`/api/admin/zones/${slug}`);
+        const res = await api.get<ZoneDetail>(`/api/admin/zones/${slug}`);
+        if (epoch !== fetchEpoch) return; // superseded
+        data = res;
         loadError = null;
       } catch (err) {
+        if (epoch !== fetchEpoch) return;
         loadError = err instanceof ApiError ? err.message : "Could not load zone.";
       }
     })();
   });
-
-  function fmtMoney(total: string, currency: string): string {
-    const n = Number(total);
-    if (!Number.isFinite(n)) return total;
-    try {
-      return new Intl.NumberFormat(undefined, {
-        style: "currency",
-        currency,
-        maximumFractionDigits: 2,
-      }).format(n);
-    } catch {
-      return `${currency} ${n.toFixed(2)}`;
-    }
-  }
 </script>
 
 <div class="py-8">
@@ -112,7 +106,7 @@
       <div class="rounded-lg border border-slate-200 bg-white p-4">
         <dt class="text-xs uppercase tracking-wide text-slate-500">Contributions (posted)</dt>
         <dd class="mt-1 text-2xl font-semibold tabular-nums">
-          {fmtMoney(data.totals.postedContributionTotal, z.defaultCurrencyCode)}
+          {fmtMoney(data.totals.postedContributionTotal, z.defaultCurrencyCode, 2)}
         </dd>
         <div class="text-xs text-slate-500">{data.totals.postedContributionCount} records</div>
       </div>
