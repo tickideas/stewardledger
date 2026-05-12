@@ -2,7 +2,14 @@
   import "../app.css";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
-  import { isProtectedPath, loadSession, session, signOut } from "$lib/session.svelte";
+  import {
+    authenticatedLandingPath,
+    isProtectedPath,
+    isSuperAdmin,
+    loadSession,
+    session,
+    signOut,
+  } from "$lib/session.svelte";
 
   let { children } = $props();
 
@@ -33,9 +40,7 @@
     if (session.current.status !== "authenticated") return;
     const path = page.url.pathname;
     if (path === "/login" || path === "/signup" || path.startsWith("/signup/")) {
-      const slug = session.current.activeZoneSlug;
-      const target = slug ? `/onboarding/chapter?zone=${encodeURIComponent(slug)}` : "/members";
-      goto(target, { replaceState: true });
+      goto(authenticatedLandingPath(session.current), { replaceState: true });
     }
   });
 
@@ -49,7 +54,12 @@
     }
   });
 
+  // /admin/* gating lives in /admin/+layout.svelte so it can short-circuit
+  // BEFORE child pages mount + fetch. Putting it here caused a flash of the
+  // child page's error state before the redirect won.
+
   const isAuthed = $derived(session.current.status === "authenticated");
+  const showAdminLink = $derived(isSuperAdmin(session.current));
   const activeZone = $derived(
     session.current.status === "authenticated"
       ? session.current.zones.find((z) => z.slug === session.current.activeZoneSlug) ?? null
@@ -72,6 +82,9 @@
           <a href="/contributions" class="hover:text-slate-900">Contributions</a>
           <a href="/imports" class="hover:text-slate-900">Imports</a>
           <a href="/reports" class="hover:text-slate-900">Reports</a>
+          {#if showAdminLink}
+            <a href="/admin/zones" class="text-amber-700 hover:text-amber-900">Admin</a>
+          {/if}
           {#if activeZone}
             <span class="text-slate-400">·</span>
             <span class="text-slate-500" title={activeZone.slug}>{activeZone.name}</span>

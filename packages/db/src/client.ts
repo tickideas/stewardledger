@@ -10,6 +10,17 @@ export function createDb(databaseUrl: string) {
   return drizzle(client, { schema });
 }
 
+/**
+ * Create the drizzle handle along with the underlying postgres client. Use
+ * this from CLI scripts that need to await a clean shutdown via
+ * `client.end({ timeout: ... })`. Long-running services should use
+ * `createDb` and let the pool live for the process lifetime.
+ */
+export function createDbWithClient(databaseUrl: string) {
+  const client = postgres(databaseUrl);
+  return { db: drizzle(client, { schema }), client };
+}
+
 export type Database = ReturnType<typeof createDb>;
 
 /**

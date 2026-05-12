@@ -4,8 +4,10 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  authenticatedLandingPath,
   isProtectedPath,
   isSafeInternalPath,
+  isSuperAdminOnlyPath,
   PROTECTED_PREFIXES,
   PUBLIC_PREFIXES,
 } from "./session-paths";
@@ -54,6 +56,44 @@ describe("isSafeInternalPath", () => {
   it("rejects empty / non-slash inputs", () => {
     expect(isSafeInternalPath("")).toBe(false);
     expect(isSafeInternalPath("members")).toBe(false);
+  });
+});
+
+describe("isSuperAdminOnlyPath", () => {
+  it("matches only the zones admin surface", () => {
+    expect(isSuperAdminOnlyPath("/admin/zones")).toBe(true);
+    expect(isSuperAdminOnlyPath("/admin/zones/demo-grace-uk")).toBe(true);
+    expect(isSuperAdminOnlyPath("/admin/regions")).toBe(false);
+    expect(isSuperAdminOnlyPath("/admin/zonesish")).toBe(false);
+  });
+});
+
+describe("authenticatedLandingPath", () => {
+  it("routes platform-only super-admins to zones", () => {
+    expect(authenticatedLandingPath({ activeZoneSlug: null, isSuperAdmin: true })).toBe(
+      "/admin/zones",
+    );
+  });
+
+  it("allows platform-only super-admins to honor only zones-admin next paths", () => {
+    const session = { activeZoneSlug: null, isSuperAdmin: true };
+    expect(authenticatedLandingPath(session, "/admin/zones/demo-grace-uk")).toBe(
+      "/admin/zones/demo-grace-uk",
+    );
+    expect(authenticatedLandingPath(session, "/members")).toBe("/admin/zones");
+    expect(authenticatedLandingPath(session, "//evil.com")).toBe("/admin/zones");
+  });
+
+  it("honors protected next paths for tenant-bound users", () => {
+    expect(
+      authenticatedLandingPath({ activeZoneSlug: "demo-grace-uk", isSuperAdmin: false }, "/members"),
+    ).toBe("/members");
+  });
+
+  it("falls back to onboarding for tenant-bound users", () => {
+    expect(authenticatedLandingPath({ activeZoneSlug: "demo grace", isSuperAdmin: false })).toBe(
+      "/onboarding/chapter?zone=demo%20grace",
+    );
   });
 });
 

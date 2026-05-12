@@ -4,8 +4,7 @@
   import { PUBLIC_API_URL } from "$lib/env";
   import {
     ACTIVE_ZONE_KEY,
-    isProtectedPath,
-    isSafeInternalPath,
+    authenticatedLandingPath,
     loadSession,
   } from "$lib/session.svelte";
 
@@ -44,24 +43,35 @@
         credentials: "include",
       });
       if (!zonesRes.ok) throw new Error("Could not load your zones.");
-      const zonesBody = (await zonesRes.json()) as { items: Array<{ slug: string }> };
+      const zonesBody = (await zonesRes.json()) as {
+        items: Array<{ slug: string }>;
+        isSuperAdmin?: boolean;
+      };
       const zoneSlug = zonesBody.items[0]?.slug;
-      if (!zoneSlug) throw new Error("Your account is not linked to a zone.");
-      localStorage.setItem(ACTIVE_ZONE_KEY, zoneSlug);
-      // Refresh the in-memory session so the navbar updates before navigation.
-      await loadSession();
+      const isSuperAdmin = zonesBody.isSuperAdmin === true;
 
-      // Honour ?next=… only when it is a same-origin internal path that
-      // matches our known protected prefixes. The dual check protects against
-      // protocol-relative (`//evil.com`) and backslash (`/\evil.com`) tricks,
-      // and the `isProtectedPath` filter narrows it to routes we already
-      // intend to serve.
-      const next = page.url.searchParams.get("next");
-      if (next && isSafeInternalPath(next) && isProtectedPath(next)) {
-        await goto(next);
-      } else {
-        await goto(`/onboarding/chapter?zone=${encodeURIComponent(zoneSlug)}`);
+      // Platform-only super-admins (created via `pnpm create-admin`) have no
+      // zone bindings. Route them straight to the admin dashboard so they
+      // never see the "not linked to a zone" error.
+      if (!zoneSlug && !isSuperAdmin) {
+        throw new Error("Your account is not linked to a zone.");
       }
+      if (zoneSlug) {
+        localStorage.setItem(ACTIVE_ZONE_KEY, zoneSlug);
+      }
+      // Force-refresh the in-memory session so we don't coalesce with the
+      // anonymous pre-login request kicked off by the root layout.
+      await loadSession({ force: true });
+
+      // Use the same landing policy as the root layout. In particular,
+      // platform-only super-admins must never be sent to tenant-only pages
+      // such as /members, even when ?next= asks for them.
+      await goto(
+        authenticatedLandingPath(
+          { activeZoneSlug: zoneSlug ?? null, isSuperAdmin },
+          page.url.searchParams.get("next"),
+        ),
+      );
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : "Could not sign in.";
     } finally {

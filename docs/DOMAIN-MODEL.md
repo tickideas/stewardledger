@@ -40,7 +40,7 @@ users
 -- managed by Better Auth; reference users(id).
 ```
 
-A user is a **global account** keyed by email. The user can belong to many zones via `user_role_bindings`. Sign-in is global; on login the user picks (or is auto-routed to) a zone.
+A user is a **global account** keyed by email. The user can belong to many zones via `user_role_bindings`. Sign-in is global; on login the user picks (or is auto-routed to) a zone. A platform-only super-admin may have no active zone bindings; in that case they are routed to platform-admin surfaces such as `/admin/zones`, not tenant pages.
 
 ### 2.2 Regions (reference data, not a tenant)
 
@@ -145,7 +145,7 @@ user_role_bindings
   unique (user_id, zone_id, chapter_id, role_id) where revoked_at is null
 ```
 
-Bindings are tenant-scoped (`zone_id`). The platform-level role (`super_admin`, `support_admin`, `billing_admin`, `region_curator`) lives in `users.is_super_admin` / a small `platform_role_bindings` table:
+Bindings are tenant-scoped (`zone_id`). Session zone lookup ignores revoked bindings and soft-deleted zones. The current implementation stores the super-admin bit on `users.is_super_admin`; the fuller platform-role model (`super_admin`, `support_admin`, `billing_admin`, `region_curator`) is represented by a small `platform_role_bindings` table when those distinct roles are needed:
 
 ```sql
 platform_role_bindings

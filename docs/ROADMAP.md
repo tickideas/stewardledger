@@ -71,7 +71,7 @@ Exit checklist:
 Deliverables:
 
 - Public marketing site landing page with sign-up CTA.
-- **Public demo zone** (`demo.stewardledger.church`) seeded with realistic sandbox data; nightly reset job.
+- **Public demo zone** (`demo.stewardledger.church`) seeded with realistic sandbox data; nightly reset job. Current local/demo tooling seeds three realistic demo zones (`demo-grace-uk`, `demo-lighthouse-us`, `demo-river-ng`) via `pnpm seed:demo -- --reset`.
 - Paid signup flow:
   - Sales / signup form (zone name, country, time zone, default currency, billing contact, expected chapters/members).
   - StewardLedger team confirms plan tier and pricing.
@@ -85,12 +85,14 @@ Deliverables:
 - Invite users via email with role selection (zone-level or chapter-level).
 - Manage user roles within the zone.
 - Custom domain attach (CNAME-based; gated to paid plans).
-- **Platform admin**: regions reference list CRUD, unverified region inbox.
+- **Platform admin**: regions reference list CRUD, unverified region inbox, and a super-admin zones dashboard (`/admin/zones`) with searchable/cursor-paginated tenants, chapter/member counts, and per-currency posted contribution subtotals.
 
 Exit checklist:
 
 - [x] Self-service signup works end-to-end (covered by `signup.test.ts`; staging deploy still pending).
 - [x] A free-text region submitted at signup appears in the platform-admin inbox (`GET /api/admin/regions/inbox`).
+- [x] Super-admins can inspect all active zones from `/admin/zones`; platform-only super-admins with no tenant bindings land there after login.
+- [x] Demo seed data can be reset locally with `pnpm seed:demo -- --reset`; `create-admin` / `make-super-admin --confirm` bootstrap demo operator access.
 - [x] Owner can add chapters and invite users (`POST /api/tenant/chapters`, `POST /api/tenant/invitations`).
 - [ ] Custom domain verification flow works against a real DNS (paid plan only; deferred, not blocking Phase 4).
 - [x] Two zones in the same Postgres DB cannot see each other's data (cross-tenant fuzz tests pass — 12 cases in `tenant.test.ts`).

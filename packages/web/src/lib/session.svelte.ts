@@ -9,14 +9,17 @@ import { ACTIVE_ZONE_KEY } from "$lib/session-paths";
 export type Zone = { id: string; slug: string; name: string };
 
 /**
- * Session state machine:
+ * Session state machine. Only `authenticated` carries `isSuperAdmin`; all
+ * other states are by definition not super-admins, so the field would be
+ * meaningless noise on them.
+ *
  *   loading         — first render, before /api/public/session-zones resolves
  *   anonymous       — no Better Auth session (401)
  *   no_zone         — signed in but no zone bindings; account exists but is
  *                     not yet usable. Distinct from anonymous so the UI can
  *                     surface a clear message instead of silently bouncing
  *                     to /login.
- *   authenticated   — signed in with at least one zone binding
+ *   authenticated   — signed in; may have zero zones if super-admin.
  *   error           — transient network/parse failure; do NOT redirect to
  *                     /login because the user may still be signed in
  */
@@ -24,8 +27,18 @@ export type SessionState =
   | { status: "loading"; zones: never[]; activeZoneSlug: null }
   | { status: "anonymous"; zones: never[]; activeZoneSlug: null }
   | { status: "no_zone"; zones: never[]; activeZoneSlug: null }
-  | { status: "authenticated"; zones: Zone[]; activeZoneSlug: string | null }
+  | {
+      status: "authenticated";
+      zones: Zone[];
+      activeZoneSlug: string | null;
+      isSuperAdmin: boolean;
+    }
   | { status: "error"; zones: never[]; activeZoneSlug: null; reason: string };
+
+/** True iff the current session is authenticated AND a platform super-admin. */
+export function isSuperAdmin(state: SessionState): boolean {
+  return state.status === "authenticated" && state.isSuperAdmin;
+}
 
 export const session = $state<{ current: SessionState }>({
   current: { status: "loading", zones: [], activeZoneSlug: null },
@@ -41,8 +54,13 @@ let sessionEpoch = 0;
  * endpoint returns 401 when no Better Auth session cookie is present, and
  * 200 with the caller's zones otherwise. Coalesces concurrent calls.
  */
-export function loadSession(): Promise<void> {
-  if (inflight) return inflight;
+export function loadSession(opts: { force?: boolean } = {}): Promise<void> {
+  if (opts.force) {
+    sessionEpoch++;
+    inflight = null;
+  } else if (inflight) {
+    return inflight;
+  }
   const epoch = sessionEpoch;
   inflight = (async () => {
     try {
@@ -62,10 +80,22 @@ export function loadSession(): Promise<void> {
         return;
       }
 
-      const body = (await res.json()) as { items: Zone[] };
+      const body = (await res.json()) as { items: Zone[]; isSuperAdmin?: boolean };
       if (epoch !== sessionEpoch) return; // superseded between fetch + parse
+      const isSuperAdminFlag = body.isSuperAdmin === true;
 
       if (body.items.length === 0) {
+        // Super-admins may legitimately have zero zone bindings (platform-only
+        // users). Treat them as authenticated so /admin is reachable.
+        if (isSuperAdminFlag) {
+          session.current = {
+            status: "authenticated",
+            zones: [],
+            activeZoneSlug: null,
+            isSuperAdmin: true,
+          };
+          return;
+        }
         // Authenticated but bound to no zone — surface explicitly instead of
         // showing protected nav links that will fail every API call.
         session.current = { status: "no_zone", zones: [], activeZoneSlug: null };
@@ -77,7 +107,12 @@ export function loadSession(): Promise<void> {
       const fallback = body.items[0]?.slug ?? null;
       const activeZoneSlug =
         stored && body.items.some((z) => z.slug === stored) ? stored : fallback;
-      session.current = { status: "authenticated", zones: body.items, activeZoneSlug };
+      session.current = {
+        status: "authenticated",
+        zones: body.items,
+        activeZoneSlug,
+        isSuperAdmin: isSuperAdminFlag,
+      };
     } catch (err) {
       if (epoch !== sessionEpoch) return;
       const reason = err instanceof Error ? err.message : String(err);
@@ -117,4 +152,10 @@ export async function signOut(): Promise<void> {
   }
 }
 
-export { isProtectedPath, isSafeInternalPath, ACTIVE_ZONE_KEY } from "$lib/session-paths";
+export {
+  authenticatedLandingPath,
+  isProtectedPath,
+  isSafeInternalPath,
+  isSuperAdminOnlyPath,
+  ACTIVE_ZONE_KEY,
+} from "$lib/session-paths";
