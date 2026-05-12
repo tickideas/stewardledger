@@ -34,6 +34,12 @@ export const env = {
   PUBLIC_APP_URL: optional("PUBLIC_APP_URL", "http://localhost:5173"),
   PUBLIC_APP_DOMAIN: optional("PUBLIC_APP_DOMAIN", "localhost").toLowerCase(),
   PUBLIC_TENANT_DOMAIN: optional("PUBLIC_TENANT_DOMAIN", "localhost").toLowerCase(),
+  // Optional. When set (e.g. `.example.com`), Better Auth issues session
+  // cookies scoped to that parent domain so the SvelteKit web origin and
+  // the API origin can share them across subdomains. Leave unset for
+  // same-origin deployments (where the cookie is host-only on the shared
+  // origin and just works). See docs/DEPLOYMENT.md "Cookie scope".
+  AUTH_COOKIE_DOMAIN: optional("AUTH_COOKIE_DOMAIN", "").toLowerCase(),
   USESEND_API_KEY: optional("USESEND_API_KEY", ""),
   USESEND_API_URL: optional("USESEND_API_URL", ""),
   // Local filesystem root for the import-file object store. Replace with
