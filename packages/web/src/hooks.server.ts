@@ -2,12 +2,16 @@
 // Forward the incoming Cookie header to the API's session endpoint so SSR
 // can know whether the request is authenticated and which roles the user
 // holds. This is the foundation of the server-side route gates in each
-// shell's `+layout.server.ts`.
+// shell's `+layout.server.ts` and of the SSR → client hydration in
+// `+layout.svelte` (`hydrateSession(data.session)`).
 //
-// Why this works: Better Auth issues session cookies on the API origin. As
-// long as the API and web share an origin (or a parent domain with the
-// right SameSite=Lax/None settings), the browser sends those cookies on
-// SvelteKit page requests too. We forward them verbatim to the API.
+// Why this works: Better Auth issues session cookies on the API origin. For
+// split-host deployments (`app.example.com` + `api.example.com`) the API
+// must set `AUTH_COOKIE_DOMAIN=.example.com` so the cookie is scoped to
+// the shared parent. The cold-start `warnIfCookieScopeMisconfigured`
+// below flags the obvious misconfigurations. See `docs/DEPLOYMENT.md`
+// “Cookie scope” for the full topology matrix.
+// RELEVANT FILES: ./lib/session-paths.ts, ./lib/cookie-scope.ts, ./routes/+layout.server.ts
 
 import type { Handle } from "@sveltejs/kit";
 import { PUBLIC_API_URL } from "$lib/env";

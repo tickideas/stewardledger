@@ -1,8 +1,10 @@
 // packages/web/src/lib/session-paths.ts
-// Pure helpers for route classification + safe-redirect validation. No Svelte
-// runes, no I/O — kept side-effect-free so it can be unit-tested directly and
-// (eventually) reused server-side once a same-origin proxy or shared cookie
-// domain lets us gate routes in `hooks.server.ts`.
+// Pure helpers for route classification + safe-redirect validation. No
+// Svelte runes, no I/O — kept side-effect-free so it can be unit-tested
+// directly and reused both server-side (in `+layout.server.ts`) and on the
+// client (`session.svelte.ts`). Used by SSR redirects, the client session
+// store, and the SSR → client `data.session` hydration path.
+// RELEVANT FILES: ./session.svelte.ts, ../routes/+layout.server.ts, ../hooks.server.ts
 
 /** Route prefixes that require an authenticated session. */
 export const PROTECTED_PREFIXES = [

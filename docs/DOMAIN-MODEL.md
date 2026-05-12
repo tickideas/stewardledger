@@ -120,7 +120,7 @@ chapter_name_history
   created_at
 ```
 
-`chapters.metadata.banking` holds the chapter's banking reference singleton (`bankName`, `accountName`, `accountNumber`, `sortCode`, `iban`, `swift`, `currency`, `notes`). It is edited via `PATCH /api/tenant/chapters/:id/banking` and audited as `chapter.banking.update`. Storing this in `metadata` rather than a dedicated table reflects its singleton-per-chapter nature.
+`chapters.metadata.banking` holds the chapter's banking reference singleton: an optional `primaryCurrency` (ISO 4217, independent of the zone default) and a free-form list of `references` (each `{ label, value, note? }` — a chapter typically has 1–3, e.g. “Main current”, “Online giving suspense”). It is edited via `PATCH /api/tenant/chapters/:id/banking` (Zod schema `chapterBankingSettingsSchema` in `@stewardledger/shared`) and audited as `chapter.banking.update`. Storing this in `metadata` rather than a dedicated table reflects its singleton-per-chapter nature.
 
 ```sql
 chapter_batch_templates

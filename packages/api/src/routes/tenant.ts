@@ -220,10 +220,13 @@ tenantRouter.patch(
   async (c) => {
     const ctx = c.get("auth") as AuthorizedContext;
     const id = c.req.param("id");
+    // Fast-fail on role *before* hitting the DB for the chapter lookup.
+    // Auditors / pastor-viewers can read banking but shouldn't pay the
+    // extra round-trip just to land on a 403.
+    if (!hasAnyRole(ctx, ...CHAPTER_SETTINGS_WRITE_ROLES)) return forbidden(c);
     const scope = await requireChapterScope(ctx, id, CHAPTER_READ_ZONE_ROLES);
     if (!scope.ok)
       return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
-    if (!hasAnyRole(ctx, ...CHAPTER_SETTINGS_WRITE_ROLES)) return forbidden(c);
     const input = c.req.valid("json");
 
     const result = await db.transaction(async (tx) => {
@@ -311,10 +314,10 @@ tenantRouter.delete("/chapters/:id/roster/:bindingId", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
   const chapterId = c.req.param("id");
   const bindingId = c.req.param("bindingId");
+  if (!hasAnyRole(ctx, ...CHAPTER_SETTINGS_WRITE_ROLES)) return forbidden(c);
   const scope = await requireChapterScope(ctx, chapterId, CHAPTER_READ_ZONE_ROLES);
   if (!scope.ok)
     return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
-  if (!hasAnyRole(ctx, ...CHAPTER_SETTINGS_WRITE_ROLES)) return forbidden(c);
 
   const result = await db.transaction(async (tx) => {
     const [binding] = await tx
@@ -424,13 +427,20 @@ tenantRouter.post(
   async (c) => {
     const ctx = c.get("auth") as AuthorizedContext;
     const chapterId = c.req.param("id");
+    if (!hasAnyRole(ctx, ...CHAPTER_SETTINGS_WRITE_ROLES)) return forbidden(c);
     const scope = await requireChapterScope(ctx, chapterId, CHAPTER_READ_ZONE_ROLES);
     if (!scope.ok)
       return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
-    if (!hasAnyRole(ctx, ...CHAPTER_SETTINGS_WRITE_ROLES)) return forbidden(c);
     const input = c.req.valid("json");
 
-    let result: { kind: "ok"; row: { id: string; name: string; payload: unknown; createdAt: Date; updatedAt: Date } } | { kind: "duplicate" };
+    type TemplateInsertRow = {
+      id: string;
+      name: string;
+      payload: unknown;
+      createdAt: Date;
+      updatedAt: Date;
+    };
+    let result: { kind: "ok"; row: TemplateInsertRow } | { kind: "duplicate" };
     try {
       result = await db.transaction(async (tx) => {
         const [row] = await tx
@@ -439,7 +449,11 @@ tenantRouter.post(
             zoneId: ctx.zoneId,
             chapterId,
             name: input.name,
-            payload: input.payload as Record<string, unknown>,
+            // Validated above by `contributionBatchTemplateCreateSchema`
+            // (strict); the shared schema's inferred type is wider than the
+            // jsonb column's `Record<string, unknown>` only in optional
+            // flags, so the cast here is purely structural.
+            payload: input.payload,
             createdByUserId: ctx.userId,
           })
           .returning({
@@ -489,10 +503,10 @@ tenantRouter.delete("/chapters/:id/batch-templates/:templateId", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
   const chapterId = c.req.param("id");
   const templateId = c.req.param("templateId");
+  if (!hasAnyRole(ctx, ...CHAPTER_SETTINGS_WRITE_ROLES)) return forbidden(c);
   const scope = await requireChapterScope(ctx, chapterId, CHAPTER_READ_ZONE_ROLES);
   if (!scope.ok)
     return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
-  if (!hasAnyRole(ctx, ...CHAPTER_SETTINGS_WRITE_ROLES)) return forbidden(c);
 
   const result = await db.transaction(async (tx) => {
     const [row] = await tx

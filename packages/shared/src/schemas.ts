@@ -101,18 +101,22 @@ export type ChapterCreateInput = z.infer<typeof chapterCreateSchema>;
  * table; the UI only ever reads/writes the whole list, and there's no
  * join target that needs a FK.
  */
-export const chapterBankingReferenceSchema = z.object({
-  label: z.string().trim().min(1).max(80),
-  value: z.string().trim().min(1).max(200),
-  note: z.string().trim().max(280).optional(),
-});
+export const chapterBankingReferenceSchema = z
+  .object({
+    label: z.string().trim().min(1).max(80),
+    value: z.string().trim().min(1).max(200),
+    note: z.string().trim().max(280).optional(),
+  })
+  .strict();
 export type ChapterBankingReference = z.infer<typeof chapterBankingReferenceSchema>;
 
 /** Editable chapter banking settings. `primaryCurrency` is independent of the zone default. */
-export const chapterBankingSettingsSchema = z.object({
-  primaryCurrency: currencyCodeSchema.nullable().optional(),
-  references: z.array(chapterBankingReferenceSchema).max(20).optional(),
-});
+export const chapterBankingSettingsSchema = z
+  .object({
+    primaryCurrency: currencyCodeSchema.nullable().optional(),
+    references: z.array(chapterBankingReferenceSchema).max(20).optional(),
+  })
+  .strict();
 export type ChapterBankingSettings = z.infer<typeof chapterBankingSettingsSchema>;
 
 /**
@@ -124,23 +128,30 @@ export type ChapterBankingSettings = z.infer<typeof chapterBankingSettingsSchema
  * tolerate a stale id (binding deleted since template was saved) by
  * silently falling back to the empty select.
  */
-export const contributionBatchTemplatePayloadSchema = z.object({
-  sourceType: z.enum(["envelope", "online", "bank_import", "oblation", "manual"]),
-  defaultCurrency: currencyCodeSchema.nullable().optional(),
-  paymentMethodId: uuidSchema.nullable().optional(),
-  serviceTypeId: uuidSchema.nullable().optional(),
-  referenceCode: z.string().trim().max(80).optional(),
-  notes: z.string().trim().max(4000).optional(),
-});
+// `.strict()`: extra keys are rejected rather than persisted into the jsonb
+// column. Otherwise a client could plant arbitrary keys that round-trip out
+// of `GET /batch-templates` and into the audit `after` payload.
+export const contributionBatchTemplatePayloadSchema = z
+  .object({
+    sourceType: z.enum(["envelope", "online", "bank_import", "oblation", "manual"]),
+    defaultCurrency: currencyCodeSchema.nullable().optional(),
+    paymentMethodId: uuidSchema.nullable().optional(),
+    serviceTypeId: uuidSchema.nullable().optional(),
+    referenceCode: z.string().trim().max(80).optional(),
+    notes: z.string().trim().max(4000).optional(),
+  })
+  .strict();
 export type ContributionBatchTemplatePayload = z.infer<
   typeof contributionBatchTemplatePayloadSchema
 >;
 
 /** Create a batch template. */
-export const contributionBatchTemplateCreateSchema = z.object({
-  name: z.string().trim().min(1).max(80),
-  payload: contributionBatchTemplatePayloadSchema,
-});
+export const contributionBatchTemplateCreateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(80),
+    payload: contributionBatchTemplatePayloadSchema,
+  })
+  .strict();
 export type ContributionBatchTemplateCreateInput = z.infer<
   typeof contributionBatchTemplateCreateSchema
 >;

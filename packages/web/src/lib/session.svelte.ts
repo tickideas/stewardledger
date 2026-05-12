@@ -1,7 +1,11 @@
 // packages/web/src/lib/session.svelte.ts
-// Client-side session store. The API lives on a different origin
-// (host-only cookies per ARCHITECTURE.md §12) so SvelteKit SSR cannot
-// read the session cookie — gating happens in the browser.
+// Client-side session store. `hooks.server.ts` already fetches the user's
+// zones during SSR (subject to `AUTH_COOKIE_DOMAIN` scoping the Better
+// Auth cookie to both origins — see ARCHITECTURE.md §12 and
+// DEPLOYMENT.md “Cookie scope”) and the root layout seeds this store via
+// `hydrateSession()`. `loadSession({ force })` is reserved for post-
+// mutation refreshes (login, account page, zone switch).
+// RELEVANT FILES: ./session-paths.ts, ../hooks.server.ts, ../routes/+layout.svelte
 
 import { setActiveChapter } from "$lib/active-chapter.svelte";
 import { PUBLIC_API_URL } from "$lib/env";

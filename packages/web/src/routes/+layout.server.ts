@@ -7,7 +7,13 @@
 // `+layout.server.ts` files so the rule reads next to the routes it guards.
 
 import { redirect } from "@sveltejs/kit";
-import { isProtectedPath, isSafeInternalPath, isSuperAdminOnlyPath } from "$lib/session-paths";
+import {
+  authenticatedLandingPath,
+  isProtectedPath,
+  isSafeInternalPath,
+  isSuperAdminOnlyPath,
+  landingInputFromServerSession,
+} from "$lib/session-paths";
 import type { LayoutServerLoad } from "./$types";
 
 export const load: LayoutServerLoad = async ({ locals, url }) => {
@@ -21,8 +27,15 @@ export const load: LayoutServerLoad = async ({ locals, url }) => {
 
   if (isSuperAdminOnlyPath(path) && !session?.isSuperAdmin) {
     // Already authenticated (path is also protected → guarded above); just
-    // not a super-admin. Bounce to a safe surface they DO have access to.
-    redirect(303, "/zone/chapters");
+    // not a super-admin. Bounce to *their* landing surface so a
+    // chapter-only admin lands on /church/overview rather than /zone/chapters
+    // (which their role doesn't unlock). `session` is non-null at this
+    // point because every super-admin-only path is also a protected path
+    // and the unauthenticated branch above already redirected.
+    if (session) {
+      redirect(303, authenticatedLandingPath(landingInputFromServerSession(session, null)));
+    }
+    redirect(303, "/login");
   }
 
   // Ship the SSR-resolved session to the browser so the client store can

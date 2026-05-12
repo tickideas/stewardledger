@@ -1076,8 +1076,10 @@ export async function listImports(
   if (query.status) conditions.push(eq(importJobs.status, query.status));
   if (query.chapterId) {
     // Caller pinned the list to one chapter. The route layer has already
-    // validated the chapter is in the zone + the caller can scope to it,
-    // so we can apply the filter directly.
+    // validated the chapter is in the zone + the caller can scope to it
+    // (via `requireChapterScope`), so applying just this single-chapter
+    // filter is *stricter* than the chapter-only allow-list below and we
+    // can skip the `inArray(scope.chapterIds)` branch without loss.
     conditions.push(eq(importFiles.chapterId, query.chapterId));
   } else if (scope.chapterIds && scope.chapterIds.length > 0) {
     // Chapter-scoped users only see imports tied to a chapter they can

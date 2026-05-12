@@ -159,10 +159,15 @@ export type ChapterScopeResult =
  *     ids → 404; the silent empty-result behaviour previously shipped on
  *     `?chapterId=other-zones-uuid` is a foot-gun for the `/church/*`
  *     surface (the URL implies “this one chapter”), so we make it loud.
+ *     Note this filter applies to *every* caller including platform super-
+ *     admins; super-admins acting in zone A still cannot reach a chapter
+ *     in zone B without re-resolving the tenant. That's intentional — the
+ *     audit trail attributes every action to the resolved `ctx.zoneId`.
  *  2. If the caller is a zone-read user (anything in `zoneReadRoles`), or a
- *     platform super-admin, they may scope to any chapter in the zone.
- *     This preserves the existing “zone admin drills into a chapter”
- *     behaviour the `/zone/*` and `/church/*` UIs both rely on.
+ *     platform super-admin (via `hasAnyRole`), they may scope to any
+ *     chapter *inside the resolved zone*. This preserves the existing
+ *     “zone admin drills into a chapter” behaviour the `/zone/*` and
+ *     `/church/*` UIs both rely on.
  *  3. Otherwise the chapter must be in `ctx.chapterIds`. This is the
  *     check that was already inlined at each endpoint for chapter-scoped
  *     users; centralising it keeps the rule single-sourced.

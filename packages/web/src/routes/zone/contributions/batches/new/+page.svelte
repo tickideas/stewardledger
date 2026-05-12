@@ -107,26 +107,43 @@
       if (isAbortError(err)) return;
       if (my !== templatesToken) return;
       templates = [];
-      // Soft-fail: the form still works without templates.
+      // Soft-fail: the form still works without templates. We leave a
+      // breadcrumb so a treasurer who *expects* templates can still see
+      // the cause in devtools without a UI-level error banner.
+      console.warn(
+        "[new-batch] could not load templates:",
+        err instanceof ApiError ? err.message : err,
+      );
     }
   }
 
+  /**
+   * Apply a template to the form. Always overwrites every prefilled field
+   * so switching from template A to template B doesn't leave A's payment
+   * method stuck — the picker should feel like a clean reset every time.
+   * Stale ids (deleted payment method since the template was saved) round-
+   * trip back to the empty select; the server treats null/empty as “no
+   * method”.
+   */
   function applyTemplate(id: string) {
     const t = templates.find((x) => x.id === id);
     if (!t) return;
     sourceType = t.payload.sourceType;
-    // Only overwrite the existing payment-method/service-type when the
-    // template names one. A stale id (deleted method/type) is silently
-    // ignored at submit-time — the server treats null/empty as “no method”.
-    if (t.payload.paymentMethodId !== undefined && t.payload.paymentMethodId !== null) {
-      paymentMethodId = t.payload.paymentMethodId;
-    }
+    paymentMethodId =
+      t.payload.paymentMethodId &&
+      paymentMethods.some((pm) => pm.id === t.payload.paymentMethodId)
+        ? t.payload.paymentMethodId
+        : "";
     referenceCode = t.payload.referenceCode ?? "";
     notes = t.payload.notes ?? "";
   }
 
   function onTemplateChange() {
-    if (!templateId) return;
+    if (!templateId) {
+      // “No template” — leave the form alone. Treasurer may have already
+      // typed something they want to keep.
+      return;
+    }
     applyTemplate(templateId);
   }
 

@@ -85,6 +85,15 @@ and every signed-in user will be redirected to `/login`. Either move the
 API under the web origin (topology 1) or move it to a shared parent
 (topology 2).
 
+> **Multi-label public suffixes (`.co.uk`, `.com.au`, `.co.jp`, …).** The
+> cookie-scope diagnostic in `hooks.server.ts` uses a naive two-label
+> suffix check rather than a full Public Suffix List. For deployments
+> rooted at a multi-label public suffix — e.g. `app.brand.co.uk` +
+> `api.brand.co.uk` — the warning may suggest `AUTH_COOKIE_DOMAIN=.co.uk`,
+> which browsers will refuse. Set `AUTH_COOKIE_DOMAIN=.brand.co.uk`
+> (your registrable apex, not the public suffix) and the warning will
+> stop firing on the next deploy.
+
 #### Failure mode and detection
 
 When the cookie does not reach the web origin, `hooks.server.ts` sees no
