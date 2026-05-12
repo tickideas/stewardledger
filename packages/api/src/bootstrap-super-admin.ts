@@ -9,6 +9,10 @@
 //     create the user via Better Auth and flip is_super_admin = true.
 //   • If the user exists, only flip is_super_admin = true (idempotent).
 //     The password is never rewritten on an existing account.
+//   • The bootstrap user is also marked email_verified = true. The operator
+//     who set the env var implicitly owns the address; forcing a separate
+//     verification email defeats the purpose of an env-driven bootstrap
+//     (and would be stuck if outbound email is misconfigured).
 //   • Errors are logged but do not crash the API — the server still comes
 //     up so other tenants are not blocked by a misconfigured bootstrap.
 
@@ -45,19 +49,25 @@ export async function bootstrapSuperAdminFromEnv(): Promise<void> {
         id: schema.user.id,
         email: schema.user.email,
         isSuperAdmin: schema.user.isSuperAdmin,
+        emailVerified: schema.user.emailVerified,
       })
       .from(schema.user)
       .where(eq(schema.user.email, email))
       .limit(1);
 
     let userId: string;
+    let alreadyFullyProvisioned = false;
     if (existing[0]) {
       userId = existing[0].id;
-      if (existing[0].isSuperAdmin) {
+      alreadyFullyProvisioned = existing[0].isSuperAdmin && existing[0].emailVerified;
+      if (alreadyFullyProvisioned) {
         log.info({ email }, "bootstrap super-admin: already provisioned, no change");
         return;
       }
-      log.info({ email }, "bootstrap super-admin: elevating existing user");
+      log.info(
+        { email, isSuperAdmin: existing[0].isSuperAdmin, emailVerified: existing[0].emailVerified },
+        "bootstrap super-admin: reconciling existing user",
+      );
     } else {
       if (!password) {
         log.error(
@@ -76,10 +86,10 @@ export async function bootstrapSuperAdminFromEnv(): Promise<void> {
 
     await db
       .update(schema.user)
-      .set({ isSuperAdmin: true })
+      .set({ isSuperAdmin: true, emailVerified: true })
       .where(eq(schema.user.id, userId));
 
-    log.info({ email }, "bootstrap super-admin: is_super_admin=true");
+    log.info({ email }, "bootstrap super-admin: is_super_admin=true, email_verified=true");
   } catch (err) {
     log.error({ err, email }, "bootstrap super-admin: failed");
   }
