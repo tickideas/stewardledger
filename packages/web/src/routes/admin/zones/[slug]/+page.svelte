@@ -14,6 +14,8 @@
     memberCount: number;
   };
 
+  type Subtotal = { currencyCode: string; total: string; count: number };
+
   type ZoneDetail = {
     zone: {
       id: string;
@@ -37,7 +39,9 @@
       members: number;
       unassignedMembers: number;
       postedContributionTotal: string;
+      postedContributionCurrency: string;
       postedContributionCount: number;
+      postedContributionSubtotals: Subtotal[];
     };
   };
 
@@ -106,9 +110,25 @@
       <div class="rounded-lg border border-slate-200 bg-white p-4">
         <dt class="text-xs uppercase tracking-wide text-slate-500">Contributions (posted)</dt>
         <dd class="mt-1 text-2xl font-semibold tabular-nums">
-          {fmtMoney(data.totals.postedContributionTotal, z.defaultCurrencyCode, 2)}
+          {fmtMoney(
+            data.totals.postedContributionTotal,
+            data.totals.postedContributionCurrency,
+            2,
+          )}
         </dd>
         <div class="text-xs text-slate-500">{data.totals.postedContributionCount} records</div>
+        {#if data.totals.postedContributionSubtotals.length > 1}
+          <ul class="mt-2 text-xs text-slate-600 space-y-0.5">
+            {#each data.totals.postedContributionSubtotals as s (s.currencyCode)}
+              {#if s.currencyCode !== data.totals.postedContributionCurrency}
+                <li class="flex justify-between">
+                  <span>{s.currencyCode}</span>
+                  <span class="tabular-nums">{fmtMoney(s.total, s.currencyCode, 2)}</span>
+                </li>
+              {/if}
+            {/each}
+          </ul>
+        {/if}
       </div>
       <div class="rounded-lg border border-slate-200 bg-white p-4">
         <dt class="text-xs uppercase tracking-wide text-slate-500">Region</dt>

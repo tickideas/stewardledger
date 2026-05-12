@@ -238,7 +238,9 @@ async function seedZone(spec: DemoZoneSpec): Promise<void> {
     ministryYearStartMonth: 3,
   });
 
-  // 3. Load seeded lookups we'll need to wire contributions.
+  // 3. Load seeded lookups we'll need to wire contributions. Failures here
+  //    mean the seed dependencies upstream have changed; surface a clear
+  //    message instead of an `undefined` deref.
   const givingTypeRows = await db
     .select({ id: givingTypes.id, shortCode: givingTypes.shortCode })
     .from(givingTypes)
@@ -249,13 +251,29 @@ async function seedZone(spec: DemoZoneSpec): Promise<void> {
     .select({ id: accounts.id, name: accounts.name })
     .from(accounts)
     .where(eq(accounts.zoneId, zone.id));
-  const generalFundId = accountRows.find((a) => a.name === "General Fund")!.id;
+  const generalFund = accountRows.find((a) => a.name === "General Fund");
+  if (!generalFund) {
+    throw new Error(
+      `[seed:demo] zone ${spec.slug}: missing "General Fund" account (seedZoneGivingSetup contract changed?). Found: ${accountRows
+        .map((a) => a.name)
+        .join(", ")}`,
+    );
+  }
+  const generalFundId = generalFund.id;
 
   const paymentMethodRows = await db
     .select({ id: paymentMethods.id, code: paymentMethods.code })
     .from(paymentMethods)
     .where(eq(paymentMethods.zoneId, zone.id));
-  const cashMethodId = paymentMethodRows.find((p) => p.code === "cash")!.id;
+  const cashMethod = paymentMethodRows.find((p) => p.code === "cash");
+  if (!cashMethod) {
+    throw new Error(
+      `[seed:demo] zone ${spec.slug}: missing "cash" payment method (seedZoneGivingSetup contract changed?). Found: ${paymentMethodRows
+        .map((p) => p.code)
+        .join(", ")}`,
+    );
+  }
+  const cashMethodId = cashMethod.id;
 
   // Last 12 past-or-today Sundays across this year + last year. Never future.
   const allPastSundays = await loadSundays(zone.id, spec);

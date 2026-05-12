@@ -2,6 +2,8 @@
   import { api, ApiError } from "$lib/api";
   import { fmtMoney } from "$lib/format";
 
+  type Subtotal = { currencyCode: string; total: string; count: number };
+
   type ZoneRow = {
     id: string;
     slug: string;
@@ -17,7 +19,9 @@
     chapterCount: number;
     memberCount: number;
     postedContributionTotal: string;
+    postedContributionCurrency: string;
     postedContributionCount: number;
+    postedContributionSubtotals: Subtotal[];
   };
 
   type ZonesListResponse = { items: ZoneRow[]; nextCursor: string | null };
@@ -168,7 +172,14 @@
               <td class="py-3 px-4 text-right tabular-nums">{z.chapterCount}</td>
               <td class="py-3 px-4 text-right tabular-nums">{z.memberCount}</td>
               <td class="py-3 px-4 text-right tabular-nums">
-                {fmtMoney(z.postedContributionTotal, z.defaultCurrencyCode)}
+                {fmtMoney(z.postedContributionTotal, z.postedContributionCurrency, 2)}
+                {#if z.postedContributionSubtotals.length > 1}
+                  <div class="text-xs text-amber-700" title={z.postedContributionSubtotals
+                      .map((s) => `${s.currencyCode}: ${s.total}`)
+                      .join(", ")}>
+                    +{z.postedContributionSubtotals.length - 1} more currenc{z.postedContributionSubtotals.length === 2 ? "y" : "ies"}
+                  </div>
+                {/if}
                 <div class="text-xs text-slate-500">{z.postedContributionCount} posted</div>
               </td>
               <td class="py-3 px-4 text-xs text-slate-500">

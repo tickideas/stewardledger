@@ -44,10 +44,22 @@
         credentials: "include",
       });
       if (!zonesRes.ok) throw new Error("Could not load your zones.");
-      const zonesBody = (await zonesRes.json()) as { items: Array<{ slug: string }> };
+      const zonesBody = (await zonesRes.json()) as {
+        items: Array<{ slug: string }>;
+        isSuperAdmin?: boolean;
+      };
       const zoneSlug = zonesBody.items[0]?.slug;
-      if (!zoneSlug) throw new Error("Your account is not linked to a zone.");
-      localStorage.setItem(ACTIVE_ZONE_KEY, zoneSlug);
+      const isSuperAdmin = zonesBody.isSuperAdmin === true;
+
+      // Platform-only super-admins (created via `pnpm create-admin`) have no
+      // zone bindings. Route them straight to the admin dashboard so they
+      // never see the "not linked to a zone" error.
+      if (!zoneSlug && !isSuperAdmin) {
+        throw new Error("Your account is not linked to a zone.");
+      }
+      if (zoneSlug) {
+        localStorage.setItem(ACTIVE_ZONE_KEY, zoneSlug);
+      }
       // Refresh the in-memory session so the navbar updates before navigation.
       await loadSession();
 
@@ -59,8 +71,10 @@
       const next = page.url.searchParams.get("next");
       if (next && isSafeInternalPath(next) && isProtectedPath(next)) {
         await goto(next);
+      } else if (!zoneSlug && isSuperAdmin) {
+        await goto("/admin/zones");
       } else {
-        await goto(`/onboarding/chapter?zone=${encodeURIComponent(zoneSlug)}`);
+        await goto(`/onboarding/chapter?zone=${encodeURIComponent(zoneSlug!)}`);
       }
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : "Could not sign in.";

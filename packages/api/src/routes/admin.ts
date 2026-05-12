@@ -158,32 +158,60 @@ adminRouter.get(
         .from(members)
         .where(and(inArray(members.zoneId, zoneIds), isNull(members.deletedAt)))
         .groupBy(members.zoneId),
+      // Group by (zone, currency). A zone is allowed to hold contributions
+      // in multiple currencies (members in different countries, FX gifts,
+      // etc.) so summing across currencies would produce a nonsense total.
+      // We expose per-currency subtotals; the client picks the right one
+      // to display (typically zone.defaultCurrencyCode).
       db
         .select({
           zoneId: contributions.zoneId,
+          currencyCode: contributions.currencyCode,
           total: sum(contributions.totalAmount),
           n: count(contributions.id),
         })
         .from(contributions)
         .where(and(inArray(contributions.zoneId, zoneIds), eq(contributions.status, "posted")))
-        .groupBy(contributions.zoneId),
+        .groupBy(contributions.zoneId, contributions.currencyCode),
     ]);
 
     const chapterByZone = new Map(chapterCounts.map((r) => [r.zoneId, Number(r.n)]));
     const memberByZone = new Map(memberCounts.map((r) => [r.zoneId, Number(r.n)]));
-    const contributionByZone = new Map(
-      contributionTotals.map((r) => [r.zoneId, { total: r.total ?? "0.0000", count: Number(r.n) }]),
-    );
 
-    const items = page.map((z) => ({
-      ...z,
-      chapterCount: chapterByZone.get(z.id) ?? 0,
-      memberCount: memberByZone.get(z.id) ?? 0,
-      // Always a numeric string with the same scale that drizzle returns,
-      // so the client can `Number(...)` or display verbatim consistently.
-      postedContributionTotal: contributionByZone.get(z.id)?.total ?? "0.0000",
-      postedContributionCount: contributionByZone.get(z.id)?.count ?? 0,
-    }));
+    type Subtotal = { currencyCode: string; total: string; count: number };
+    const subtotalsByZone = new Map<string, Subtotal[]>();
+    for (const r of contributionTotals) {
+      const list = subtotalsByZone.get(r.zoneId) ?? [];
+      list.push({
+        currencyCode: r.currencyCode,
+        total: r.total ?? "0.0000",
+        count: Number(r.n),
+      });
+      subtotalsByZone.set(r.zoneId, list);
+    }
+
+    const items = page.map((z) => {
+      const subtotals = subtotalsByZone.get(z.id) ?? [];
+      // Convenience: pick the subtotal in the zone's default currency for
+      // the list view's single-currency cell. Clients that need every
+      // currency render `postedContributionSubtotals`.
+      const primary =
+        subtotals.find((s) => s.currencyCode === z.defaultCurrencyCode) ?? subtotals[0];
+      const totalCount = subtotals.reduce((acc, s) => acc + s.count, 0);
+      return {
+        ...z,
+        chapterCount: chapterByZone.get(z.id) ?? 0,
+        memberCount: memberByZone.get(z.id) ?? 0,
+        // `postedContributionTotal` and `postedContributionCount` keep the
+        // existing client contract: numeric string in the zone default
+        // currency. They are derived from the per-currency subtotals.
+        postedContributionTotal: primary?.total ?? "0.0000",
+        postedContributionCurrency: primary?.currencyCode ?? z.defaultCurrencyCode,
+        postedContributionCount: totalCount,
+        // Full per-currency breakdown for clients that care.
+        postedContributionSubtotals: subtotals,
+      };
+    });
     return c.json({ items, nextCursor });
   },
 );
@@ -241,13 +269,17 @@ adminRouter.get("/zones/:slug", async (c) => {
       .from(members)
       .where(and(eq(members.zoneId, zone.id), isNull(members.deletedAt)))
       .groupBy(members.chapterId),
+    // Group by currency so a zone with mixed-currency contributions doesn't
+    // get a meaningless total like USD + GBP. See list endpoint for context.
     db
       .select({
+        currencyCode: contributions.currencyCode,
         total: sum(contributions.totalAmount),
         n: count(contributions.id),
       })
       .from(contributions)
-      .where(and(eq(contributions.zoneId, zone.id), eq(contributions.status, "posted"))),
+      .where(and(eq(contributions.zoneId, zone.id), eq(contributions.status, "posted")))
+      .groupBy(contributions.currencyCode),
   ]);
 
   // Use a typed Map<string | null> so unassigned-member rows are explicit
@@ -261,17 +293,27 @@ adminRouter.get("/zones/:slug", async (c) => {
     memberCount: byChapter.get(ch.id) ?? 0,
   }));
   const unassignedMembers = byChapter.get(null) ?? 0;
-  const contributionAgg = contributionAggRows[0];
+
+  const subtotals = contributionAggRows.map((r) => ({
+    currencyCode: r.currencyCode,
+    total: r.total ?? "0.0000",
+    count: Number(r.n),
+  }));
+  const primary =
+    subtotals.find((s) => s.currencyCode === zone.defaultCurrencyCode) ?? subtotals[0];
+  const totalContributionCount = subtotals.reduce((acc, s) => acc + s.count, 0);
 
   return c.json({
     zone,
     chapters: chaptersWithCounts,
     totals: {
       members:
-        chaptersWithCounts.reduce((sum, ch) => sum + ch.memberCount, 0) + unassignedMembers,
+        chaptersWithCounts.reduce((acc, ch) => acc + ch.memberCount, 0) + unassignedMembers,
       unassignedMembers,
-      postedContributionTotal: contributionAgg?.total ?? "0.0000",
-      postedContributionCount: Number(contributionAgg?.n ?? 0),
+      postedContributionTotal: primary?.total ?? "0.0000",
+      postedContributionCurrency: primary?.currencyCode ?? zone.defaultCurrencyCode,
+      postedContributionCount: totalContributionCount,
+      postedContributionSubtotals: subtotals,
     },
   });
 });
