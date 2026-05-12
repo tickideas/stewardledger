@@ -3,7 +3,14 @@
 // platform/marketing host (apex domain). See ARCHITECTURE.md §5.
 
 import { zValidator } from "@hono/zod-validator";
-import { regions, userRoleBindings, user as userTable, zones } from "@stewardledger/db/schema";
+import {
+  chapters,
+  regions,
+  roles as rolesTable,
+  userRoleBindings,
+  user as userTable,
+  zones,
+} from "@stewardledger/db/schema";
 import {
   invitationAcceptSchema,
   regionTypeaheadSchema,
@@ -56,17 +63,42 @@ publicRouter.get("/session-zones", async (c) => {
 
   // Two independent reads — fire them in parallel. This endpoint is hit on
   // every navigation by the session store; the extra round-trip from a
-  // sequential pair was material.
-  const [userRows, rows] = await Promise.all([
+  // sequential pair was material. The bindings query pulls role code + scope
+  // so the client can decide which dashboard surface to land on (and which
+  // sidebar to render) without a follow-up call.
+  const [userRows, bindingRows] = await Promise.all([
     db
-      .select({ isSuperAdmin: userTable.isSuperAdmin })
+      .select({
+        isSuperAdmin: userTable.isSuperAdmin,
+        name: userTable.name,
+        email: userTable.email,
+      })
       .from(userTable)
       .where(eq(userTable.id, session.user.id))
       .limit(1),
+    // Left-join chapters because zone-scope bindings have no chapterId. The
+    // joined name is `null` for those rows and gets discarded below.
     db
-      .select({ id: zones.id, slug: zones.slug, name: zones.name })
+      .select({
+        zoneId: zones.id,
+        zoneSlug: zones.slug,
+        zoneName: zones.name,
+        chapterId: userRoleBindings.chapterId,
+        chapterName: chapters.name,
+        roleCode: rolesTable.code,
+        roleScope: rolesTable.scope,
+      })
       .from(userRoleBindings)
       .innerJoin(zones, eq(userRoleBindings.zoneId, zones.id))
+      .innerJoin(rolesTable, eq(userRoleBindings.roleId, rolesTable.id))
+      // Left-join chapters, but EXCLUDE soft-deleted ones from the join.
+      // For a chapter-scope binding whose chapter has been deleted, the
+      // join columns come back null and the aggregator below drops the row
+      // — better than handing the UI a chapter id that 404s on every call.
+      .leftJoin(
+        chapters,
+        and(eq(userRoleBindings.chapterId, chapters.id), isNull(chapters.deletedAt)),
+      )
       .where(
         and(
           eq(userRoleBindings.userId, session.user.id),
@@ -74,18 +106,62 @@ publicRouter.get("/session-zones", async (c) => {
           isNull(zones.deletedAt),
         ),
       )
-      .orderBy(asc(zones.name)),
+      .orderBy(asc(zones.name), asc(chapters.name)),
   ]);
   const userRow = userRows[0];
 
-  const seen = new Set<string>();
-  const items = rows.filter((row) => {
-    if (seen.has(row.id)) return false;
-    seen.add(row.id);
-    return true;
-  });
+  // Collapse the binding rows into one entry per zone. A user can hold
+  // multiple bindings within the same zone (e.g. zone_admin AND a chapter
+  // binding); the UI wants the union, deduplicated. Chapter rows carry the
+  // chapter name so the church-admin sidebar can render a switcher without
+  // a second round-trip.
+  type ChapterRole = { chapterId: string; chapterName: string; roleCode: string };
+  type ZoneItem = {
+    id: string;
+    slug: string;
+    name: string;
+    zoneRoles: string[];
+    chapterRoles: ChapterRole[];
+  };
+  const byZone = new Map<string, ZoneItem>();
+  for (const b of bindingRows) {
+    let z = byZone.get(b.zoneId);
+    if (!z) {
+      z = {
+        id: b.zoneId,
+        slug: b.zoneSlug,
+        name: b.zoneName,
+        zoneRoles: [],
+        chapterRoles: [],
+      };
+      byZone.set(b.zoneId, z);
+    }
+    if (b.roleScope === "zone" && !z.zoneRoles.includes(b.roleCode)) {
+      z.zoneRoles.push(b.roleCode);
+    } else if (b.roleScope === "chapter" && b.chapterId && b.chapterName) {
+      const exists = z.chapterRoles.some(
+        (r) => r.chapterId === b.chapterId && r.roleCode === b.roleCode,
+      );
+      if (!exists) {
+        z.chapterRoles.push({
+          chapterId: b.chapterId,
+          chapterName: b.chapterName,
+          roleCode: b.roleCode,
+        });
+      }
+    }
+  }
+  const items = [...byZone.values()];
 
-  return c.json({ items, isSuperAdmin: userRow?.isSuperAdmin ?? false });
+  return c.json({
+    items,
+    isSuperAdmin: userRow?.isSuperAdmin ?? false,
+    user: {
+      id: session.user.id,
+      email: userRow?.email ?? session.user.email,
+      name: userRow?.name ?? null,
+    },
+  });
 });
 
 /** Look up an invitation by token (used by the accept page to render context). */

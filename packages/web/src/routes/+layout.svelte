@@ -5,11 +5,12 @@
   import {
     authenticatedLandingPath,
     isProtectedPath,
-    isSuperAdmin,
+    landingInputFor,
     loadSession,
     session,
     signOut,
   } from "$lib/session.svelte";
+  import { roleForPath } from "$lib/nav";
 
   let { children } = $props();
 
@@ -30,7 +31,8 @@
     if (session.current.status !== "authenticated") return;
     const path = page.url.pathname;
     if (path === "/login") {
-      goto(authenticatedLandingPath(session.current), { replaceState: true });
+      const input = landingInputFor(session.current);
+      if (input) goto(authenticatedLandingPath(input), { replaceState: true });
     }
   });
 
@@ -43,19 +45,13 @@
   });
 
   const isAuthed = $derived(session.current.status === "authenticated");
-  const showAdminLink = $derived(isSuperAdmin(session.current));
-  const activeZone = $derived(
-    session.current.status === "authenticated"
-      ? session.current.zones.find((z) => z.slug === session.current.activeZoneSlug) ?? null
-      : null,
-  );
 
   const path = $derived(page.url.pathname);
-
-  function isActive(prefix: string): boolean {
-    if (prefix === "/") return path === "/";
-    return path === prefix || path.startsWith(prefix + "/");
-  }
+  // Each dashboard owns its own shell (sidebar + content). The root layout
+  // only renders chrome for routes that have no dashboard surface of their
+  // own — marketing-ish, login, invite, etc.
+  const role = $derived(roleForPath(path));
+  const showChrome = $derived(role === "public");
 
   async function handleSignOut() {
     await signOut();
@@ -64,6 +60,7 @@
 </script>
 
 <div class="sl-app flex min-h-screen flex-col">
+  {#if showChrome}
   <header class="border-b border-[var(--rule)] bg-[var(--paper)]/80 backdrop-blur-sm">
     <div class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-6 gap-y-4 px-5 py-5 sm:px-8">
       <a href="/" class="group flex items-center gap-3">
@@ -78,44 +75,6 @@
 
       <nav class="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-x-5 gap-y-3 sm:gap-x-7">
         {#if isAuthed}
-          <a
-            href="/members"
-            class="sl-nav-link"
-            aria-current={isActive("/members") ? "page" : undefined}>Zone</a
-          >
-          <a
-            href="/contributions"
-            class="sl-nav-link"
-            aria-current={isActive("/contributions") ? "page" : undefined}>Contributions</a
-          >
-          <a
-            href="/imports"
-            class="sl-nav-link"
-            aria-current={isActive("/imports") ? "page" : undefined}>Imports</a
-          >
-          <a
-            href="/reports"
-            class="sl-nav-link"
-            aria-current={isActive("/reports") ? "page" : undefined}>Reports</a
-          >
-          {#if showAdminLink}
-            <a
-              href="/admin/zones"
-              class="sl-nav-link"
-              style="color:var(--brass-deep)"
-              aria-current={isActive("/admin") ? "page" : undefined}>Platform</a
-            >
-          {/if}
-
-          <span class="h-4 w-px bg-[var(--rule-strong)]"></span>
-
-          {#if activeZone}
-            <div class="hidden max-w-44 min-w-0 items-center gap-2 text-[12px] md:flex">
-              <span class="sl-eyebrow shrink-0" style="font-size:9.5px">Zone</span>
-              <span class="truncate text-[var(--ink)]" title={activeZone.slug}>{activeZone.name}</span>
-            </div>
-          {/if}
-
           <button
             type="button"
             onclick={handleSignOut}
@@ -129,15 +88,18 @@
       </nav>
     </div>
   </header>
+  {/if}
 
   <main class="flex-1">
     {@render children?.()}
   </main>
 
+  {#if showChrome}
   <footer class="mt-16 border-t border-[var(--rule)]">
     <div class="mx-auto flex max-w-7xl flex-col items-center justify-between gap-2 px-8 py-8 text-[11px] text-[var(--ink-mute)] sm:flex-row">
       <span class="sl-eyebrow">Steward<span class="sl-serif-italic normal-case tracking-normal" style="font-size:13px">Ledger</span></span>
       <span class="sl-mono" style="font-size:10.5px;letter-spacing:0.04em">stewardledger.church</span>
     </div>
   </footer>
+  {/if}
 </div>

@@ -1,0 +1,398 @@
+<script lang="ts">
+  // Church-admin (chapter-scoped) shell. Mirrors the zonal shell so the two
+  // surfaces feel like siblings: brand → chapter strip → grouped nav →
+  // profile footer. The key difference is the *chapter* switcher in place
+  // of the zone switcher.
+  //
+  // Chapter list comes from /api/public/session-zones — the user's chapter
+  // role bindings within their active zone. The picked chapter is persisted
+  // to localStorage under ACTIVE_CHAPTER_KEY so reloads stay sticky.
+
+  import { goto, invalidateAll } from "$app/navigation";
+  import { page } from "$app/state";
+  import { activeChapter as activeChapterStore, hydrateActiveChapter, setActiveChapter } from "$lib/active-chapter.svelte";
+  import { CHURCH_NAV, isNavActive } from "$lib/nav";
+  import {
+    authenticatedLandingPath,
+    canAccessRole,
+    isSuperAdmin,
+    landingInputFor,
+    session,
+    signOut,
+  } from "$lib/session.svelte";
+
+  let { children } = $props();
+
+  const path = $derived(page.url.pathname);
+  const authed = $derived(session.current.status === "authenticated");
+
+  // Role gate. Mirrors the zonal shell: bounce users who can't make use of
+  // this surface back to their canonical landing instead of letting them
+  // see a sidebar that won't function. Super-admins, zone-role holders, and
+  // chapter-bound users all qualify.
+  $effect(() => {
+    const input = landingInputFor(session.current);
+    if (!input) return;
+    if (!canAccessRole(input, "church")) {
+      goto(authenticatedLandingPath(input), { replaceState: true });
+    }
+  });
+  const showAdminLink = $derived(isSuperAdmin(session.current));
+
+  const sessionUser = $derived(
+    session.current.status === "authenticated" ? session.current.user : null,
+  );
+  const profileLabel = $derived(sessionUser?.name?.trim() || sessionUser?.email || "Account");
+  const profileInitial = $derived(
+    (sessionUser?.name?.trim()?.[0] || sessionUser?.email?.[0] || "?").toUpperCase(),
+  );
+
+  // ─── Chapter list (distinct, name-sorted) ───────────────────────────────
+  // A user may hold several roles within the same chapter (e.g. treasurer +
+  // pastor-viewer); collapse those into one entry. The server already sorts
+  // by chapter name, so a Map preserves that order.
+  type ChapterChoice = { id: string; name: string };
+  const chapters = $derived.by<ChapterChoice[]>(() => {
+    const s = session.current;
+    if (s.status !== "authenticated") return [];
+    const activeZone = s.zones.find((z) => z.slug === s.activeZoneSlug);
+    if (!activeZone) return [];
+    const seen = new Map<string, ChapterChoice>();
+    for (const r of activeZone.chapterRoles) {
+      if (!seen.has(r.chapterId)) {
+        seen.set(r.chapterId, { id: r.chapterId, name: r.chapterName || r.chapterId });
+      }
+    }
+    return [...seen.values()];
+  });
+
+  // Active chapter id lives in a module-level rune (`activeChapterStore`)
+  // so every consumer — this layout AND every /church/* page using
+  // `useActiveChapter()` — reads the same source. The effect below
+  // hydrates from localStorage and reconciles the stored id against the
+  // user's current chapter bindings (a revoked role / deleted chapter
+  // shouldn't leave them pointing nowhere).
+  $effect(() => {
+    hydrateActiveChapter();
+    const list = chapters;
+    if (list.length === 0) {
+      if (activeChapterStore.id !== null) setActiveChapter(null);
+      return;
+    }
+    const current = activeChapterStore.id;
+    const valid = current && list.some((c) => c.id === current) ? current : list[0]?.id ?? null;
+    if (valid !== current) setActiveChapter(valid);
+  });
+
+  const activeChapterId = $derived(activeChapterStore.id);
+  const activeChapter = $derived(chapters.find((c) => c.id === activeChapterId) ?? null);
+
+  // ─── Popovers ────────────────────────────────────────────────────────────
+  let profileOpen = $state(false);
+  let chapterSwitcherOpen = $state(false);
+
+  function toggleProfile() {
+    profileOpen = !profileOpen;
+    if (profileOpen) chapterSwitcherOpen = false;
+  }
+  function closeProfile() {
+    profileOpen = false;
+  }
+  function toggleChapterSwitcher() {
+    chapterSwitcherOpen = !chapterSwitcherOpen;
+    if (chapterSwitcherOpen) profileOpen = false;
+  }
+  function closeChapterSwitcher() {
+    chapterSwitcherOpen = false;
+  }
+  function onKey(ev: KeyboardEvent) {
+    if (ev.key === "Escape") {
+      profileOpen = false;
+      chapterSwitcherOpen = false;
+    }
+  }
+
+  async function handleSignOut() {
+    closeProfile();
+    await signOut();
+    await goto("/login");
+  }
+
+  // Set the active chapter and refresh page loaders. The shared store
+  // pushes the change to every page using `useActiveChapter()`; we also
+  // call `invalidateAll()` so any `+page.server.ts` / `+page.ts` loaders
+  // (none yet, but coming) re-run with the new scope.
+  async function selectChapter(id: string) {
+    closeChapterSwitcher();
+    if (!id || id === activeChapterId) return;
+    // Defensive: don't accept an id outside the user's current chapter set.
+    if (!chapters.some((c) => c.id === id)) return;
+    setActiveChapter(id);
+    await invalidateAll();
+  }
+</script>
+
+<svelte:window onkeydown={onKey} />
+
+{#if authed}
+  <div class="flex min-h-screen w-full">
+    <!-- ============ Sidebar ============ -->
+    <aside
+      class="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-[var(--rule)] lg:flex"
+      style="background: linear-gradient(180deg, var(--info-soft) 0%, var(--paper) 22%, var(--paper) 100%)"
+    >
+      <a href="/" class="flex items-center gap-3 px-6 pt-6 pb-5">
+        <span
+          class="inline-flex h-7 w-7 items-center justify-center rounded-[2px] border border-[var(--ink)] bg-[var(--ink)] text-[11px] font-medium text-[var(--paper)] sl-display"
+          style="letter-spacing:0"
+        >S</span>
+        <span class="sl-display text-[17px] font-medium tracking-tight text-[var(--ink)]">
+          Steward<span class="sl-serif-italic font-normal text-[var(--brass-deep)]">Ledger</span>
+        </span>
+      </a>
+
+      <!-- Chapter strip / switcher -->
+      <div class="mx-4 mb-7 border-t border-[var(--rule)] pt-4">
+        {#if chapters.length > 1}
+          <div class="relative">
+            <button
+              type="button"
+              onclick={toggleChapterSwitcher}
+              aria-haspopup="listbox"
+              aria-expanded={chapterSwitcherOpen}
+              class="flex w-full items-start gap-3 rounded-[3px] px-2 py-2 text-left transition-colors hover:bg-[var(--paper-soft)]"
+            >
+              <span class="sl-eyebrow shrink-0 pt-0.5" style="font-size:9.5px">Chapter</span>
+              <span class="min-w-0 flex-1">
+                <span class="block truncate text-[13px] font-medium text-[var(--ink)]">
+                  {activeChapter?.name ?? "Select a chapter"}
+                </span>
+                <span class="sl-mono block truncate text-[10.5px] text-[var(--ink-mute)]">
+                  {chapters.length} chapters
+                </span>
+              </span>
+              <svg class="h-3 w-3 shrink-0 text-[var(--ink-mute)]" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                <path d="M3 4.5l3 3 3-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+              </svg>
+            </button>
+            {#if chapterSwitcherOpen}
+              <ul
+                role="listbox"
+                class="absolute top-full right-0 left-0 z-20 mt-1 max-h-72 overflow-y-auto rounded-[3px] border border-[var(--rule)] bg-[var(--card)] shadow-[var(--shadow-lift)]"
+              >
+                {#each chapters as c (c.id)}
+                  <li>
+                    <button
+                      type="button"
+                      onclick={() => selectChapter(c.id)}
+                      role="option"
+                      aria-selected={c.id === activeChapterId}
+                      class="flex w-full items-baseline gap-3 border-b border-[var(--rule)] px-3 py-2 text-left last:border-b-0 transition-colors hover:bg-[var(--paper-soft)]"
+                    >
+                      <span class="min-w-0 flex-1">
+                        <span class="block truncate text-[13px] text-[var(--ink)]">{c.name}</span>
+                      </span>
+                      {#if c.id === activeChapterId}
+                        <span class="sl-eyebrow shrink-0" style="font-size:9px;color:var(--brass-deep)">Active</span>
+                      {/if}
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        {:else if activeChapter}
+          <div class="flex items-start gap-3 px-2">
+            <span class="sl-eyebrow shrink-0 pt-0.5" style="font-size:9.5px">Chapter</span>
+            <div class="min-w-0">
+              <div class="truncate text-[13px] font-medium text-[var(--ink)]">{activeChapter.name}</div>
+              <div class="sl-mono truncate text-[10.5px] text-[var(--ink-mute)]">one chapter</div>
+            </div>
+          </div>
+        {:else}
+          <!-- No chapter bindings at all. A super-admin browsing /church will -->
+          <!-- land here; the surface is read-only-ish without a chapter. -->
+          <div class="flex items-start gap-3 px-2">
+            <span class="sl-eyebrow shrink-0 pt-0.5" style="font-size:9.5px">Chapter</span>
+            <div class="min-w-0">
+              <div class="truncate text-[13px] text-[var(--ink-mute)]">No chapter bindings</div>
+              <div class="sl-mono truncate text-[10.5px] text-[var(--ink-faint)]">
+                request access
+              </div>
+            </div>
+          </div>
+        {/if}
+      </div>
+
+      <nav class="flex flex-1 flex-col gap-7 overflow-y-auto px-6">
+        {#each CHURCH_NAV as group (group.label)}
+          <div>
+            <div class="sl-eyebrow mb-3" style="font-size:10px">{group.label}</div>
+            <ul class="flex flex-col gap-0.5">
+              {#each group.items as item (item.href)}
+                {@const active = isNavActive(item, path)}
+                <li>
+                  <a
+                    href={item.href}
+                    aria-current={active ? "page" : undefined}
+                    class="sl-side-link"
+                    class:sl-side-link-active={active}
+                  >
+                    <span
+                      class="sl-side-link-rail"
+                      style={active ? "background:var(--brass)" : ""}
+                      aria-hidden="true"
+                    ></span>
+                    <span class="truncate">{item.label}</span>
+                  </a>
+                </li>
+              {/each}
+            </ul>
+          </div>
+        {/each}
+
+        <div class="mt-2 border-t border-[var(--rule)] pt-5">
+          <a href="/zone/chapters" class="sl-side-link">
+            <span class="sl-side-link-rail" aria-hidden="true"></span>
+            <span class="truncate">Zone view →</span>
+          </a>
+          {#if showAdminLink}
+            <a
+              href="/admin/zones"
+              class="sl-side-link"
+              style="color:var(--brass-deep)"
+            >
+              <span class="sl-side-link-rail" aria-hidden="true"></span>
+              <span class="truncate">Platform admin →</span>
+            </a>
+          {/if}
+        </div>
+      </nav>
+
+      <!-- Profile -->
+      <div class="relative border-t border-[var(--rule)] px-4 py-3">
+        {#if profileOpen}
+          <div
+            class="absolute right-4 bottom-[calc(100%-4px)] left-4 mb-2 overflow-hidden rounded-[3px] border border-[var(--rule)] bg-[var(--card)] shadow-[var(--shadow-lift)]"
+            role="menu"
+          >
+            <div class="border-b border-[var(--rule)] px-3 py-3">
+              <div class="sl-eyebrow" style="font-size:9.5px">Signed in</div>
+              {#if sessionUser?.name}
+                <div class="mt-1 truncate text-[13px] text-[var(--ink)]">{sessionUser.name}</div>
+                <div class="truncate text-[11.5px] text-[var(--ink-mute)]">{sessionUser.email}</div>
+              {:else}
+                <div class="mt-1 truncate text-[13px] text-[var(--ink)]">{sessionUser?.email ?? ""}</div>
+              {/if}
+            </div>
+            <a
+              href="/account"
+              onclick={closeProfile}
+              class="block px-3 py-2.5 text-[13px] text-[var(--ink)] transition-colors hover:bg-[var(--paper-soft)]"
+              role="menuitem">Profile &amp; password</a
+            >
+            <button
+              type="button"
+              onclick={handleSignOut}
+              class="block w-full border-t border-[var(--rule)] px-3 py-2.5 text-left text-[13px] text-[var(--ink-mute)] transition-colors hover:bg-[var(--paper-soft)] hover:text-[var(--ink)]"
+              role="menuitem"
+            >
+              Sign out
+            </button>
+          </div>
+        {/if}
+        <button
+          type="button"
+          onclick={toggleProfile}
+          aria-haspopup="menu"
+          aria-expanded={profileOpen}
+          class="sl-profile-trigger flex w-full items-center gap-3 rounded-[3px] px-2 py-2 text-left transition-colors hover:bg-[var(--paper-soft)]"
+        >
+          <span
+            class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--rule-strong)] text-[12px] font-medium text-[var(--ink)] sl-display"
+            style="background:var(--card-warm)"
+            aria-hidden="true">{profileInitial}</span
+          >
+          <span class="min-w-0 flex-1">
+            <span class="block truncate text-[12.5px] text-[var(--ink)]">{profileLabel}</span>
+            <span class="block text-[10.5px] text-[var(--ink-mute)]">Manage account</span>
+          </span>
+          <svg class="h-3 w-3 shrink-0 text-[var(--ink-mute)]" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <path d="M3 4.5l3 3 3-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+          </svg>
+        </button>
+      </div>
+    </aside>
+
+    <!-- ============ Content column ============ -->
+    <div class="min-w-0 flex-1">
+      <div
+        class="border-b border-[var(--rule)] lg:hidden"
+        style="background: linear-gradient(180deg, var(--info-soft) 0%, var(--paper) 100%)"
+      >
+        <div class="flex items-center justify-between gap-3 px-5 py-3 sm:px-8">
+          <a href="/" class="flex items-center gap-2">
+            <span
+              class="inline-flex h-6 w-6 items-center justify-center rounded-[2px] bg-[var(--ink)] text-[10px] font-medium text-[var(--paper)] sl-display"
+              >S</span
+            >
+            <span class="sl-display text-[15px] font-medium text-[var(--ink)]">
+              Steward<span class="sl-serif-italic font-normal text-[var(--brass-deep)]">Ledger</span>
+            </span>
+          </a>
+          <div class="flex items-center gap-3">
+            {#if activeChapter}
+              <span class="max-w-[10rem] truncate text-[12px] text-[var(--ink-mute)]" title={activeChapter.name}>
+                {activeChapter.name}
+              </span>
+            {:else}
+              <span class="sl-eyebrow" style="font-size:10px">Church</span>
+            {/if}
+            <a
+              href="/account"
+              class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-[var(--rule-strong)] text-[11px] font-medium text-[var(--ink)] sl-display"
+              style="background:var(--card-warm)"
+              aria-label="Account"
+              title={profileLabel}>{profileInitial}</a
+            >
+          </div>
+        </div>
+        <!-- Mobile chapter switcher: a plain <select> is unbeatable here. -->
+        {#if chapters.length > 1}
+          <div class="border-t border-[var(--rule)] px-5 py-2 sm:px-8">
+            <label class="flex items-center gap-2 text-[12px] text-[var(--ink-mute)]">
+              <span class="sl-eyebrow" style="font-size:9.5px">Chapter</span>
+              <select
+                value={activeChapterId ?? ""}
+                onchange={(e) => selectChapter((e.target as HTMLSelectElement).value)}
+                class="sl-select"
+                style="padding:0.3rem 0.5rem;font-size:12.5px"
+              >
+                {#each chapters as c (c.id)}
+                  <option value={c.id}>{c.name}</option>
+                {/each}
+              </select>
+            </label>
+          </div>
+        {/if}
+        <nav class="flex gap-6 overflow-x-auto border-t border-[var(--rule)] px-5 py-3 sm:px-8">
+          {#each CHURCH_NAV as group (group.label)}
+            {#each group.items as item (item.href)}
+              <a
+                href={item.href}
+                class="sl-nav-link shrink-0"
+                aria-current={isNavActive(item, path) ? "page" : undefined}>{item.label}</a
+              >
+            {/each}
+          {/each}
+        </nav>
+      </div>
+
+      <div class="px-6 pt-6 pb-12 sm:px-10 lg:pt-10 lg:pr-12 lg:pl-12">
+        {@render children?.()}
+      </div>
+    </div>
+  </div>
+{:else}
+  {@render children?.()}
+{/if}

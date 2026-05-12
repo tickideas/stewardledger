@@ -5,9 +5,13 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   authenticatedLandingPath,
+  canAccessRole,
+  canAccessRoleAnyZone,
   isProtectedPath,
   isSafeInternalPath,
   isSuperAdminOnlyPath,
+  landingInputFromServerSession,
+  primaryRole,
   PROTECTED_PREFIXES,
   PUBLIC_PREFIXES,
 } from "./session-paths";
@@ -27,16 +31,17 @@ describe("isProtectedPath", () => {
   });
 
   it("does not match prefix-similar but distinct paths", () => {
-    // /memberships should not collide with /members.
-    expect(isProtectedPath("/memberships")).toBe(false);
+    // /zonesomething should not collide with /zone.
+    expect(isProtectedPath("/zoneless")).toBe(false);
+    expect(isProtectedPath("/churchill")).toBe(false);
     expect(isProtectedPath("/loginish")).toBe(false);
   });
 });
 
 describe("isSafeInternalPath", () => {
   it("accepts plain absolute paths", () => {
-    expect(isSafeInternalPath("/members")).toBe(true);
-    expect(isSafeInternalPath("/members/abc?x=1")).toBe(true);
+    expect(isSafeInternalPath("/zone/members")).toBe(true);
+    expect(isSafeInternalPath("/zone/members/abc?x=1")).toBe(true);
   });
 
   it("rejects protocol-relative URLs (//evil.com)", () => {
@@ -80,20 +85,271 @@ describe("authenticatedLandingPath", () => {
     expect(authenticatedLandingPath(session, "/admin/zones/demo-grace-uk")).toBe(
       "/admin/zones/demo-grace-uk",
     );
-    expect(authenticatedLandingPath(session, "/members")).toBe("/admin/zones");
+    expect(authenticatedLandingPath(session, "/zone/chapters")).toBe("/admin/zones");
     expect(authenticatedLandingPath(session, "//evil.com")).toBe("/admin/zones");
   });
 
   it("honors protected next paths for tenant-bound users", () => {
     expect(
-      authenticatedLandingPath({ activeZoneSlug: "demo-grace-uk", isSuperAdmin: false }, "/members"),
-    ).toBe("/members");
+      authenticatedLandingPath(
+        { activeZoneSlug: "demo-grace-uk", isSuperAdmin: false },
+        "/zone/contributions",
+      ),
+    ).toBe("/zone/contributions");
   });
 
   it("falls back to the zone chapter surface for tenant-bound users", () => {
     expect(authenticatedLandingPath({ activeZoneSlug: "demo grace", isSuperAdmin: false })).toBe(
-      "/members?zone=demo%20grace",
+      "/zone/chapters?zone=demo%20grace",
     );
+  });
+
+  it("lands chapter-only admins on the church overview", () => {
+    expect(
+      authenticatedLandingPath({
+        activeZoneSlug: "demo-grace-uk",
+        isSuperAdmin: false,
+        activeZoneRoles: [],
+        activeZoneChapterRoles: [{ chapterId: "c1", roleCode: "chapter_treasurer" }],
+      }),
+    ).toBe("/church/overview?zone=demo-grace-uk");
+  });
+
+  it("lands users with zone roles on the zonal dashboard even if they also have chapter roles", () => {
+    expect(
+      authenticatedLandingPath({
+        activeZoneSlug: "demo-grace-uk",
+        isSuperAdmin: false,
+        activeZoneRoles: ["zone_admin"],
+        activeZoneChapterRoles: [{ chapterId: "c1", roleCode: "chapter_treasurer" }],
+      }),
+    ).toBe("/zone/chapters?zone=demo-grace-uk");
+  });
+
+  it("prefers the platform surface for super-admins even when zone-bound", () => {
+    expect(
+      authenticatedLandingPath({
+        activeZoneSlug: "demo-grace-uk",
+        isSuperAdmin: true,
+        activeZoneRoles: ["zone_admin"],
+      }),
+    ).toBe("/admin/zones");
+  });
+
+  it("honors a safe next regardless of primary role", () => {
+    expect(
+      authenticatedLandingPath(
+        {
+          activeZoneSlug: "demo-grace-uk",
+          isSuperAdmin: false,
+          activeZoneChapterRoles: [{ chapterId: "c1", roleCode: "chapter_treasurer" }],
+        },
+        "/church/contributions",
+      ),
+    ).toBe("/church/contributions");
+  });
+});
+
+describe("canAccessRole", () => {
+  // Super-admins reach every dashboard. They have no zone bindings of their
+  // own — the platform shell is their home, but they routinely drop into a
+  // zone or chapter view for support.
+  it("super-admins reach every surface", () => {
+    const s = { activeZoneSlug: null, isSuperAdmin: true };
+    expect(canAccessRole(s, "platform")).toBe(true);
+    expect(canAccessRole(s, "zonal")).toBe(true);
+    expect(canAccessRole(s, "church")).toBe(true);
+  });
+
+  // Zonal admins live one rung below platform. They run the zone and they
+  // get to spot-check any chapter within it (the church surface).
+  it("zone-role holders reach zonal + church but not platform", () => {
+    const s = {
+      activeZoneSlug: "z",
+      isSuperAdmin: false,
+      activeZoneRoles: ["zone_admin"],
+      activeZoneChapterRoles: [],
+    };
+    expect(canAccessRole(s, "platform")).toBe(false);
+    expect(canAccessRole(s, "zonal")).toBe(true);
+    expect(canAccessRole(s, "church")).toBe(true);
+  });
+
+  // Chapter-only admins can't see zone-wide data. Bouncing them off /zone
+  // saves them from a sidebar that 403s every API call.
+  it("chapter-only users reach church but not zonal or platform", () => {
+    const s = {
+      activeZoneSlug: "z",
+      isSuperAdmin: false,
+      activeZoneRoles: [],
+      activeZoneChapterRoles: [{ chapterId: "c1", roleCode: "chapter_treasurer" }],
+    };
+    expect(canAccessRole(s, "platform")).toBe(false);
+    expect(canAccessRole(s, "zonal")).toBe(false);
+    expect(canAccessRole(s, "church")).toBe(true);
+  });
+
+  // Tenant-bound users with no role data yet keep the legacy behaviour:
+  // treat them as zonal so existing flows don't suddenly hard-fail.
+  it("tenant-bound users without role data still reach zonal + church", () => {
+    const s = { activeZoneSlug: "z", isSuperAdmin: false };
+    expect(canAccessRole(s, "platform")).toBe(false);
+    expect(canAccessRole(s, "zonal")).toBe(true);
+    expect(canAccessRole(s, "church")).toBe(true);
+  });
+
+  // Defensive case: an explicit empty role array ("we asked, they have
+  // nothing") must NOT trigger the legacy fallback. Without this an
+  // unbound zonal user would still slip into /zone.
+  it("explicitly-empty role arrays do not fall back to the legacy path", () => {
+    const s = {
+      activeZoneSlug: "z",
+      isSuperAdmin: false,
+      activeZoneRoles: [],
+      activeZoneChapterRoles: [],
+    };
+    expect(canAccessRole(s, "zonal")).toBe(false);
+    expect(canAccessRole(s, "church")).toBe(false);
+  });
+
+  it("unbound users with no super-admin flag reach nothing", () => {
+    const s = { activeZoneSlug: null, isSuperAdmin: false };
+    expect(canAccessRole(s, "platform")).toBe(false);
+    expect(canAccessRole(s, "zonal")).toBe(false);
+    expect(canAccessRole(s, "church")).toBe(false);
+  });
+});
+
+describe("canAccessRoleAnyZone", () => {
+  // SSR variant: no concept of an "active" zone yet, so the gate considers
+  // every zone the user belongs to and lets them through if ANY qualifies.
+  it("super-admins reach every surface regardless of bindings", () => {
+    const s = { isSuperAdmin: true, items: [] };
+    expect(canAccessRoleAnyZone(s, "platform")).toBe(true);
+    expect(canAccessRoleAnyZone(s, "zonal")).toBe(true);
+    expect(canAccessRoleAnyZone(s, "church")).toBe(true);
+  });
+
+  it("platform is super-admin-only", () => {
+    const s = {
+      isSuperAdmin: false,
+      items: [{ slug: "z", zoneRoles: ["zone_admin"], chapterRoles: [] }],
+    };
+    expect(canAccessRoleAnyZone(s, "platform")).toBe(false);
+  });
+
+  // A user with a zone role in ANY zone can use the zonal surface. The
+  // client refines on switch.
+  it("any zone-role binding unlocks zonal + church", () => {
+    const s = {
+      isSuperAdmin: false,
+      items: [
+        { slug: "z1", zoneRoles: [], chapterRoles: [] },
+        { slug: "z2", zoneRoles: ["zone_finance_admin"], chapterRoles: [] },
+      ],
+    };
+    expect(canAccessRoleAnyZone(s, "zonal")).toBe(true);
+    expect(canAccessRoleAnyZone(s, "church")).toBe(true);
+  });
+
+  // Chapter-only across all zones — the church gate opens, the zonal gate
+  // stays closed.
+  it("chapter-only users reach church but not zonal", () => {
+    const s = {
+      isSuperAdmin: false,
+      items: [
+        {
+          slug: "z",
+          zoneRoles: [],
+          chapterRoles: [{ chapterId: "c", roleCode: "chapter_treasurer" }],
+        },
+      ],
+    };
+    expect(canAccessRoleAnyZone(s, "zonal")).toBe(false);
+    expect(canAccessRoleAnyZone(s, "church")).toBe(true);
+  });
+
+  it("users with no bindings reach nothing", () => {
+    const s = { isSuperAdmin: false, items: [] };
+    expect(canAccessRoleAnyZone(s, "platform")).toBe(false);
+    expect(canAccessRoleAnyZone(s, "zonal")).toBe(false);
+    expect(canAccessRoleAnyZone(s, "church")).toBe(false);
+  });
+});
+
+describe("landingInputFromServerSession", () => {
+  // The SSR adapter picks the zone whose slug matches `?zone=` (if any)
+  // and falls back to the first item. That mirrors how the client behaves
+  // when ACTIVE_ZONE_KEY is unset.
+  it("prefers a matching ?zone= slug", () => {
+    const s = {
+      isSuperAdmin: false,
+      items: [
+        { slug: "alpha", zoneRoles: ["zone_admin"], chapterRoles: [] },
+        { slug: "beta", zoneRoles: [], chapterRoles: [{ chapterId: "c", roleCode: "chapter_admin" }] },
+      ],
+    };
+    const input = landingInputFromServerSession(s, "beta");
+    expect(input.activeZoneSlug).toBe("beta");
+    expect(input.activeZoneRoles).toEqual([]);
+    expect(input.activeZoneChapterRoles).toEqual([{ chapterId: "c", roleCode: "chapter_admin" }]);
+  });
+
+  it("falls back to the first zone when ?zone= doesn't match", () => {
+    const s = {
+      isSuperAdmin: false,
+      items: [{ slug: "alpha", zoneRoles: ["zone_admin"], chapterRoles: [] }],
+    };
+    const input = landingInputFromServerSession(s, "ghost");
+    expect(input.activeZoneSlug).toBe("alpha");
+  });
+
+  it("yields null slug when the user has no zones", () => {
+    const s = { isSuperAdmin: true, items: [] };
+    const input = landingInputFromServerSession(s, null);
+    expect(input.activeZoneSlug).toBeNull();
+    expect(input.isSuperAdmin).toBe(true);
+  });
+});
+
+describe("primaryRole", () => {
+  it("returns platform for super-admins", () => {
+    expect(primaryRole({ activeZoneSlug: null, isSuperAdmin: true })).toBe("platform");
+    expect(
+      primaryRole({ activeZoneSlug: "z", isSuperAdmin: true, activeZoneRoles: ["zone_admin"] }),
+    ).toBe("platform");
+  });
+
+  it("returns zonal when any zone-scope role is present", () => {
+    expect(
+      primaryRole({
+        activeZoneSlug: "z",
+        isSuperAdmin: false,
+        activeZoneRoles: ["zone_finance_admin"],
+      }),
+    ).toBe("zonal");
+  });
+
+  it("returns church when only chapter-scope roles are present", () => {
+    expect(
+      primaryRole({
+        activeZoneSlug: "z",
+        isSuperAdmin: false,
+        activeZoneRoles: [],
+        activeZoneChapterRoles: [{ chapterId: "c1", roleCode: "chapter_admin" }],
+      }),
+    ).toBe("church");
+  });
+
+  it("falls back to zonal for tenant-bound users with no role data yet", () => {
+    // Until the API ships role codes everywhere, an active zone slug is
+    // enough signal that the user has *some* tenant access; default to the
+    // zonal surface to preserve existing behaviour.
+    expect(primaryRole({ activeZoneSlug: "z", isSuperAdmin: false })).toBe("zonal");
+  });
+
+  it("returns null for users with no zone and no super-admin flag", () => {
+    expect(primaryRole({ activeZoneSlug: null, isSuperAdmin: false })).toBeNull();
   });
 });
 

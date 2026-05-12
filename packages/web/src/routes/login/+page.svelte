@@ -42,10 +42,15 @@
       });
       if (!zonesRes.ok) throw new Error("Could not load your zones.");
       const zonesBody = (await zonesRes.json()) as {
-        items: Array<{ slug: string }>;
+        items: Array<{
+          slug: string;
+          zoneRoles?: string[];
+          chapterRoles?: Array<{ chapterId: string; roleCode: string }>;
+        }>;
         isSuperAdmin?: boolean;
       };
-      const zoneSlug = zonesBody.items[0]?.slug;
+      const firstZone = zonesBody.items[0];
+      const zoneSlug = firstZone?.slug;
       const isSuperAdmin = zonesBody.isSuperAdmin === true;
 
       if (!zoneSlug && !isSuperAdmin) {
@@ -58,7 +63,12 @@
 
       await goto(
         authenticatedLandingPath(
-          { activeZoneSlug: zoneSlug ?? null, isSuperAdmin },
+          {
+            activeZoneSlug: zoneSlug ?? null,
+            isSuperAdmin,
+            activeZoneRoles: firstZone?.zoneRoles ?? [],
+            activeZoneChapterRoles: firstZone?.chapterRoles ?? [],
+          },
           page.url.searchParams.get("next"),
         ),
       );
