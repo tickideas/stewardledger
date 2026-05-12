@@ -15,5 +15,6 @@ export * from "./members";
 export * from "./periods";
 export * from "./giving";
 export * from "./contributions";
+export * from "./batch-templates";
 export * from "./imports";
 export * from "./audit";

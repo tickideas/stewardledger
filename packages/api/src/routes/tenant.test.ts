@@ -334,4 +334,261 @@ describe("tenant routes — cross-tenant fuzz", () => {
     // Same role codes, different ids.
     expect(new Set(aRoles.map((r) => r.code))).toEqual(new Set(bRoles.map((r) => r.code)));
   });
+
+  // ─── Chapter settings: banking + roster + chapter-admin invites ───
+
+  it("GET /chapters/:id returns banking defaults for fresh chapters", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+    const res = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      chapter: { id: string; banking: { primaryCurrency: string | null; references: unknown[] } };
+    };
+    expect(body.chapter.id).toBe(chapterA);
+    expect(body.chapter.banking.primaryCurrency).toBeNull();
+    expect(body.chapter.banking.references).toEqual([]);
+  });
+
+  it("PATCH /chapters/:id/banking persists references + currency; GET reads them back", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+    const patch = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}/banking`, {
+      method: "PATCH",
+      body: {
+        primaryCurrency: "GBP",
+        references: [
+          { label: "Main current", value: "12-34-56 / 12345678" },
+          { label: "Online giving", value: "stripe:acct_abc", note: "clears T+2" },
+        ],
+      },
+    });
+    expect(patch.status).toBe(200);
+    const patchBody = (await patch.json()) as { banking: { references: { label: string }[] } };
+    expect(patchBody.banking.references.map((r) => r.label)).toEqual(["Main current", "Online giving"]);
+
+    const get = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}`);
+    const getBody = (await get.json()) as {
+      chapter: { banking: { primaryCurrency: string | null; references: { label: string }[] } };
+    };
+    expect(getBody.chapter.banking.primaryCurrency).toBe("GBP");
+    expect(getBody.chapter.banking.references).toHaveLength(2);
+  });
+
+  it("PATCH /chapters/:id/banking against another zone's chapter → 404", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+    const res = await call(zoneA.slug, `/api/tenant/chapters/${chapterB}/banking`, {
+      method: "PATCH",
+      body: { primaryCurrency: "USD" },
+    });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("chapter_not_found");
+  });
+
+  it("chapter admin can read + write their own chapter's banking but not another", async () => {
+    // Stand up a fresh chapter B-prime in zone A so we have two chapters
+    // for the chapter-admin scope test, then bind a new user as
+    // chapter_admin on chapterA only.
+    const otherChapter = await seedChapter(zoneA.id, "Chapter A Other");
+    const chapAdmin = await seedUser(`chap-admin+${unique()}@example.com`);
+    cleanupUserIds.push(chapAdmin);
+    await db.insert(userRoleBindings).values({
+      userId: chapAdmin,
+      zoneId: zoneA.id,
+      chapterId: chapterA,
+      roleId: zoneA.chapterAdminRoleId,
+    });
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(chapAdmin, "ca@x"));
+
+    const ownPatch = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}/banking`, {
+      method: "PATCH",
+      body: { primaryCurrency: "GBP", references: [] },
+    });
+    expect(ownPatch.status).toBe(200);
+
+    const foreignPatch = await call(zoneA.slug, `/api/tenant/chapters/${otherChapter}/banking`, {
+      method: "PATCH",
+      body: { primaryCurrency: "USD", references: [] },
+    });
+    expect(foreignPatch.status).toBe(403);
+  });
+
+  it("GET /chapters/:id/roster lists active chapter-scope bindings", async () => {
+    // Seed a chapter admin for chapterA and confirm they show up.
+    const treasurer = await seedUser(`treasurer+${unique()}@example.com`);
+    cleanupUserIds.push(treasurer);
+    await db.insert(userRoleBindings).values({
+      userId: treasurer,
+      zoneId: zoneA.id,
+      chapterId: chapterA,
+      roleId: zoneA.chapterAdminRoleId,
+    });
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+    const res = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}/roster`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: { userId: string; roleCode: string }[] };
+    expect(body.items.find((r) => r.userId === treasurer)?.roleCode).toBe(
+      CHAPTER_ROLES.CHAPTER_ADMIN,
+    );
+  });
+
+  it("chapter admin can invite into their own chapter; foreign chapter → 403", async () => {
+    const otherChapter = await seedChapter(zoneA.id, `C-${unique()}`);
+    const chapAdmin = await seedUser(`chap-admin2+${unique()}@example.com`);
+    cleanupUserIds.push(chapAdmin);
+    await db.insert(userRoleBindings).values({
+      userId: chapAdmin,
+      zoneId: zoneA.id,
+      chapterId: chapterA,
+      roleId: zoneA.chapterAdminRoleId,
+    });
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(chapAdmin, "ca@x"));
+
+    const own = await call(zoneA.slug, "/api/tenant/invitations", {
+      method: "POST",
+      body: {
+        email: `cap-own+${unique()}@example.com`,
+        roleCode: CHAPTER_ROLES.CHAPTER_TREASURER,
+        chapterId: chapterA,
+      },
+    });
+    expect(own.status).toBe(201);
+
+    const foreign = await call(zoneA.slug, "/api/tenant/invitations", {
+      method: "POST",
+      body: {
+        email: `cap-foreign+${unique()}@example.com`,
+        roleCode: CHAPTER_ROLES.CHAPTER_TREASURER,
+        chapterId: otherChapter,
+      },
+    });
+    expect(foreign.status).toBe(403);
+
+    // And zone-scope invites are forbidden full stop.
+    const zoneScope = await call(zoneA.slug, "/api/tenant/invitations", {
+      method: "POST",
+      body: {
+        email: `cap-zonescope+${unique()}@example.com`,
+        roleCode: ZONE_ROLES.ZONE_ADMIN,
+      },
+    });
+    expect(zoneScope.status).toBe(403);
+  });
+
+  it("GET /invitations?chapterId= clamps zone-admin and chapter-admin to that chapter", async () => {
+    // Use the existing invA (zone-scope) plus a fresh chapter-scope invite
+    // pinned to chapterA. The ?chapterId=chapterA filter should exclude
+    // invA (no chapterId) and include the chapter one.
+    const [pinned] = await db
+      .insert(invitations)
+      .values({
+        zoneId: zoneA.id,
+        email: `pinned+${unique()}@example.com`,
+        roleCode: CHAPTER_ROLES.CHAPTER_TREASURER,
+        chapterId: chapterA,
+        tokenHash: `hash-pinned-${unique()}`,
+        expiresAt: new Date(Date.now() + 86_400_000),
+      })
+      .returning({ id: invitations.id });
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+    const res = await call(zoneA.slug, `/api/tenant/invitations?chapterId=${chapterA}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: { id: string }[] };
+    const ids = new Set(body.items.map((i) => i.id));
+    expect(ids.has(pinned.id)).toBe(true);
+    expect(ids.has(invA)).toBe(false);
+  });
+
+  // ─── Batch templates ──────────────────────────────────────────
+
+  it("POST /chapters/:id/batch-templates round-trips through list + delete", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+    const payload = {
+      sourceType: "envelope",
+      defaultCurrency: "GBP",
+      referenceCode: "sunday",
+      notes: "cash + cheque",
+    };
+    const create = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}/batch-templates`, {
+      method: "POST",
+      body: { name: `Sunday close ${unique()}`, payload },
+    });
+    expect(create.status).toBe(201);
+    const { template } = (await create.json()) as { template: { id: string; name: string } };
+
+    const list = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}/batch-templates`);
+    expect(list.status).toBe(200);
+    const listed = (await list.json()) as { items: { id: string }[] };
+    expect(listed.items.some((t) => t.id === template.id)).toBe(true);
+
+    const del = await call(
+      zoneA.slug,
+      `/api/tenant/chapters/${chapterA}/batch-templates/${template.id}`,
+      { method: "DELETE" },
+    );
+    expect(del.status).toBe(200);
+
+    const afterDelete = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}/batch-templates`);
+    const afterBody = (await afterDelete.json()) as { items: { id: string }[] };
+    expect(afterBody.items.some((t) => t.id === template.id)).toBe(false);
+  });
+
+  it("POST /chapters/:id/batch-templates rejects duplicate names with 409", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+    const name = `Dup ${unique()}`;
+    const first = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}/batch-templates`, {
+      method: "POST",
+      body: { name, payload: { sourceType: "envelope" } },
+    });
+    expect(first.status).toBe(201);
+    const second = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}/batch-templates`, {
+      method: "POST",
+      body: { name, payload: { sourceType: "manual" } },
+    });
+    expect(second.status).toBe(409);
+    const body = (await second.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("template_name_exists");
+  });
+
+  it("chapter-templates routes reject cross-zone chapter ids with 404", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+    const res = await call(zoneA.slug, `/api/tenant/chapters/${chapterB}/batch-templates`);
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("chapter_not_found");
+  });
+
+  it("chapter-admin can create templates in their own chapter; finance admin cannot", async () => {
+    // Stand up two fresh users: a chapter admin bound to chapterA, and a
+    // chapter bookkeeper bound to the same chapter (which is in the
+    // CHAPTER_READ list but NOT in the write bucket).
+    const chapAdmin = await seedUser(`tpl-chap-admin+${unique()}@example.com`);
+    const bookkeeper = await seedUser(`tpl-bookkeeper+${unique()}@example.com`);
+    cleanupUserIds.push(chapAdmin, bookkeeper);
+    // Look up the chapter_bookkeeper role for zone A (seedZoneRoles created them).
+    const [bkRole] = await db
+      .select({ id: roles.id })
+      .from(roles)
+      .where(
+        sql`${roles.zoneId} = ${zoneA.id} and ${roles.code} = ${CHAPTER_ROLES.CHAPTER_BOOKKEEPER}`,
+      )
+      .limit(1);
+    await db.insert(userRoleBindings).values([
+      { userId: chapAdmin, zoneId: zoneA.id, chapterId: chapterA, roleId: zoneA.chapterAdminRoleId },
+      { userId: bookkeeper, zoneId: zoneA.id, chapterId: chapterA, roleId: bkRole.id },
+    ]);
+
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(chapAdmin, "ca@x"));
+    const allowed = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}/batch-templates`, {
+      method: "POST",
+      body: { name: `CA ${unique()}`, payload: { sourceType: "envelope" } },
+    });
+    expect(allowed.status).toBe(201);
+
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(bookkeeper, "bk@x"));
+    const denied = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}/batch-templates`, {
+      method: "POST",
+      body: { name: `BK ${unique()}`, payload: { sourceType: "envelope" } },
+    });
+    expect(denied.status).toBe(403);
+  });
 });

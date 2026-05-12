@@ -94,6 +94,57 @@ export const chapterCreateSchema = z.object({
 });
 export type ChapterCreateInput = z.infer<typeof chapterCreateSchema>;
 
+/**
+ * Chapter banking reference. Free-form per chapter — a chapter typically
+ * has 1–3 entries (“Main current”, “Online giving suspense”, etc.). Stored
+ * inside `chapters.metadata.banking.references` rather than a dedicated
+ * table; the UI only ever reads/writes the whole list, and there's no
+ * join target that needs a FK.
+ */
+export const chapterBankingReferenceSchema = z.object({
+  label: z.string().trim().min(1).max(80),
+  value: z.string().trim().min(1).max(200),
+  note: z.string().trim().max(280).optional(),
+});
+export type ChapterBankingReference = z.infer<typeof chapterBankingReferenceSchema>;
+
+/** Editable chapter banking settings. `primaryCurrency` is independent of the zone default. */
+export const chapterBankingSettingsSchema = z.object({
+  primaryCurrency: currencyCodeSchema.nullable().optional(),
+  references: z.array(chapterBankingReferenceSchema).max(20).optional(),
+});
+export type ChapterBankingSettings = z.infer<typeof chapterBankingSettingsSchema>;
+
+/**
+ * Batch-template payload. Mirrors the chapter-batch create form: the
+ * treasurer picks a template, the form prefills these fields, and they
+ * fill in the per-Sunday specifics (event, totals, lines).
+ *
+ * `paymentMethodId` / `serviceTypeId` are stored as ids; the client must
+ * tolerate a stale id (binding deleted since template was saved) by
+ * silently falling back to the empty select.
+ */
+export const contributionBatchTemplatePayloadSchema = z.object({
+  sourceType: z.enum(["envelope", "online", "bank_import", "oblation", "manual"]),
+  defaultCurrency: currencyCodeSchema.nullable().optional(),
+  paymentMethodId: uuidSchema.nullable().optional(),
+  serviceTypeId: uuidSchema.nullable().optional(),
+  referenceCode: z.string().trim().max(80).optional(),
+  notes: z.string().trim().max(4000).optional(),
+});
+export type ContributionBatchTemplatePayload = z.infer<
+  typeof contributionBatchTemplatePayloadSchema
+>;
+
+/** Create a batch template. */
+export const contributionBatchTemplateCreateSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  payload: contributionBatchTemplatePayloadSchema,
+});
+export type ContributionBatchTemplateCreateInput = z.infer<
+  typeof contributionBatchTemplateCreateSchema
+>;
+
 /** Role codes that may be granted via an invitation (no platform roles). */
 export const invitableRoleSchema = z.enum([
   ...(Object.values(ZONE_ROLES) as [string, ...string[]]),
@@ -542,6 +593,10 @@ export const importListQuerySchema = z.object({
       "rolled_back",
     ])
     .optional(),
+  // Optional chapter filter for the `/church/*` surface. Server validates
+  // the id against the caller's zone + bindings; cross-zone ids return
+  // 404, chapter-only users requesting another chapter return 403.
+  chapterId: uuidSchema.optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
 });
