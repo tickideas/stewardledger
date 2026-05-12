@@ -122,6 +122,17 @@ export const invitationAcceptSchema = z.object({
 });
 export type InvitationAcceptInput = z.infer<typeof invitationAcceptSchema>;
 
+/**
+ * Re-issue (resend) a zone-owner invitation. The admin may correct the
+ * primary contact's email here — the service revokes the previous open
+ * zone-owner invitations for the zone before creating the new one.
+ */
+export const zoneOwnerInviteResendSchema = z.object({
+  email: z.string().email(),
+  primaryContactName: z.string().min(2).max(120).optional(),
+});
+export type ZoneOwnerInviteResendInput = z.infer<typeof zoneOwnerInviteResendSchema>;
+
 /** Public regions typeahead query. */
 export const regionTypeaheadSchema = z.object({
   q: z.string().min(1).max(120),

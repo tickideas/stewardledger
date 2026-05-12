@@ -14,13 +14,14 @@
       Try the demo
     </a>
     <a
-      href="/signup"
+      href="/login"
       class="inline-flex items-center px-5 py-3 rounded-lg border border-slate-300 text-sm font-medium hover:bg-slate-100"
     >
-      Set up a zone
+      Sign in
     </a>
   </div>
   <p class="mt-12 text-xs text-slate-400">
-    StewardLedger is a brand-new product. We're onboarding founding zones now.
+    StewardLedger is invitation-only. To onboard a zone, email
+    <a href="mailto:hello@stewardledger.church" class="underline hover:text-slate-600">hello@stewardledger.church</a>.
   </p>
 </div>

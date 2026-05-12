@@ -3,14 +3,13 @@
 // platform/marketing host (apex domain). See ARCHITECTURE.md §5.
 
 import { zValidator } from "@hono/zod-validator";
+import { regions, userRoleBindings, user as userTable, zones } from "@stewardledger/db/schema";
 import {
   invitationAcceptSchema,
   regionTypeaheadSchema,
-  zoneSignupSchema,
 } from "@stewardledger/shared";
 import { and, asc, eq, ilike, isNull } from "drizzle-orm";
 import { Hono } from "hono";
-import { regions, user as userTable, userRoleBindings, zones } from "@stewardledger/db/schema";
 import { auth } from "../auth";
 import { db } from "../db";
 import { log } from "../logger";
@@ -19,7 +18,6 @@ import {
   findInvitationByToken,
   InvitationError,
 } from "../services/invitations";
-import { signupZone, SignupError } from "../services/signup";
 
 export const publicRouter = new Hono();
 
@@ -88,21 +86,6 @@ publicRouter.get("/session-zones", async (c) => {
   });
 
   return c.json({ items, isSuperAdmin: userRow?.isSuperAdmin ?? false });
-});
-
-/** Public zone signup. Always invites the owner immediately (no admin gate). */
-publicRouter.post("/signup", zValidator("json", zoneSignupSchema), async (c) => {
-  const input = c.req.valid("json");
-  try {
-    const result = await signupZone(db, input);
-    log.info({ zoneId: result.zoneId, slug: input.slug }, "zone signup created");
-    return c.json({ status: "invited", zoneId: result.zoneId }, 201);
-  } catch (err) {
-    if (err instanceof SignupError) {
-      return c.json({ error: { code: err.code, message: err.message } }, 409);
-    }
-    throw err;
-  }
 });
 
 /** Look up an invitation by token (used by the accept page to render context). */

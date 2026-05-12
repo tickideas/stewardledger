@@ -1,7 +1,7 @@
 // packages/api/scripts/create-admin.ts
 // Creates a Better Auth user with super-admin privileges. Useful for
-// bootstrapping the platform-admin dashboard before any /signup flow has
-// run, and for the demo.
+// bootstrapping the platform-admin dashboard before any zones exist, and
+// for the demo.
 //
 // Usage:
 //   read -s ADMIN_PASSWORD && export ADMIN_PASSWORD

@@ -167,7 +167,7 @@ invitations
   role_code text not null                   -- one of ZONE_ROLES | CHAPTER_ROLES
   token_hash text not null unique           -- sha256 of 32-byte url-safe token; raw token only in the email URL
   expires_at timestamptz not null           -- default 7 days from creation
-  created_by_user_id uuid null              -- null for the bootstrap zone_owner invite at signup
+  created_by_user_id uuid null              -- platform admin who issued the invite (null only for seeded data)
   created_at timestamptz default now()
   accepted_at timestamptz null
   accepted_by_user_id uuid null
@@ -176,7 +176,7 @@ invitations
   unique (zone_id, email, chapter_id, role_code) where accepted_at is null and revoked_at is null
 ```
 
-- A successful **public signup** writes one invitation for the primary contact email pinned to `zone_owner` and emails them a magic-link-style accept URL. No Better Auth user is created at signup.
+- A successful **admin-issued zone invite** (`POST /api/admin/zones/invite`, super-admin only) writes one invitation for the primary contact email pinned to `zone_owner` and emails them a magic-link-style accept URL. No Better Auth user is created at this stage. StewardLedger is invitation-only; there is no public signup endpoint.
 - On accept (`POST /api/public/invitations/accept`): the invited person supplies their name and chooses a password. Better Auth `signUpEmail` runs with the email pinned by the invitation, then `applyAcceptedInvitation` writes a `user_role_bindings` row, marks the invite accepted, and — for `zone_owner` invites — promotes the zone from `pending_setup` to `active`.
 - Team invitations follow the same shape but are created via `POST /api/tenant/invitations` (zone_owner / zone_admin only); the API forbids inviting a second `zone_owner`.
 - Demo seeding creates tenant data only, not user accounts. Demo church/zone login accounts must be created by invitation acceptance, or accessed by a platform super-admin.

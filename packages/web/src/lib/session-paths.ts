@@ -23,7 +23,6 @@ export const PROTECTED_PREFIXES = [
 export const PUBLIC_PREFIXES = [
   "/",
   "/login",
-  "/signup",
   "/invite",
   "/healthz",
 ] as const;

@@ -309,15 +309,17 @@ Four Hono middlewares compose every request, in this order:
 
 Route groups:
 
-- `/api/public/*` — no tenant. Most routes are anonymous signup/invitation helpers; `/api/public/session-zones` optionally requires a Better Auth session and reports the caller's active zone bindings for the client-side gate.
+- `/api/public/*` — no tenant. Anonymous invitation-accept and region-typeahead helpers; `/api/public/session-zones` optionally requires a Better Auth session and reports the caller's active zone bindings for the client-side gate. **There is no public signup endpoint** — StewardLedger is invitation-only; new zones are created by a platform admin via `POST /api/admin/zones/invite`.
 - `/api/tenant/*` — `tenantMiddleware → requireSession → requireTenantAuth`.
-- `/api/admin/*` — `requireSession → requirePlatformRole(super_admin, region_curator, ...)`. Cross-zone reads are allowed here and only here. `/api/admin/zones` and `/api/admin/zones/:slug` are currently super-admin-only and use cursor pagination on `(created_at, id)` plus per-currency contribution subtotals.
+- `/api/admin/*` — `requireSession → requirePlatformRole(super_admin, region_curator, ...)`. Cross-zone reads are allowed here and only here. `/api/admin/zones`, `/api/admin/zones/:slug`, and `/api/admin/zones/invite` are currently super-admin-only; the list endpoint uses cursor pagination on `(created_at, id)` plus per-currency contribution subtotals.
 
 ### 12.2 Invitations
 
 All user onboarding goes through the `invitations` table (see DOMAIN-MODEL.md §2.6):
 
-- **Public signup** writes a `zone_owner` invitation pinned to the primary contact email and emails an opaque 32-byte URL-safe token. The raw token only appears in the email; the DB stores its SHA-256 hash.
+- **Admin-issued zone onboarding** (`POST /api/admin/zones/invite`, super-admin only) creates the zone in `pending_setup`, seeds roles/lookups/giving setup/periods, writes a `zone_owner` invitation pinned to the primary contact email, and emails an opaque 32-byte URL-safe token. The raw token only appears in the email; the DB stores its SHA-256 hash. Every call writes a `zone.invite` audit event attributing the action to the admin.
+- **Owner-invite resend** (`POST /api/admin/zones/:slug/owner-invitations`, super-admin only, while the zone is still `pending_setup`) revokes every open `zone_owner` invitation for the zone and emits a fresh one. Use this to correct a wrong email or replace a lost/expired link — the old token stops working immediately. Writes a `zone.owner_invite.resend` audit event recording the revoked invitation ids.
+- **Cross-tenant invitation revoke** (`POST /api/admin/zones/:slug/invitations/:id/revoke`, super-admin only) revokes a specific open invitation on any zone. Used by the platform-admin dashboard; the tenant-side equivalent at `POST /api/tenant/invitations/:id/revoke` is preferred when a zone admin is available.
 - **Team invitations** are issued by zone owners/admins via `POST /api/tenant/invitations` and follow the same accept flow.
 - **Acceptance** runs Better Auth `signUpEmail` with the email pinned by the invitation, then writes the role binding atomically. A `zone_owner` accept also flips the zone from `pending_setup` to `active` and sets `users.default_zone_id`.
 - **Demo seed data** creates zones, chapters, members, and contributions only. It does not create church or zone login accounts. To access a demo zone, create a platform admin with `pnpm create-admin`, open `/onboarding/invites?zone=<demo-slug>`, invite the desired zone-wide or chapter-scoped user, then accept the logged invitation URL to create the password.
