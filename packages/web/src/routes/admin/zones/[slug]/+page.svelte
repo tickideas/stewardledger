@@ -154,7 +154,7 @@
         // it. No auto-dismiss — this needs a human-read.
         setStatus(
           "warning",
-          `Invitation created for ${resendEmail}, but the email failed to send. Try again, or fetch the link from the server logs.`,
+          `Invitation created for ${resendEmail}, but the email failed to send. Try sending the invitation again.`,
         );
       } else {
         setStatus("success", `New invitation sent to ${resendEmail}.`, 6000);

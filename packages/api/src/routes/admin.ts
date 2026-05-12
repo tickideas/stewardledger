@@ -427,13 +427,11 @@ adminRouter.post(
  * Super-admin only. Refuses on zones that have already activated — once an
  * owner has accepted, ownership is a tenant-side concern (managed via the
  * tenant invitations API or future ownership-transfer flow).
- */
-/**
- * Sentinel used inside the resend transaction to bubble a precondition
- * failure (zone disappeared / activated) back to the handler as a 409.
- * Throwing keeps the SELECT FOR UPDATE + revoke + insert atomic; if we
- * returned `null` instead, the partial state from a previous statement
- * could still commit.
+ *
+ * ResendPreconditionError is a sentinel used inside the resend transaction
+ * to bubble precondition failures (zone disappeared / activated) back to
+ * the handler as 404 / 409. Throwing keeps SELECT FOR UPDATE + revoke +
+ * insert atomic; returning null could accidentally commit partial work.
  */
 class ResendPreconditionError extends Error {
   constructor(

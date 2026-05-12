@@ -36,14 +36,17 @@
   let query = $state("");
   let inviteOpen = $state(false);
   let inviteFlash = $state<string | null>(null);
+  let inviteFlashTimer: ReturnType<typeof setTimeout> | null = null;
 
   function onInvited() {
     inviteFlash = "Invitation sent. The new zone is in pending_setup until the contact accepts.";
     // Refresh from the top so the new pending_setup zone shows up.
     refresh();
     // Clear the banner after a few seconds; the table itself is the persistent confirmation.
-    setTimeout(() => {
+    if (inviteFlashTimer) clearTimeout(inviteFlashTimer);
+    inviteFlashTimer = setTimeout(() => {
       inviteFlash = null;
+      inviteFlashTimer = null;
     }, 6000);
   }
 
@@ -85,6 +88,7 @@
     refresh();
     return () => {
       if (searchDebounce) clearTimeout(searchDebounce);
+      if (inviteFlashTimer) clearTimeout(inviteFlashTimer);
     };
   });
 
