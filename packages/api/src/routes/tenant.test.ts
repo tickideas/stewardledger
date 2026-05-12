@@ -5,6 +5,7 @@
 // asserts that user-A bound to zone-A cannot read or mutate zone-B \u2014 either
 // directly (Host=zone-B with no binding) or transitively (Host=zone-A but
 // crafting a request that references zone-B's chapter or invitation id).
+// RELEVANT FILES: ../middleware/tenant.ts, ../middleware/auth.ts, ./tenant.ts
 
 import { sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -108,6 +109,24 @@ async function call(slug: string, path: string, opts: FetchOptions = {}): Promis
   );
 }
 
+async function callApiHostWithZoneHeader(
+  slug: string,
+  path: string,
+  opts: FetchOptions = {},
+): Promise<Response> {
+  return app.fetch(
+    new Request(`http://${HOST_DOMAIN}:3000${path}`, {
+      method: opts.method ?? "GET",
+      headers: {
+        ...(opts.body ? { "content-type": "application/json" } : {}),
+        host: `${HOST_DOMAIN}:3000`,
+        "x-stewardledger-zone-slug": slug,
+      },
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    }),
+  );
+}
+
 describe("tenant routes — cross-tenant fuzz", () => {
   let zoneA: SeededZone;
   let zoneB: SeededZone;
@@ -192,6 +211,15 @@ describe("tenant routes — cross-tenant fuzz", () => {
   it("GET /chapters from zone A only returns zone A's chapters", async () => {
     vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
     const res = await call(zoneA.slug, "/api/tenant/chapters");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: Array<{ id: string; name: string }> };
+    expect(body.items.map((c) => c.id)).toContain(chapterA);
+    expect(body.items.map((c) => c.id)).not.toContain(chapterB);
+  });
+
+  it("GET /chapters resolves the tenant from the split API host zone header", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+    const res = await callApiHostWithZoneHeader(zoneA.slug, "/api/tenant/chapters");
     expect(res.status).toBe(200);
     const body = (await res.json()) as { items: Array<{ id: string; name: string }> };
     expect(body.items.map((c) => c.id)).toContain(chapterA);

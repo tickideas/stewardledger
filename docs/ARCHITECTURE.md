@@ -303,7 +303,7 @@ Four Hono middlewares compose every request, in this order:
 
 | Middleware | Sets `c.var.` | Used by |
 |---|---|---|
-| `tenantMiddleware` | `tenant: { zoneId, zoneSlug, regionId }` resolved from Host (subdomain or custom domain) | tenant routes only |
+| `tenantMiddleware` | `tenant: { zoneId, zoneSlug, regionId }` resolved from Host (subdomain or custom domain) or, on the configured API host only, `x-stewardledger-zone-slug` | tenant routes only |
 | `requireSession` | `user: { id, email, isSuperAdmin }` from Better Auth | tenant + admin routes |
 | `requireTenantAuth` | `auth: AuthorizedContext` (union of role codes + chapter ids in this zone) | tenant routes |
 | `requirePlatformRole(...)` | (asserts only) | admin routes |
@@ -313,7 +313,7 @@ A helper `requireChapterScope(ctx, chapterId, readRoles)` builds on the auth con
 Route groups:
 
 - `/api/public/*` — no tenant. Anonymous invitation-accept and region-typeahead helpers; `/api/public/session-zones` optionally requires a Better Auth session and reports the caller's active zone bindings. The SvelteKit SSR layer calls it once per request to seed the client store; client code falls back to it whenever a forced refresh is needed (login, account page). **There is no public signup endpoint** — StewardLedger is invitation-only; new zones are created by a platform admin via `POST /api/admin/zones/invite`.
-- `/api/tenant/*` — `tenantMiddleware → requireSession → requireTenantAuth`.
+- `/api/tenant/*` — `tenantMiddleware → requireSession → requireTenantAuth`. Split-host web deployments send `x-stewardledger-zone-slug` because `api.stewardledger.church` is a reserved host and cannot itself identify a tenant; the middleware ignores that header on non-API hosts so custom domains cannot spoof tenant selection.
 - `/api/admin/*` — `requireSession → requirePlatformRole(super_admin, region_curator, ...)`. Cross-zone reads are allowed here and only here. `/api/admin/zones`, `/api/admin/zones/:slug`, and `/api/admin/zones/invite` are currently super-admin-only; the list endpoint uses cursor pagination on `(created_at, id)` plus per-currency contribution subtotals.
 
 ### 12.2 Invitations
