@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { api, ApiError } from "$lib/api";
   import { fmtMoney } from "$lib/format";
 
@@ -67,8 +68,11 @@
     }
   }
 
-  $effect(() => {
+  onMount(() => {
     refresh();
+    return () => {
+      if (searchDebounce) clearTimeout(searchDebounce);
+    };
   });
 
   function onQueryInput(value: string) {

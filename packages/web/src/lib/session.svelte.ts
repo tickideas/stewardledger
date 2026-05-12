@@ -147,4 +147,10 @@ export async function signOut(): Promise<void> {
   }
 }
 
-export { isProtectedPath, isSafeInternalPath, ACTIVE_ZONE_KEY } from "$lib/session-paths";
+export {
+  authenticatedLandingPath,
+  isProtectedPath,
+  isSafeInternalPath,
+  isSuperAdminOnlyPath,
+  ACTIVE_ZONE_KEY,
+} from "$lib/session-paths";

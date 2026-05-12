@@ -56,3 +56,33 @@ export function isSafeInternalPath(p: string): boolean {
   if (p.startsWith("/\\")) return false;
   return true;
 }
+
+export function isSuperAdminOnlyPath(pathname: string): boolean {
+  return pathname === "/admin/zones" || pathname.startsWith("/admin/zones/");
+}
+
+export type AuthenticatedLandingInput = {
+  activeZoneSlug: string | null;
+  isSuperAdmin: boolean;
+};
+
+/**
+ * Canonical post-auth landing rule. Platform-only super-admins have no tenant
+ * context, so tenant routes such as /members cannot work for them.
+ */
+export function authenticatedLandingPath(
+  session: AuthenticatedLandingInput,
+  next?: string | null,
+): string {
+  if (session.isSuperAdmin && !session.activeZoneSlug) {
+    if (next && isSafeInternalPath(next) && isSuperAdminOnlyPath(next)) return next;
+    return "/admin/zones";
+  }
+
+  if (next && isSafeInternalPath(next) && isProtectedPath(next)) return next;
+
+  if (session.activeZoneSlug) {
+    return `/onboarding/chapter?zone=${encodeURIComponent(session.activeZoneSlug)}`;
+  }
+  return "/members";
+}

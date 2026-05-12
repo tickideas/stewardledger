@@ -4,8 +4,7 @@
   import { PUBLIC_API_URL } from "$lib/env";
   import {
     ACTIVE_ZONE_KEY,
-    isProtectedPath,
-    isSafeInternalPath,
+    authenticatedLandingPath,
     loadSession,
   } from "$lib/session.svelte";
 
@@ -63,19 +62,15 @@
       // Refresh the in-memory session so the navbar updates before navigation.
       await loadSession();
 
-      // Honour ?next=… only when it is a same-origin internal path that
-      // matches our known protected prefixes. The dual check protects against
-      // protocol-relative (`//evil.com`) and backslash (`/\evil.com`) tricks,
-      // and the `isProtectedPath` filter narrows it to routes we already
-      // intend to serve.
-      const next = page.url.searchParams.get("next");
-      if (next && isSafeInternalPath(next) && isProtectedPath(next)) {
-        await goto(next);
-      } else if (!zoneSlug && isSuperAdmin) {
-        await goto("/admin/zones");
-      } else {
-        await goto(`/onboarding/chapter?zone=${encodeURIComponent(zoneSlug!)}`);
-      }
+      // Use the same landing policy as the root layout. In particular,
+      // platform-only super-admins must never be sent to tenant-only pages
+      // such as /members, even when ?next= asks for them.
+      await goto(
+        authenticatedLandingPath(
+          { activeZoneSlug: zoneSlug ?? null, isSuperAdmin },
+          page.url.searchParams.get("next"),
+        ),
+      );
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : "Could not sign in.";
     } finally {

@@ -76,13 +76,27 @@ const ZONES_MAX_LIMIT = 100;
 
 const zonesListQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(ZONES_MAX_LIMIT).default(ZONES_DEFAULT_LIMIT),
-  // Keyset cursor: ISO timestamp of the last-seen zone's createdAt. Returned
-  // rows are strictly older than the cursor. Stable because (createdAt, id)
-  // is unique enough for human-scale tenant counts; if collisions appear we'd
-  // switch to a composite cursor.
-  cursor: z.string().datetime().optional(),
+  // Keyset cursor: `${createdAtIso}_${zoneId}` from the last row of the
+  // previous page. Composite ordering prevents skips when multiple zones
+  // share an identical createdAt timestamp.
+  cursor: z.string().trim().max(200).optional(),
   q: z.string().trim().min(1).max(100).optional(),
 });
+
+type ZonesCursor = { createdAt: Date; id: string };
+
+function encodeZonesCursor(row: { createdAt: Date; id: string }): string {
+  return `${row.createdAt.toISOString()}_${row.id}`;
+}
+
+function parseZonesCursor(cursor: string): ZonesCursor | null {
+  const separator = cursor.lastIndexOf("_");
+  if (separator === -1) return null;
+  const createdAt = new Date(cursor.slice(0, separator));
+  const id = cursor.slice(separator + 1);
+  if (Number.isNaN(createdAt.getTime()) || id.length === 0) return null;
+  return { createdAt, id };
+}
 
 /**
  * Cross-tenant zones list with denormalized counts. Read-only — every write
@@ -105,7 +119,17 @@ adminRouter.get(
     logAdminAccess(c, "admin.zones.list", { limit, hasCursor: !!cursor, hasQuery: !!q });
 
     const whereClauses = [isNull(zones.deletedAt)];
-    if (cursor) whereClauses.push(lt(zones.createdAt, new Date(cursor)));
+    if (cursor) {
+      const parsed = parseZonesCursor(cursor);
+      if (!parsed) {
+        return c.json({ error: { code: "invalid_cursor", message: "Invalid cursor" } }, 400);
+      }
+      const cursorClause = or(
+        lt(zones.createdAt, parsed.createdAt),
+        and(eq(zones.createdAt, parsed.createdAt), lt(zones.id, parsed.id)),
+      );
+      if (cursorClause) whereClauses.push(cursorClause);
+    }
     if (q) {
       const like = `%${q}%`;
       const qClause = or(
@@ -135,12 +159,13 @@ adminRouter.get(
       .from(zones)
       .leftJoin(regions, eq(regions.id, zones.regionId))
       .where(and(...whereClauses))
-      .orderBy(desc(zones.createdAt))
+      .orderBy(desc(zones.createdAt), desc(zones.id))
       .limit(limit + 1);
 
     const hasMore = zoneRows.length > limit;
     const page = hasMore ? zoneRows.slice(0, limit) : zoneRows;
-    const nextCursor = hasMore ? page[page.length - 1]?.createdAt.toISOString() ?? null : null;
+    const last = page[page.length - 1];
+    const nextCursor = hasMore && last ? encodeZonesCursor(last) : null;
 
     if (page.length === 0) return c.json({ items: [], nextCursor: null });
     const zoneIds = page.map((z) => z.id);
@@ -202,9 +227,10 @@ adminRouter.get(
         ...z,
         chapterCount: chapterByZone.get(z.id) ?? 0,
         memberCount: memberByZone.get(z.id) ?? 0,
-        // `postedContributionTotal` and `postedContributionCount` keep the
-        // existing client contract: numeric string in the zone default
-        // currency. They are derived from the per-currency subtotals.
+        // `postedContributionTotal` keeps the existing single-number client
+        // contract: prefer the zone default-currency subtotal when present,
+        // otherwise expose the first available currency subtotal. Clients
+        // that need every currency should use `postedContributionSubtotals`.
         postedContributionTotal: primary?.total ?? "0.0000",
         postedContributionCurrency: primary?.currencyCode ?? z.defaultCurrencyCode,
         postedContributionCount: totalCount,

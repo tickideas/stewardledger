@@ -55,6 +55,8 @@
     const slug = page.params.slug;
     if (!slug) return;
     const epoch = ++fetchEpoch;
+    data = null;
+    loadError = null;
     (async () => {
       try {
         const res = await api.get<ZoneDetail>(`/api/admin/zones/${slug}`);

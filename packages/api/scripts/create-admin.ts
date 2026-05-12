@@ -4,7 +4,7 @@
 // run, and for the demo.
 //
 // Usage:
-//   pnpm create-admin -- --email you@example.com --password 'hunter22!' --name 'You'
+//   ADMIN_PASSWORD='hunter22!' pnpm create-admin -- --email you@example.com --password-env ADMIN_PASSWORD --name 'You'
 //
 // If the email already exists this script REFUSES by default. Pass
 // --elevate-existing to confirm you really meant to grant platform-wide
@@ -41,15 +41,26 @@ function flag(name: string): boolean {
 }
 
 const email = arg("email");
-const password = arg("password");
+const passwordFromArg = arg("password");
+const passwordEnv = arg("password-env");
+const password = passwordEnv ? process.env[passwordEnv] : passwordFromArg;
 const name = arg("name") ?? "Admin";
 const elevateExisting = flag("elevate-existing");
 
 if (!email || !password) {
   console.error(
-    "Usage: pnpm create-admin -- --email <email> --password <password> [--name <name>] [--elevate-existing]",
+    "Usage: pnpm create-admin -- --email <email> --password-env <ENV_VAR> [--name <name>] [--elevate-existing]",
+  );
+  console.error(
+    "Avoid --password on the command line; argv may leak through shell history/process listings.",
   );
   process.exit(1);
+}
+
+if (passwordFromArg) {
+  console.warn(
+    "Warning: --password can leak through shell history/process listings. Prefer --password-env <ENV_VAR>.",
+  );
 }
 
 async function main(): Promise<void> {

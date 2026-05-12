@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import {
+    authenticatedLandingPath,
     isProtectedPath,
     isSuperAdmin,
     loadSession,
@@ -39,9 +40,7 @@
     if (session.current.status !== "authenticated") return;
     const path = page.url.pathname;
     if (path === "/login" || path === "/signup" || path.startsWith("/signup/")) {
-      const slug = session.current.activeZoneSlug;
-      const target = slug ? `/onboarding/chapter?zone=${encodeURIComponent(slug)}` : "/members";
-      goto(target, { replaceState: true });
+      goto(authenticatedLandingPath(session.current), { replaceState: true });
     }
   });
 

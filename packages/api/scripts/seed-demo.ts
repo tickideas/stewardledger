@@ -31,6 +31,7 @@ import {
   zones,
 } from "@stewardledger/db/schema";
 import * as schema from "@stewardledger/db/schema";
+import type { Db } from "@stewardledger/db";
 import { dropDemoZones } from "../src/services/demo-seed";
 import { seedZoneGivingSetup } from "../src/services/giving-setup-seed";
 import { seedZoneLookups } from "../src/services/lookup-seed";
@@ -184,6 +185,7 @@ async function dropExistingDemoZones(slugs: readonly string[]): Promise<void> {
 
 /** Return the union of last year + this year of seeded Sundays for a zone. */
 async function loadSundays(
+  database: Db,
   zoneId: string,
   spec: DemoZoneSpec,
 ): Promise<{ id: string; date: string }[]> {
@@ -192,14 +194,14 @@ async function loadSundays(
   // Sundays. seedZonePeriods is idempotent on (zone, date) — re-running for
   // the current year is a no-op.
   await seedZonePeriods(
-    db,
+    database,
     zoneId,
     { fiscalYearStartMonth: 1, ministryYearStartMonth: 3 },
     new Date(new Date().getUTCFullYear() - 1, 0, 1),
   );
 
   void spec;
-  const rows = await db
+  const rows = await database
     .select({ id: givingPeriods.id, date: givingPeriods.date })
     .from(givingPeriods)
     .where(and(eq(givingPeriods.zoneId, zoneId), eq(givingPeriods.weekday, 7))) // ISO 7 = Sun
@@ -208,11 +210,11 @@ async function loadSundays(
   return rows.filter((p) => p.date <= today);
 }
 
-async function seedZone(spec: DemoZoneSpec): Promise<void> {
+async function seedZone(database: Db, spec: DemoZoneSpec): Promise<void> {
   const rng = makeRng(hashSlug(spec.slug));
 
   // 1. Insert the zone in active status with a placeholder region.
-  const [zone] = await db
+  const [zone] = await database
     .insert(zones)
     .values({
       slug: spec.slug,
@@ -230,10 +232,10 @@ async function seedZone(spec: DemoZoneSpec): Promise<void> {
     .returning({ id: zones.id });
 
   // 2. Seed everything signup would normally seed (current year only).
-  await seedZoneRoles(db, zone.id);
-  await seedZoneLookups(db, zone.id);
-  await seedZoneGivingSetup(db, zone.id, spec.currency);
-  await seedZonePeriods(db, zone.id, {
+  await seedZoneRoles(database, zone.id);
+  await seedZoneLookups(database, zone.id);
+  await seedZoneGivingSetup(database, zone.id, spec.currency);
+  await seedZonePeriods(database, zone.id, {
     fiscalYearStartMonth: 1,
     ministryYearStartMonth: 3,
   });
@@ -241,13 +243,13 @@ async function seedZone(spec: DemoZoneSpec): Promise<void> {
   // 3. Load seeded lookups we'll need to wire contributions. Failures here
   //    mean the seed dependencies upstream have changed; surface a clear
   //    message instead of an `undefined` deref.
-  const givingTypeRows = await db
+  const givingTypeRows = await database
     .select({ id: givingTypes.id, shortCode: givingTypes.shortCode })
     .from(givingTypes)
     .where(eq(givingTypes.zoneId, zone.id));
   const givingTypeByCode = new Map(givingTypeRows.map((g) => [g.shortCode, g.id]));
 
-  const accountRows = await db
+  const accountRows = await database
     .select({ id: accounts.id, name: accounts.name })
     .from(accounts)
     .where(eq(accounts.zoneId, zone.id));
@@ -261,7 +263,7 @@ async function seedZone(spec: DemoZoneSpec): Promise<void> {
   }
   const generalFundId = generalFund.id;
 
-  const paymentMethodRows = await db
+  const paymentMethodRows = await database
     .select({ id: paymentMethods.id, code: paymentMethods.code })
     .from(paymentMethods)
     .where(eq(paymentMethods.zoneId, zone.id));
@@ -276,7 +278,7 @@ async function seedZone(spec: DemoZoneSpec): Promise<void> {
   const cashMethodId = cashMethod.id;
 
   // Last 12 past-or-today Sundays across this year + last year. Never future.
-  const allPastSundays = await loadSundays(zone.id, spec);
+  const allPastSundays = await loadSundays(database, zone.id, spec);
   const periodsToUse = allPastSundays.slice(-12);
   if (periodsToUse.length === 0) {
     throw new Error(
@@ -293,8 +295,8 @@ async function seedZone(spec: DemoZoneSpec): Promise<void> {
 
   // 4. Create chapters and members. Member inserts are batched per chapter.
   for (const chSpec of spec.chapters) {
-    const refCode = await nextChapterReferenceCode(db, zone.id);
-    const [chapter] = await db
+    const refCode = await nextChapterReferenceCode(database, zone.id);
+    const [chapter] = await database
       .insert(chapters)
       .values({
         zoneId: zone.id,
@@ -309,9 +311,9 @@ async function seedZone(spec: DemoZoneSpec): Promise<void> {
     // a per-zone advisory lock. The lock is transaction-scoped, so we have
     // to do the count + insert inside one tx. We allocate codes locally
     // from `count + 1`, build the rows, and insert in a single batch.
-    const memberIds: string[] = await db.transaction(async (tx) => {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${zone.id}))`);
-      const [{ count }] = await tx
+    const memberIds: string[] = await (async () => {
+      await database.execute(sql`select pg_advisory_xact_lock(hashtext(${zone.id}))`);
+      const [{ count }] = await database
         .select({ count: sql<number>`count(*)::int` })
         .from(members)
         .where(eq(members.zoneId, zone.id));
@@ -328,12 +330,12 @@ async function seedZone(spec: DemoZoneSpec): Promise<void> {
           isActive: true,
         });
       }
-      const inserted = await tx
+      const inserted = await database
         .insert(members)
         .values(memberRows)
         .returning({ id: members.id });
       return inserted.map((m) => m.id);
-    });
+    })();
 
     // 5. A handful of posted contributions per chapter, distributed across
     //    recent Sundays. Built in three phases because the posted-guard
@@ -372,7 +374,7 @@ async function seedZone(spec: DemoZoneSpec): Promise<void> {
     }
     if (draftRows.length === 0) continue;
 
-    const insertedContribs = await db
+    const insertedContribs = await database
       .insert(contributions)
       .values(draftRows)
       .returning({ id: contributions.id });
@@ -399,12 +401,12 @@ async function seedZone(spec: DemoZoneSpec): Promise<void> {
         });
       }
     }
-    await db.insert(contributionLines).values(lineRows);
+    await database.insert(contributionLines).values(lineRows);
     if (memberAllocRows.length > 0) {
-      await db.insert(contributionMembers).values(memberAllocRows);
+      await database.insert(contributionMembers).values(memberAllocRows);
     }
     // Promote all drafts to posted in one statement.
-    await db
+    await database
       .update(contributions)
       .set({ status: "posted", postedAt: new Date() })
       .where(
@@ -446,7 +448,9 @@ async function main(): Promise<void> {
     return;
   }
   for (const spec of pending) {
-    await seedZone(spec);
+    await db.transaction(async (tx) => {
+      await seedZone(tx, spec);
+    });
   }
   console.log(`[seed:demo] done. ${pending.length} zone(s) seeded.`);
 }

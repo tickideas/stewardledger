@@ -1,25 +1,16 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
-  import { isSuperAdmin, session } from "$lib/session.svelte";
+  import { isSuperAdmin, isSuperAdminOnlyPath, session } from "$lib/session.svelte";
 
   let { children } = $props();
 
-  // Routes inside /admin that are super-admin only. Other admin routes
+  // Gate super-admin-only admin pages BEFORE rendering. Other admin routes
   // (e.g. /admin/regions, /admin/regions/inbox) are available to
   // REGION_CURATOR platform-role holders too — see `requirePlatformRole`
   // on the API side. The session payload doesn't yet surface platform
-  // roles, so anything we know is super-admin-only goes here and the rest
-  // relies on the API's 403 for unauthorized access.
-  const SUPER_ADMIN_ONLY_PREFIXES = ["/admin/zones"] as const;
-
-  function isSuperAdminOnlyPath(path: string): boolean {
-    return SUPER_ADMIN_ONLY_PREFIXES.some(
-      (p) => path === p || path.startsWith(`${p}/`),
-    );
-  }
-
-  // Gate super-admin-only admin pages BEFORE rendering. Lives here (not in
+  // roles, so the remaining admin routes rely on the API's 403.
+  // Lives here (not in
   // the root layout) so admin pages never get a chance to mount and fire
   // their data fetches — which would flash a "Could not load …" error
   // before the redirect arrives.
