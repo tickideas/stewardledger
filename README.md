@@ -85,9 +85,12 @@ pnpm build        # Build everything via Turborepo
 pnpm check        # TypeScript / Svelte check across packages
 pnpm lint         # Biome lint across packages
 pnpm test         # Push test schema + run tests
-pnpm db:studio    # Open Drizzle Studio
-pnpm db:generate  # Generate migration files from schema diffs
-pnpm db:push      # Push schema directly to dev DB
+pnpm db:studio          # Open Drizzle Studio
+pnpm db:generate        # Generate migration files from schema diffs
+pnpm db:push            # Push schema directly to dev DB
+pnpm seed:demo -- --reset # Recreate the three local demo zones and sample giving data
+pnpm create-admin -- --email you@example.com --password-env ADMIN_PASSWORD --name 'You'
+pnpm make-super-admin -- you@example.com --confirm # Elevate an existing user after printing bindings
 ```
 
 ## Status
@@ -98,9 +101,11 @@ draft → posted → voided/reversed state machine end-to-end: services,
 tenant API, posted-immutability triggers, full role bundles, and the
 treasurer SvelteKit UI for the Sunday close (batch list, new-batch form,
 batch detail with inline add-row, contribution detail, and a member
-statement preview). Bulk import / dup-detection (Phase 6) and full
-reports (Phase 7) come next. See [`docs/ROADMAP.md`](docs/ROADMAP.md)
-and [`CHANGELOG.md`](CHANGELOG.md) for the full plan.
+statement preview). A local platform-admin zones dashboard and deterministic
+demo seeding scripts are also in place for operator demos. Bulk import /
+dup-detection (Phase 6) and full reports (Phase 7) come next. See
+[`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md)
+for the full plan.
 
 ## License
 

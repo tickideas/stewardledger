@@ -175,6 +175,7 @@ But: it is a **separate repo**, separate Git history, separate CI pipeline, sepa
 - **Each zone is strictly siloed.** No cross-zone reports in v1 (or planned for any later version).
 - Region is reference data only — useful for filtering the platform-admin tenant list and for branding ("this zone is part of region X"), not for reporting across zones.
 - A user who needs cross-zone visibility (e.g. a regional pastor invited by multiple zones) is given a viewer binding in each of those zones explicitly. There is no shortcut.
+- Platform-admin routes are the only exception to tenant-scoped reads. They are explicitly authenticated as platform operations, log admin access, and are for support/operations views such as the zones list — not tenant financial reporting.
 - This keeps the data and trust model simple: a zone's data is its own.
 
 ---
@@ -291,6 +292,8 @@ s3://steward-prod/
 - 35-day session by default; configurable per zone in v1.1.
 - Session expiring banner triggered 5 minutes before expiry.
 - Sign-in is global (one user, many zones). After authenticating, if the user has bindings in multiple zones, they pick one to enter.
+- Local development and the current split-host deployment model run API and web on different origins (`:3000` and `:5173`, later `api.*` and app/custom-domain hosts). Because the Better Auth cookie is host-only, SvelteKit SSR does not read the API session cookie. The web app therefore performs route gating client-side through `/api/public/session-zones` with `credentials: "include"`; API middleware remains the authoritative security boundary.
+- `/api/public/session-zones` returns active zone bindings only (revoked bindings and soft-deleted zones are excluded) plus the `isSuperAdmin` flag. Platform-only super-admins can be authenticated with zero zone bindings and land on `/admin/zones` instead of tenant pages.
 
 ### 12.1 Middleware stack
 
@@ -305,9 +308,9 @@ Four Hono middlewares compose every request, in this order:
 
 Route groups:
 
-- `/api/public/*` — no session, no tenant. Signup, regions typeahead, invitation lookup/accept.
+- `/api/public/*` — no tenant. Most routes are anonymous signup/invitation helpers; `/api/public/session-zones` optionally requires a Better Auth session and reports the caller's active zone bindings for the client-side gate.
 - `/api/tenant/*` — `tenantMiddleware → requireSession → requireTenantAuth`.
-- `/api/admin/*` — `requireSession → requirePlatformRole(super_admin, region_curator, ...)`. Cross-zone reads are allowed here and only here.
+- `/api/admin/*` — `requireSession → requirePlatformRole(super_admin, region_curator, ...)`. Cross-zone reads are allowed here and only here. `/api/admin/zones` and `/api/admin/zones/:slug` are currently super-admin-only and use cursor pagination on `(created_at, id)` plus per-currency contribution subtotals.
 
 ### 12.2 Invitations
 
