@@ -33,9 +33,8 @@
   });
 
   // Authenticated users hitting /login or /signup get punted to the app
-  // shell. Treat /onboarding/chapter as the canonical landing for users
-  // whose first action is still picking a chapter; otherwise drop them on
-  // /members which is the main read-mostly entry point.
+  // shell. Tenant-bound users land on the zone area, where chapters are the
+  // first setup/management surface.
   $effect(() => {
     if (session.current.status !== "authenticated") return;
     const path = page.url.pathname;
@@ -78,7 +77,7 @@
       <a href="/" class="text-xl font-semibold tracking-tight">StewardLedger</a>
       <nav class="text-sm text-slate-600 flex items-center gap-4">
         {#if isAuthed}
-          <a href="/members" class="hover:text-slate-900">Members</a>
+          <a href="/members" class="hover:text-slate-900">Zone</a>
           <a href="/contributions" class="hover:text-slate-900">Contributions</a>
           <a href="/imports" class="hover:text-slate-900">Imports</a>
           <a href="/reports" class="hover:text-slate-900">Reports</a>

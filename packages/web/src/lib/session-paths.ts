@@ -82,7 +82,7 @@ export function authenticatedLandingPath(
   if (next && isSafeInternalPath(next) && isProtectedPath(next)) return next;
 
   if (session.activeZoneSlug) {
-    return `/onboarding/chapter?zone=${encodeURIComponent(session.activeZoneSlug)}`;
+    return `/members?zone=${encodeURIComponent(session.activeZoneSlug)}`;
   }
   return "/members";
 }

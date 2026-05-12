@@ -90,9 +90,9 @@ describe("authenticatedLandingPath", () => {
     ).toBe("/members");
   });
 
-  it("falls back to onboarding for tenant-bound users", () => {
+  it("falls back to the zone chapter surface for tenant-bound users", () => {
     expect(authenticatedLandingPath({ activeZoneSlug: "demo grace", isSuperAdmin: false })).toBe(
-      "/onboarding/chapter?zone=demo%20grace",
+      "/members?zone=demo%20grace",
     );
   });
 });

@@ -169,7 +169,7 @@
     if (!confirm(`Soft-delete member ${member.fullName ?? member.firstName}?`)) return;
     try {
       await api.delete(`/api/tenant/members/${member.id}`);
-      await goto("/members");
+      await goto("/members/people");
     } catch (err) {
       saveError = err instanceof ApiError ? err.message : "Could not delete member.";
     }

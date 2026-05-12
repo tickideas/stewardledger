@@ -321,6 +321,8 @@ All user onboarding goes through the `invitations` table (see DOMAIN-MODEL.md §
 - **Team invitations** are issued by zone owners/admins via `POST /api/tenant/invitations` and follow the same accept flow.
 - **Acceptance** runs Better Auth `signUpEmail` with the email pinned by the invitation, then writes the role binding atomically. A `zone_owner` accept also flips the zone from `pending_setup` to `active` and sets `users.default_zone_id`.
 - **Demo seed data** creates zones, chapters, members, and contributions only. It does not create church or zone login accounts. To access a demo zone, create a platform admin with `pnpm create-admin`, open `/onboarding/invites?zone=<demo-slug>`, invite the desired zone-wide or chapter-scoped user, then accept the logged invitation URL to create the password.
+- **Chapter onboarding** is only for zones with no chapters. The web app checks `/api/tenant/chapters` before rendering the first-chapter form and redirects to the zone area when any chapter already exists.
+- **Ongoing chapter management** lives under `Zone → Chapters`, where zone owners/admins can add additional chapters after onboarding. The `Zone` entry opens chapters first because zone setup usually starts there before member management.
 
 ---
 
