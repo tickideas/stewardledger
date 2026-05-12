@@ -106,7 +106,7 @@ function parseZonesCursor(cursor: string): ZonesCursor | null {
  *
  * Query params: ?limit=&cursor=&q=
  *   limit: 1..100 (default 50)
- *   cursor: ISO timestamp; returns zones created strictly before it
+ *   cursor: `${createdAtIso}_${zoneId}` from the previous page's last row
  *   q: case-insensitive match against name / slug / regionNameUnverified
  */
 adminRouter.get(

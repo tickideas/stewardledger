@@ -4,7 +4,8 @@
 // run, and for the demo.
 //
 // Usage:
-//   ADMIN_PASSWORD='hunter22!' pnpm create-admin -- --email you@example.com --password-env ADMIN_PASSWORD --name 'You'
+//   read -s ADMIN_PASSWORD && export ADMIN_PASSWORD
+//   pnpm create-admin -- --email you@example.com --password-env ADMIN_PASSWORD --name 'You'
 //
 // If the email already exists this script REFUSES by default. Pass
 // --elevate-existing to confirm you really meant to grant platform-wide

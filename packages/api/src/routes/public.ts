@@ -69,7 +69,13 @@ publicRouter.get("/session-zones", async (c) => {
       .select({ id: zones.id, slug: zones.slug, name: zones.name })
       .from(userRoleBindings)
       .innerJoin(zones, eq(userRoleBindings.zoneId, zones.id))
-      .where(and(eq(userRoleBindings.userId, session.user.id), isNull(userRoleBindings.revokedAt)))
+      .where(
+        and(
+          eq(userRoleBindings.userId, session.user.id),
+          isNull(userRoleBindings.revokedAt),
+          isNull(zones.deletedAt),
+        ),
+      )
       .orderBy(asc(zones.name)),
   ]);
   const userRow = userRows[0];

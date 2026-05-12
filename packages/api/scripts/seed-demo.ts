@@ -187,7 +187,6 @@ async function dropExistingDemoZones(slugs: readonly string[]): Promise<void> {
 async function loadSundays(
   database: Db,
   zoneId: string,
-  spec: DemoZoneSpec,
 ): Promise<{ id: string; date: string }[]> {
   const today = new Date().toISOString().slice(0, 10);
   // Always seed last year as well so a January run still finds recent
@@ -200,7 +199,6 @@ async function loadSundays(
     new Date(new Date().getUTCFullYear() - 1, 0, 1),
   );
 
-  void spec;
   const rows = await database
     .select({ id: givingPeriods.id, date: givingPeriods.date })
     .from(givingPeriods)
@@ -278,7 +276,7 @@ async function seedZone(database: Db, spec: DemoZoneSpec): Promise<void> {
   const cashMethodId = cashMethod.id;
 
   // Last 12 past-or-today Sundays across this year + last year. Never future.
-  const allPastSundays = await loadSundays(database, zone.id, spec);
+  const allPastSundays = await loadSundays(database, zone.id);
   const periodsToUse = allPastSundays.slice(-12);
   if (periodsToUse.length === 0) {
     throw new Error(

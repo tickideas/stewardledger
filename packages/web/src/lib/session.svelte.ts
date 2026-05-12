@@ -54,8 +54,13 @@ let sessionEpoch = 0;
  * endpoint returns 401 when no Better Auth session cookie is present, and
  * 200 with the caller's zones otherwise. Coalesces concurrent calls.
  */
-export function loadSession(): Promise<void> {
-  if (inflight) return inflight;
+export function loadSession(opts: { force?: boolean } = {}): Promise<void> {
+  if (opts.force) {
+    sessionEpoch++;
+    inflight = null;
+  } else if (inflight) {
+    return inflight;
+  }
   const epoch = sessionEpoch;
   inflight = (async () => {
     try {

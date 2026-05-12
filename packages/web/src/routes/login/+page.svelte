@@ -59,8 +59,9 @@
       if (zoneSlug) {
         localStorage.setItem(ACTIVE_ZONE_KEY, zoneSlug);
       }
-      // Refresh the in-memory session so the navbar updates before navigation.
-      await loadSession();
+      // Force-refresh the in-memory session so we don't coalesce with the
+      // anonymous pre-login request kicked off by the root layout.
+      await loadSession({ force: true });
 
       // Use the same landing policy as the root layout. In particular,
       // platform-only super-admins must never be sent to tenant-only pages
