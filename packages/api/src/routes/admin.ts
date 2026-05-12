@@ -34,6 +34,7 @@ import {
 import { writeAudit } from "../services/audit";
 import {
   createInvitation,
+  revokeOpenInvitations,
   sendZoneOwnerInviteEmail,
 } from "../services/invitations";
 import { assertNameAvailable, NameTakenError } from "../services/names";
@@ -427,6 +428,22 @@ adminRouter.post(
  * owner has accepted, ownership is a tenant-side concern (managed via the
  * tenant invitations API or future ownership-transfer flow).
  */
+/**
+ * Sentinel used inside the resend transaction to bubble a precondition
+ * failure (zone disappeared / activated) back to the handler as a 409.
+ * Throwing keeps the SELECT FOR UPDATE + revoke + insert atomic; if we
+ * returned `null` instead, the partial state from a previous statement
+ * could still commit.
+ */
+class ResendPreconditionError extends Error {
+  constructor(
+    readonly code: "not_found" | "zone_already_active",
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 adminRouter.post(
   "/zones/:slug/owner-invitations",
   zValidator("json", zoneOwnerInviteResendSchema),
@@ -438,72 +455,93 @@ adminRouter.post(
     const input = c.req.valid("json");
     logAdminAccess(c, "admin.zones.owner_invite_resend", { zoneSlug: slug, email: input.email });
 
-    const [zone] = await db
-      .select({ id: zones.id, slug: zones.slug, name: zones.name, status: zones.status })
-      .from(zones)
-      .where(and(eq(zones.slug, slug), isNull(zones.deletedAt)))
-      .limit(1);
-    if (!zone) {
-      return c.json({ error: { code: "not_found", message: "Zone not found" } }, 404);
-    }
-    if (zone.status !== "pending_setup") {
-      return c.json(
-        {
-          error: {
-            code: "zone_already_active",
-            message: "This zone has already activated; the owner has accepted their invitation.",
-          },
-        },
-        409,
-      );
-    }
+    let result: { invitation: Awaited<ReturnType<typeof createInvitation>>; revokedCount: number; zoneName: string; zoneSlug: string };
+    try {
+      result = await db.transaction(async (tx) => {
+        // SELECT FOR UPDATE so an in-flight invitation-accept can't flip the
+        // zone to active between our status check and the revoke/insert.
+        // Without this, we could resend onto an already-activated zone.
+        const [zone] = await tx
+          .select({ id: zones.id, slug: zones.slug, name: zones.name, status: zones.status })
+          .from(zones)
+          .where(and(eq(zones.slug, slug), isNull(zones.deletedAt)))
+          .for("update")
+          .limit(1);
+        if (!zone) {
+          throw new ResendPreconditionError("not_found", "Zone not found");
+        }
+        if (zone.status !== "pending_setup") {
+          throw new ResendPreconditionError(
+            "zone_already_active",
+            "This zone has already activated; the owner has accepted their invitation.",
+          );
+        }
 
-    const result = await db.transaction(async (tx) => {
-      // Revoke every open owner invitation on the zone. We don't filter by
-      // email — if the admin is correcting a typo, the previous email's
-      // token must also stop working.
-      const revoked = await tx
-        .update(invitations)
-        .set({ revokedAt: new Date(), revokedByUserId: user.id })
-        .where(
-          and(
-            eq(invitations.zoneId, zone.id),
-            eq(invitations.roleCode, ZONE_ROLES.ZONE_OWNER),
-            isNull(invitations.acceptedAt),
-            isNull(invitations.revokedAt),
-          ),
-        )
-        .returning({ id: invitations.id });
+        // Revoke every open owner invitation on the zone. We don't filter by
+        // email — if the admin is correcting a typo, the previous email's
+        // token must also stop working.
+        const { revokedIds } = await revokeOpenInvitations(
+          tx,
+          { zoneId: zone.id, roleCode: ZONE_ROLES.ZONE_OWNER },
+          user.id,
+        );
 
-      const inv = await createInvitation(tx, {
-        zoneId: zone.id,
-        email: input.email,
-        roleCode: ZONE_ROLES.ZONE_OWNER,
-        createdByUserId: user.id,
-      });
-
-      await writeAudit(tx, {
-        zoneId: zone.id,
-        actorUserId: user.id,
-        action: "zone.owner_invite.resend",
-        entityType: "invitation",
-        entityId: inv.id,
-        after: {
+        const inv = await createInvitation(tx, {
+          zoneId: zone.id,
           email: input.email,
-          revokedInvitationIds: revoked.map((r) => r.id),
-        },
+          roleCode: ZONE_ROLES.ZONE_OWNER,
+          createdByUserId: user.id,
+        });
+
+        await writeAudit(tx, {
+          zoneId: zone.id,
+          actorUserId: user.id,
+          action: "zone.owner_invite.resend",
+          entityType: "invitation",
+          entityId: inv.id,
+          after: {
+            email: input.email,
+            revokedInvitationIds: revokedIds,
+          },
+        });
+
+        return {
+          invitation: inv,
+          revokedCount: revokedIds.length,
+          zoneName: zone.name,
+          zoneSlug: zone.slug,
+        };
       });
+    } catch (err) {
+      if (err instanceof ResendPreconditionError) {
+        return c.json(
+          { error: { code: err.code, message: err.message } },
+          err.code === "not_found" ? 404 : 409,
+        );
+      }
+      throw err;
+    }
 
-      return { invitation: inv, revokedCount: revoked.length };
-    });
-
-    await sendZoneOwnerInviteEmail({
-      to: input.email,
-      contactName: input.primaryContactName ?? null,
-      zoneSlug: zone.slug,
-      zoneName: zone.name,
-      token: result.invitation.token,
-    });
+    // Email goes after commit so we never send a link for a token that
+    // ultimately rolled back. If the send itself fails the DB state is
+    // still valid — the admin can re-trigger from the UI — so we surface
+    // a non-fatal warning rather than 500ing.
+    let emailWarning: string | null = null;
+    try {
+      await sendZoneOwnerInviteEmail({
+        to: input.email,
+        contactName: input.primaryContactName ?? null,
+        zoneSlug: result.zoneSlug,
+        zoneName: result.zoneName,
+        token: result.invitation.token,
+      });
+    } catch (err) {
+      log.error(
+        { err, zoneSlug: result.zoneSlug, invitationId: result.invitation.id },
+        "owner invite resend: email send failed",
+      );
+      emailWarning = "email_send_failed";
+    }
 
     return c.json(
       {
@@ -511,6 +549,7 @@ adminRouter.post(
         invitationId: result.invitation.id,
         expiresAt: result.invitation.expiresAt.toISOString(),
         revokedCount: result.revokedCount,
+        ...(emailWarning ? { warning: emailWarning } : {}),
       },
       201,
     );
@@ -531,40 +570,40 @@ adminRouter.post("/zones/:slug/invitations/:id/revoke", async (c) => {
   const invitationId = c.req.param("id");
   logAdminAccess(c, "admin.zones.invitation_revoke", { zoneSlug: slug, invitationId });
 
-  const [zone] = await db
-    .select({ id: zones.id })
-    .from(zones)
-    .where(and(eq(zones.slug, slug), isNull(zones.deletedAt)))
-    .limit(1);
-  if (!zone) {
+  const revoked = await db.transaction(async (tx) => {
+    const [zone] = await tx
+      .select({ id: zones.id })
+      .from(zones)
+      .where(and(eq(zones.slug, slug), isNull(zones.deletedAt)))
+      .limit(1);
+    if (!zone) return { kind: "zone_not_found" as const };
+
+    const { revokedIds } = await revokeOpenInvitations(
+      tx,
+      { zoneId: zone.id, invitationId },
+      user.id,
+    );
+    if (revokedIds.length === 0) return { kind: "invitation_not_found" as const };
+
+    await writeAudit(tx, {
+      zoneId: zone.id,
+      actorUserId: user.id,
+      action: "invitation.revoke",
+      entityType: "invitation",
+      entityId: invitationId,
+    });
+    return { kind: "ok" as const };
+  });
+
+  if (revoked.kind === "zone_not_found") {
     return c.json({ error: { code: "not_found", message: "Zone not found" } }, 404);
   }
-
-  const result = await db
-    .update(invitations)
-    .set({ revokedAt: new Date(), revokedByUserId: user.id })
-    .where(
-      and(
-        eq(invitations.id, invitationId),
-        eq(invitations.zoneId, zone.id),
-        isNull(invitations.acceptedAt),
-        isNull(invitations.revokedAt),
-      ),
-    )
-    .returning({ id: invitations.id });
-  if (!result[0]) {
+  if (revoked.kind === "invitation_not_found") {
     return c.json(
       { error: { code: "not_found", message: "Invitation not revocable" } },
       404,
     );
   }
-  await writeAudit(db, {
-    zoneId: zone.id,
-    actorUserId: user.id,
-    action: "invitation.revoke",
-    entityType: "invitation",
-    entityId: invitationId,
-  });
   return c.json({ status: "revoked" });
 });
 

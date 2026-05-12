@@ -55,6 +55,40 @@ export class InvitationError extends Error {
   }
 }
 
+export interface RevokeFilter {
+  zoneId: string;
+  /** Optional: limit to a specific invitation id. */
+  invitationId?: string;
+  /** Optional: limit to one role code (e.g. owner-only resend). */
+  roleCode?: string;
+}
+
+/**
+ * Revoke every currently-open invitation that matches `filter`. Open means
+ * neither accepted nor revoked. Caller must pass a transaction handle when
+ * the revoke is part of a larger atomic operation (e.g. resend), so the
+ * revoke and the follow-on insert/audit commit together.
+ */
+export async function revokeOpenInvitations(
+  database: Db,
+  filter: RevokeFilter,
+  revokedByUserId: string,
+): Promise<{ revokedIds: string[] }> {
+  const conditions = [
+    eq(invitations.zoneId, filter.zoneId),
+    isNull(invitations.acceptedAt),
+    isNull(invitations.revokedAt),
+  ];
+  if (filter.invitationId) conditions.push(eq(invitations.id, filter.invitationId));
+  if (filter.roleCode) conditions.push(eq(invitations.roleCode, filter.roleCode));
+  const rows = await database
+    .update(invitations)
+    .set({ revokedAt: new Date(), revokedByUserId })
+    .where(and(...conditions))
+    .returning({ id: invitations.id });
+  return { revokedIds: rows.map((r) => r.id) };
+}
+
 export async function createInvitation(
   database: Db,
   args: CreateArgs,
@@ -255,7 +289,7 @@ export async function sendZoneOwnerInviteEmail(args: ZoneOwnerInviteEmail): Prom
       zoneName: args.zoneName,
       body: `
         ${greetingHtml}
-        <p>You've been invited to set up <strong>${escapeHtml(args.zoneName)}</strong> on ${BRAND_WORDMARK}.</p>
+        <p>You've been invited to set up <strong>${escapeHtml(args.zoneName)}</strong> on ${escapeHtml(BRAND_WORDMARK)}.</p>
         <p>Click the button below to accept the invitation, choose a password, and finish setting up your zone.</p>
         <p>
           <a href="${acceptUrl}"

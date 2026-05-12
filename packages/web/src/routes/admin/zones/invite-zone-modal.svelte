@@ -3,6 +3,7 @@
   // primary contact a zone_owner invitation. Lifted from the deleted public
   // /signup form; the payload shape (zoneSignupSchema) is identical.
 
+  import { untrack } from "svelte";
   import { api, ApiError } from "$lib/api";
 
   type RegionHit = { id: string; name: string; shortCode: string | null };
@@ -39,8 +40,14 @@
       .replace(/^-+|-+$/g, "")
       .slice(0, 40);
   }
+  // Track `name` only; reading `slug` would re-fire the effect after each
+  // assignment we make below and loop. `untrack` lets us compare against
+  // the current slug without subscribing to it.
   $effect(() => {
-    if (!slug || slug === autoSlug(name).slice(0, slug.length)) slug = autoSlug(name);
+    const next = autoSlug(name);
+    untrack(() => {
+      if (!slug || slug === next.slice(0, slug.length)) slug = next;
+    });
   });
 
   // Reset when the modal closes so the next open starts clean. We don't

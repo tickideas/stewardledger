@@ -5,12 +5,13 @@
 // super-admin gate intentionally allows cross-zone reads/writes.
 
 import {
+  auditEvents,
   invitations,
   user as userTable,
   zones,
 } from "@stewardledger/db/schema";
 import { ZONE_ROLES } from "@stewardledger/shared";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app";
 import { auth } from "../auth";
@@ -37,7 +38,10 @@ async function seedSuperAdmin(): Promise<{ id: string; email: string }> {
 const app = createApp();
 const ADMIN_URL = "http://localhost";
 
-async function adminCall(path: string, opts: { method?: string; body?: unknown } = {}): Promise<Response> {
+async function adminCall(
+  path: string,
+  opts: { method?: string; body?: unknown } = {},
+): Promise<Response> {
   return app.fetch(
     new Request(`${ADMIN_URL}${path}`, {
       method: opts.method ?? "GET",
@@ -176,6 +180,33 @@ describe("admin zone onboarding routes", () => {
     expect(original.revokedAt).not.toBeNull();
     expect(fresh.revokedAt).toBeNull();
     expect(fresh.email).toBe(newEmail);
+
+    // Audit trail: a zone.owner_invite.resend row should reference the new
+    // invitation and record the revoked id in its `after` payload. This
+    // proves the audit insert runs inside the same transaction as the
+    // revoke/insert (per services/audit.ts contract).
+    const [audit] = await db
+      .select({
+        action: auditEvents.action,
+        entityId: auditEvents.entityId,
+        after: auditEvents.after,
+        actorUserId: auditEvents.actorUserId,
+      })
+      .from(auditEvents)
+      .where(
+        and(
+          eq(auditEvents.zoneId, zoneId),
+          eq(auditEvents.action, "zone.owner_invite.resend"),
+        ),
+      )
+      .orderBy(desc(auditEvents.occurredAt))
+      .limit(1);
+    expect(audit).toBeDefined();
+    expect(audit.entityId).toBe(body.invitationId);
+    expect(audit.actorUserId).toBe(admin.id);
+    expect((audit.after as { revokedInvitationIds: string[] }).revokedInvitationIds).toContain(
+      originalId,
+    );
   });
 
   it("POST /zones/:slug/owner-invitations refuses on already-active zones", async () => {
@@ -219,6 +250,18 @@ describe("admin zone onboarding routes", () => {
       .from(invitations)
       .where(eq(invitations.id, open.id));
     expect(after.revokedAt).not.toBeNull();
+
+    // Audit row written in the same transaction.
+    const [audit] = await db
+      .select({ action: auditEvents.action, entityId: auditEvents.entityId })
+      .from(auditEvents)
+      .where(
+        and(eq(auditEvents.zoneId, zoneId), eq(auditEvents.action, "invitation.revoke")),
+      )
+      .orderBy(desc(auditEvents.occurredAt))
+      .limit(1);
+    expect(audit).toBeDefined();
+    expect(audit.entityId).toBe(open.id);
   });
 
   it("rejects revoke for an unknown invitation id on a real zone with 404", async () => {

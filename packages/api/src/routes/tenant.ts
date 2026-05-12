@@ -21,6 +21,7 @@ import {
   buildAcceptUrl,
   createInvitation,
   isChapterRole,
+  revokeOpenInvitations,
 } from "../services/invitations";
 import { tenantContributionsRouter } from "./tenant-contributions";
 import { tenantGivingRouter } from "./tenant-giving";
@@ -243,28 +244,25 @@ tenantRouter.post("/invitations/:id/revoke", async (c) => {
     return c.json({ error: { code: "forbidden", message: "Zone admin required" } }, 403);
   }
   const id = c.req.param("id");
-  const result = await db
-    .update(invitations)
-    .set({ revokedAt: new Date(), revokedByUserId: ctx.userId })
-    .where(
-      and(
-        eq(invitations.id, id),
-        eq(invitations.zoneId, ctx.zoneId),
-        isNull(invitations.acceptedAt),
-        isNull(invitations.revokedAt),
-      ),
-    )
-    .returning({ id: invitations.id });
-  if (!result[0])
-    return c.json({ error: { code: "not_found", message: "Invitation not revocable" } }, 404);
-  await writeAudit(db, {
-    zoneId: ctx.zoneId,
-    actorUserId: ctx.userId,
-    action: "invitation.revoke",
-    entityType: "invitation",
-    entityId: id,
+  const revoked = await db.transaction(async (tx) => {
+    const { revokedIds } = await revokeOpenInvitations(
+      tx,
+      { zoneId: ctx.zoneId, invitationId: id },
+      ctx.userId,
+    );
+    if (revokedIds.length === 0) return null;
+    await writeAudit(tx, {
+      zoneId: ctx.zoneId,
+      actorUserId: ctx.userId,
+      action: "invitation.revoke",
+      entityType: "invitation",
+      entityId: id,
+    });
+    return revokedIds[0];
   });
+  if (!revoked) {
+    return c.json({ error: { code: "not_found", message: "Invitation not revocable" } }, 404);
+  }
   return c.json({ status: "revoked" });
 });
-
 

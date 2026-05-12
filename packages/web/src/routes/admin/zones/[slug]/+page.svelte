@@ -98,13 +98,35 @@
   let resendEmail = $state("");
   let resendName = $state("");
   let resendSubmitting = $state(false);
-  let resendError = $state<string | null>(null);
-  let flash = $state<string | null>(null);
+
+  // Unified status banner: every action (resend success, resend warning,
+  // revoke success, any failure) renders here so the user always looks in
+  // the same place. `level` controls colour; `sticky` keeps errors visible
+  // until the next action instead of auto-dismissing.
+  type StatusLevel = "success" | "warning" | "error";
+  let status = $state<{ level: StatusLevel; message: string } | null>(null);
+  let statusTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function setStatus(level: StatusLevel, message: string, autoDismissMs?: number) {
+    if (statusTimer) clearTimeout(statusTimer);
+    status = { level, message };
+    if (autoDismissMs) {
+      statusTimer = setTimeout(() => {
+        status = null;
+        statusTimer = null;
+      }, autoDismissMs);
+    }
+  }
+
+  // Confirm dialog state for destructive actions. Inline rather than
+  // `window.confirm` so admins on embedded contexts (e.g. mobile in-app
+  // browsers) get a consistent UX with the rest of the page.
+  let confirmingRevoke = $state<OpenInvitation | null>(null);
+  let revokeSubmitting = $state(false);
 
   function openResend() {
     resendEmail = ownerInvite?.email ?? "";
     resendName = "";
-    resendError = null;
     resendOpen = true;
   }
 
@@ -113,57 +135,77 @@
     resendOpen = false;
   }
 
-  function flashFor(ms: number, message: string) {
-    flash = message;
-    setTimeout(() => {
-      flash = null;
-    }, ms);
-  }
-
   async function submitResend(e: SubmitEvent) {
     e.preventDefault();
     if (!data) return;
-    resendError = null;
     resendSubmitting = true;
     try {
-      await api.post(`/api/admin/zones/${data.zone.slug}/owner-invitations`, {
-        email: resendEmail,
-        ...(resendName.trim() ? { primaryContactName: resendName.trim() } : {}),
-      });
+      const res = await api.post<{ status: string; warning?: string }>(
+        `/api/admin/zones/${data.zone.slug}/owner-invitations`,
+        {
+          email: resendEmail,
+          ...(resendName.trim() ? { primaryContactName: resendName.trim() } : {}),
+        },
+      );
       resendOpen = false;
-      flashFor(6000, `New invitation sent to ${resendEmail}.`);
+      if (res.warning === "email_send_failed") {
+        // Token was created OK but the email never went out. Tell the admin
+        // explicitly so they can retry instead of assuming the recipient got
+        // it. No auto-dismiss — this needs a human-read.
+        setStatus(
+          "warning",
+          `Invitation created for ${resendEmail}, but the email failed to send. Try again, or fetch the link from the server logs.`,
+        );
+      } else {
+        setStatus("success", `New invitation sent to ${resendEmail}.`, 6000);
+      }
       await refresh();
     } catch (err) {
-      resendError =
-        err instanceof ApiError ? err.message : "Could not resend the invitation.";
+      setStatus(
+        "error",
+        err instanceof ApiError ? err.message : "Could not resend the invitation.",
+      );
     } finally {
       resendSubmitting = false;
     }
   }
 
-  async function revoke(inv: OpenInvitation) {
-    if (!data) return;
-    const confirmed = confirm(
-      `Revoke the open invitation for ${inv.email}? The current link will stop working.`,
-    );
-    if (!confirmed) return;
+  function requestRevoke(inv: OpenInvitation) {
+    confirmingRevoke = inv;
+  }
+
+  function closeRevokeConfirm() {
+    if (revokeSubmitting) return;
+    confirmingRevoke = null;
+  }
+
+  async function confirmRevoke() {
+    if (!data || !confirmingRevoke) return;
+    const inv = confirmingRevoke;
+    revokeSubmitting = true;
     try {
       await api.post(
         `/api/admin/zones/${data.zone.slug}/invitations/${inv.id}/revoke`,
         {},
       );
-      flashFor(6000, `Invitation for ${inv.email} revoked.`);
+      confirmingRevoke = null;
+      setStatus("success", `Invitation for ${inv.email} revoked.`, 6000);
       await refresh();
     } catch (err) {
-      flashFor(
-        8000,
+      setStatus(
+        "error",
         err instanceof ApiError ? err.message : "Could not revoke the invitation.",
       );
+      confirmingRevoke = null;
+    } finally {
+      revokeSubmitting = false;
     }
   }
 
   function onKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape" && resendOpen) closeResend();
+    if (e.key !== "Escape") return;
+    if (resendOpen) closeResend();
+    else if (confirmingRevoke) closeRevokeConfirm();
   }
 </script>
 
@@ -245,12 +287,26 @@
       </div>
     </dl>
 
-    {#if flash}
-      <p
-        class="mt-6 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
+    {#if status}
+      <div
+        class="mt-6 flex items-start justify-between gap-3 rounded-lg border px-3 py-2 text-sm {status.level ===
+        'success'
+          ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+          : status.level === 'warning'
+            ? 'border-amber-300 bg-amber-50 text-amber-800'
+            : 'border-red-300 bg-red-50 text-red-800'}"
+        role={status.level === "error" ? "alert" : "status"}
       >
-        {flash}
-      </p>
+        <span>{status.message}</span>
+        <button
+          type="button"
+          onclick={() => (status = null)}
+          class="shrink-0 text-xs opacity-70 hover:opacity-100"
+          aria-label="Dismiss"
+        >
+          ✕
+        </button>
+      </div>
     {/if}
 
     {#if data.openInvitations.length > 0}
@@ -303,7 +359,7 @@
                     {/if}
                     <button
                       type="button"
-                      onclick={() => revoke(inv)}
+                      onclick={() => requestRevoke(inv)}
                       class="rounded border border-red-200 bg-white px-2.5 py-1 text-xs text-red-700 hover:bg-red-50"
                     >
                       Revoke
@@ -424,9 +480,6 @@
                 class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               />
             </label>
-            {#if resendError}
-              <p class="text-sm text-red-600">{resendError}</p>
-            {/if}
             <div class="flex items-center justify-end gap-3 pt-2">
               <button
                 type="button"
@@ -445,6 +498,51 @@
               </button>
             </div>
           </form>
+        </div>
+      </div>
+    {/if}
+
+    {#if confirmingRevoke}
+      <div
+        class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 sm:p-8"
+        role="presentation"
+        onclick={(e) => {
+          if (e.target === e.currentTarget) closeRevokeConfirm();
+        }}
+      >
+        <div
+          class="w-full max-w-md rounded-xl bg-white shadow-xl"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="revoke-title"
+        >
+          <div class="border-b border-slate-200 px-6 py-4">
+            <h2 id="revoke-title" class="text-lg font-semibold tracking-tight">
+              Revoke this invitation?
+            </h2>
+            <p class="mt-1 text-xs text-slate-500">
+              The link sent to <strong>{confirmingRevoke.email}</strong> will stop working immediately.
+              This can't be undone.
+            </p>
+          </div>
+          <div class="flex items-center justify-end gap-3 px-6 py-4">
+            <button
+              type="button"
+              onclick={closeRevokeConfirm}
+              disabled={revokeSubmitting}
+              class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onclick={confirmRevoke}
+              disabled={revokeSubmitting}
+              class="inline-flex items-center justify-center rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+            >
+              {revokeSubmitting ? "Revoking…" : "Revoke"}
+            </button>
+          </div>
         </div>
       </div>
     {/if}

@@ -327,6 +327,8 @@ Users are global accounts (one per email). A user can belong to many zones (diff
 
 ### 7.2 Onboarding
 
+> **Current behaviour (v1):** StewardLedger is **invitation-only**. There is no public signup form — a platform admin creates the zone via `POST /api/admin/zones/invite` (UI: `/admin/zones`) and emails the primary contact a `zone_owner` invitation. See `docs/ARCHITECTURE.md` §12.2. The Stripe self-service flow described below is **roadmap content**, not current behaviour, and Phase 10 will revisit whether to re-open public signup.
+
 **The customer is a zone.** There is no free trial — a zone is a 50-chapter, multi-thousand-member operation, not a one-person product. Instead:
 
 #### Public demo (anyone)

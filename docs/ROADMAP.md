@@ -72,13 +72,13 @@ Deliverables:
 
 - Public marketing site landing page with sign-up CTA.
 - **Public demo zone** (`demo.stewardledger.church`) seeded with realistic sandbox data; nightly reset job. Current local/demo tooling seeds three realistic demo zones (`demo-grace-uk`, `demo-lighthouse-us`, `demo-river-ng`) via `pnpm seed:demo -- --reset`.
-- Paid signup flow:
-  - Sales / signup form (zone name, country, time zone, default currency, billing contact, expected chapters/members).
-  - StewardLedger team confirms plan tier and pricing.
-  - Zone is provisioned (subdomain, branding placeholder, default seeds).
+- **Closed onboarding (current v1 behaviour):** StewardLedger is invitation-only — no public signup form. A platform admin uses `/admin/zones` → *Invite zone* to create the tenant and email the primary contact a `zone_owner` invitation (see `docs/ARCHITECTURE.md` §12.2 and the *Invite / resend / revoke* endpoints under `/api/admin/zones/...`). The Stripe self-service path is **deferred to Phase 10** and re-evaluated there.
+  - Admin-issued invite captures: zone name, country, time zone, default currency, primary contact, region (typeahead or free-text).
+  - StewardLedger team confirms plan tier and pricing out-of-band.
+  - Zone is provisioned in `pending_setup` with default seeds; flips to `active` on owner accept.
   - Region selection: typeahead on existing regions; free-text fallback (creates `region_name_unverified`).
-  - Owner is invited as `zone_owner` and walks through guided onboarding (chapters, members, first envelope batch).
-  - Plan picked: Founding / Standard / Premium. Billing via Stripe (default) or invoice (first cohort).
+  - Owner accepts via `/invite/[token]`, sets a password, and walks through guided onboarding (chapters, members, first envelope batch).
+  - Plan picked: Founding / Standard / Premium. Billing: invoice / bank transfer for the founding cohort; Stripe added in Phase 10.
 - Zone settings (name, branding, default currency, time zone, fiscal year start).
 - Chapter CRUD with reference-code generator (configurable format; legacy-style default).
 - Chapter name history captured automatically.
@@ -89,8 +89,9 @@ Deliverables:
 
 Exit checklist:
 
-- [x] Self-service signup works end-to-end (covered by `signup.test.ts`; staging deploy still pending).
-- [x] A free-text region submitted at signup appears in the platform-admin inbox (`GET /api/admin/regions/inbox`).
+- [x] Admin-issued zone invitation works end-to-end: `POST /api/admin/zones/invite` creates a `pending_setup` zone with a `zone_owner` invitation (covered by `signup.test.ts` for the service and `admin.test.ts` for the route).
+- [x] Admin can resend or revoke a pending zone-owner invitation from `/admin/zones/[slug]` (covered by `admin.test.ts`).
+- [x] A free-text region submitted at invite time appears in the platform-admin inbox (`GET /api/admin/regions/inbox`).
 - [x] Super-admins can inspect all active zones from `/admin/zones`; platform-only super-admins with no tenant bindings land there after login.
 - [x] Demo seed data can be reset locally with `pnpm seed:demo -- --reset`; `create-admin` / `make-super-admin --confirm` bootstrap demo operator access.
 - [x] Owner can add chapters and invite users (`POST /api/tenant/chapters`, `POST /api/tenant/invitations`).
