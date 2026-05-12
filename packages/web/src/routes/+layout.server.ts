@@ -25,17 +25,19 @@ export const load: LayoutServerLoad = async ({ locals, url }) => {
     redirect(303, `/login${nextParam}`);
   }
 
-  if (isSuperAdminOnlyPath(path) && !session?.isSuperAdmin) {
-    // Already authenticated (path is also protected → guarded above); just
-    // not a super-admin. Bounce to *their* landing surface so a
-    // chapter-only admin lands on /church/overview rather than /zone/chapters
-    // (which their role doesn't unlock). `session` is non-null at this
-    // point because every super-admin-only path is also a protected path
-    // and the unauthenticated branch above already redirected.
-    if (session) {
-      redirect(303, authenticatedLandingPath(landingInputFromServerSession(session, null)));
-    }
-    redirect(303, "/login");
+  // Super-admin-only paths are also protected paths (verified by
+  // `route-partitioning` tests), so by the time we reach here `session`
+  // is guaranteed non-null — the unauthenticated branch above already
+  // redirected anyone without a session. Narrow with `session && …` so
+  // TS agrees, and bounce to *their* landing surface (a chapter-only
+  // admin lands on /church/overview instead of /zone/chapters), keeping
+  // their `?zone=` if they had one in the URL.
+  if (session && isSuperAdminOnlyPath(path) && !session.isSuperAdmin) {
+    const zoneFromQuery = url.searchParams.get("zone");
+    redirect(
+      303,
+      authenticatedLandingPath(landingInputFromServerSession(session, zoneFromQuery)),
+    );
   }
 
   // Ship the SSR-resolved session to the browser so the client store can

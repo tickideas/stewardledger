@@ -29,7 +29,7 @@
 | ORM / migrations | **Drizzle** + `drizzle-kit` | Schema-first, codegen, push and migrate. |
 | Validation | **Zod** | Shared schemas between API and UI. |
 | Auth | **Better Auth** | Email OTP + magic link + password; same as echurcher. |
-| Sessions | Cookie-based, host-only | Same hardening as echurcher. |
+| Sessions | Cookie-based; host-only by default, parent-domain scoping via `AUTH_COOKIE_DOMAIN` for split-host deploys | Same hardening as echurcher. See §12 + `docs/DEPLOYMENT.md`. |
 | Background jobs | **pg-boss** | Postgres-native queues; no Redis required for v1. |
 | Email | **useSend** | Self-hosted; share echurcher's instance. |
 | Object storage | S3-compatible | R2 / Backblaze B2 / MinIO. Used for uploaded files and generated reports. |

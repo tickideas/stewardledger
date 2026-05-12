@@ -450,9 +450,8 @@ tenantRouter.post(
             chapterId,
             name: input.name,
             // Validated above by `contributionBatchTemplateCreateSchema`
-            // (strict); the shared schema's inferred type is wider than the
-            // jsonb column's `Record<string, unknown>` only in optional
-            // flags, so the cast here is purely structural.
+            // (`.strict()`), so `input.payload` lands in the `payload jsonb`
+            // column as a known-good object without further coercion.
             payload: input.payload,
             createdByUserId: ctx.userId,
           })

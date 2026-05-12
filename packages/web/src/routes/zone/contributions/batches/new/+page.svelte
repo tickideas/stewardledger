@@ -121,19 +121,17 @@
    * Apply a template to the form. Always overwrites every prefilled field
    * so switching from template A to template B doesn't leave A's payment
    * method stuck — the picker should feel like a clean reset every time.
-   * Stale ids (deleted payment method since the template was saved) round-
-   * trip back to the empty select; the server treats null/empty as “no
-   * method”.
+   * A stale id (deleted payment method since the template was saved)
+   * simply renders as the empty option in the select; the server treats
+   * null/empty as “no method”. We don't validate against
+   * `paymentMethods` here because it may not have loaded yet on the
+   * cold-path `?templateId=` deep-link.
    */
   function applyTemplate(id: string) {
     const t = templates.find((x) => x.id === id);
     if (!t) return;
     sourceType = t.payload.sourceType;
-    paymentMethodId =
-      t.payload.paymentMethodId &&
-      paymentMethods.some((pm) => pm.id === t.payload.paymentMethodId)
-        ? t.payload.paymentMethodId
-        : "";
+    paymentMethodId = t.payload.paymentMethodId ?? "";
     referenceCode = t.payload.referenceCode ?? "";
     notes = t.payload.notes ?? "";
   }

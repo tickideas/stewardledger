@@ -33,9 +33,6 @@ export const chapterBatchTemplates = pgTable(
       .notNull()
       .references(() => chapters.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
-    // `default({})` is harmless: every code path inserts an explicit,
-    // Zod-validated payload, but the DB default keeps the column safe
-    // against a future direct-SQL backfill that forgets the field.
     payload: jsonb("payload").notNull().default({}),
     createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
