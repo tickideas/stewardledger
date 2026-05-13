@@ -1,3 +1,8 @@
+<!-- packages/web/src/routes/church/+layout.svelte -->
+<!-- Chapter-scoped shell with active chapter selection, navigation, and account controls. -->
+<!-- Exists so chapter users work inside one tenant/chapter context without leaving the church surface. -->
+<!-- RELEVANT FILES: packages/web/src/lib/nav.ts, packages/web/src/lib/active-chapter.svelte.ts, packages/web/src/routes/admin/+layout.svelte -->
+
 <script lang="ts">
   // Church-admin (chapter-scoped) shell. Mirrors the zonal shell so the two
   // surfaces feel like siblings: brand → chapter strip → grouped nav →
@@ -36,6 +41,10 @@
     if (!canAccessRole(input, "church")) {
       goto(authenticatedLandingPath(input), { replaceState: true });
     }
+  });
+  const showZoneLink = $derived.by(() => {
+    const input = landingInputFor(session.current);
+    return input ? canAccessRole(input, "zonal") : false;
   });
   const showAdminLink = $derived(isSuperAdmin(session.current));
 
@@ -139,7 +148,7 @@
     <!-- ============ Sidebar ============ -->
     <aside
       class="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-[var(--rule)] lg:flex"
-      style="background: linear-gradient(180deg, var(--info-soft) 0%, var(--paper) 22%, var(--paper) 100%)"
+      style="background: linear-gradient(180deg, var(--brass-soft) 0%, var(--paper) 22%, var(--paper) 100%)"
     >
       <a href="/" class="flex items-center gap-3 px-6 pt-6 pb-5">
         <span
@@ -152,7 +161,7 @@
       </a>
 
       <!-- Chapter strip / switcher -->
-      <div class="mx-4 mb-7 border-t border-[var(--rule)] pt-4">
+      <div class="mx-6 mb-7 border-t border-[var(--rule)] pt-5">
         {#if chapters.length > 1}
           <div class="relative">
             <button
@@ -160,18 +169,23 @@
               onclick={toggleChapterSwitcher}
               aria-haspopup="listbox"
               aria-expanded={chapterSwitcherOpen}
-              class="flex w-full items-start gap-3 rounded-[3px] px-2 py-2 text-left transition-colors hover:bg-[var(--paper-soft)]"
+              class="sl-scope-trigger flex w-full items-start gap-3 rounded-[3px] text-left transition-colors hover:bg-[var(--paper-soft)]"
             >
-              <span class="sl-eyebrow shrink-0 pt-0.5" style="font-size:9.5px">Chapter</span>
+              <span
+                class="mt-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full"
+                style="background:var(--brass);box-shadow:0 0 0 3px rgba(168,116,50,0.18)"
+                aria-hidden="true"
+              ></span>
               <span class="min-w-0 flex-1">
+                <span class="sl-eyebrow block" style="color:var(--brass-deep)">Chapter</span>
                 <span class="block truncate text-[13px] font-medium text-[var(--ink)]">
                   {activeChapter?.name ?? "Select a chapter"}
                 </span>
-                <span class="sl-mono block truncate text-[10.5px] text-[var(--ink-mute)]">
+                <span class="block truncate text-[11.5px] leading-snug text-[var(--ink-mute)]">
                   {chapters.length} chapters
                 </span>
               </span>
-              <svg class="h-3 w-3 shrink-0 text-[var(--ink-mute)]" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+              <svg class="mt-1 h-3 w-3 shrink-0 text-[var(--ink-mute)]" viewBox="0 0 12 12" fill="none" aria-hidden="true">
                 <path d="M3 4.5l3 3 3-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
               </svg>
             </button>
@@ -202,23 +216,31 @@
             {/if}
           </div>
         {:else if activeChapter}
-          <div class="flex items-start gap-3 px-2">
-            <span class="sl-eyebrow shrink-0 pt-0.5" style="font-size:9.5px">Chapter</span>
+          <div class="flex items-start gap-3">
+            <span
+              class="mt-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full"
+              style="background:var(--brass);box-shadow:0 0 0 3px rgba(168,116,50,0.18)"
+              aria-hidden="true"
+            ></span>
             <div class="min-w-0">
-              <div class="truncate text-[13px] font-medium text-[var(--ink)]">{activeChapter.name}</div>
-              <div class="sl-mono truncate text-[10.5px] text-[var(--ink-mute)]">one chapter</div>
+              <div class="sl-eyebrow" style="color:var(--brass-deep)">Chapter</div>
+              <div class="mt-1 truncate text-[13px] font-medium text-[var(--ink)]">{activeChapter.name}</div>
+              <div class="truncate text-[11.5px] leading-snug text-[var(--ink-mute)]">One chapter</div>
             </div>
           </div>
         {:else}
           <!-- No chapter bindings at all. A super-admin browsing /church will -->
           <!-- land here; the surface is read-only-ish without a chapter. -->
-          <div class="flex items-start gap-3 px-2">
-            <span class="sl-eyebrow shrink-0 pt-0.5" style="font-size:9.5px">Chapter</span>
+          <div class="flex items-start gap-3">
+            <span
+              class="mt-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full"
+              style="background:var(--ink-faint);box-shadow:0 0 0 3px rgba(148,140,120,0.16)"
+              aria-hidden="true"
+            ></span>
             <div class="min-w-0">
-              <div class="truncate text-[13px] text-[var(--ink-mute)]">No chapter bindings</div>
-              <div class="sl-mono truncate text-[10.5px] text-[var(--ink-faint)]">
-                request access
-              </div>
+              <div class="sl-eyebrow">Chapter</div>
+              <div class="mt-1 truncate text-[13px] text-[var(--ink-mute)]">No chapter bindings</div>
+              <div class="truncate text-[11.5px] leading-snug text-[var(--ink-faint)]">Request access</div>
             </div>
           </div>
         {/if}
@@ -251,22 +273,26 @@
           </div>
         {/each}
 
-        <div class="mt-2 border-t border-[var(--rule)] pt-5">
-          <a href="/zone/chapters" class="sl-side-link">
-            <span class="sl-side-link-rail" aria-hidden="true"></span>
-            <span class="truncate">Zone view →</span>
-          </a>
-          {#if showAdminLink}
-            <a
-              href="/admin/zones"
-              class="sl-side-link"
-              style="color:var(--brass-deep)"
-            >
-              <span class="sl-side-link-rail" aria-hidden="true"></span>
-              <span class="truncate">Platform admin →</span>
-            </a>
-          {/if}
-        </div>
+        {#if showZoneLink || showAdminLink}
+          <div class="mt-2 border-t border-[var(--rule)] pt-5">
+            {#if showZoneLink}
+              <a href="/zone/chapters" class="sl-side-link">
+                <span class="sl-side-link-rail" aria-hidden="true"></span>
+                <span class="truncate">Zone view →</span>
+              </a>
+            {/if}
+            {#if showAdminLink}
+              <a
+                href="/admin/zones"
+                class="sl-side-link"
+                style="color:var(--brass-deep)"
+              >
+                <span class="sl-side-link-rail" aria-hidden="true"></span>
+                <span class="truncate">Platform admin →</span>
+              </a>
+            {/if}
+          </div>
+        {/if}
       </nav>
 
       <!-- Profile -->
@@ -328,7 +354,7 @@
     <div class="min-w-0 flex-1">
       <div
         class="border-b border-[var(--rule)] lg:hidden"
-        style="background: linear-gradient(180deg, var(--info-soft) 0%, var(--paper) 100%)"
+        style="background: linear-gradient(180deg, var(--brass-soft) 0%, var(--paper) 100%)"
       >
         <div class="flex items-center justify-between gap-3 px-5 py-3 sm:px-8">
           <a href="/" class="flex items-center gap-2">

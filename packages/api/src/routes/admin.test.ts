@@ -1,8 +1,7 @@
 // packages/api/src/routes/admin.test.ts
 // Focused tests for the admin onboarding endpoints: invite, owner-invite
 // resend, and invitation revoke. Auth is faked via the same approach as
-// tenant.test.ts; cross-tenant fuzz isn't repeated here because the
-// super-admin gate intentionally allows cross-zone reads/writes.
+// RELEVANT FILES: packages/api/src/routes/admin.ts, packages/db/src/schema/zones.ts, docs/ARCHITECTURE.md
 
 import {
   auditEvents,
@@ -272,5 +271,69 @@ describe("admin zone onboarding routes", () => {
       { method: "POST" },
     );
     expect(res.status).toBe(404);
+  });
+
+  it("DELETE /zones/:slug soft-deletes the zone and writes an audit event", async () => {
+    const { slug, zoneId } = await invite();
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(admin.id, admin.email));
+
+    const res = await adminCall(`/api/admin/zones/${slug}`, { method: "DELETE" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      status: string;
+      zone: { slug: string; deletedAt: string | null };
+    };
+    expect(body.status).toBe("removed");
+    expect(body.zone.slug).toBe(slug);
+    expect(body.zone.deletedAt).toEqual(expect.any(String));
+
+    const [removed] = await db
+      .select({ deletedAt: zones.deletedAt })
+      .from(zones)
+      .where(eq(zones.id, zoneId));
+    expect(removed.deletedAt).not.toBeNull();
+
+    const openInvitations = await db
+      .select({ revokedAt: invitations.revokedAt, revokedByUserId: invitations.revokedByUserId })
+      .from(invitations)
+      .where(eq(invitations.zoneId, zoneId));
+    expect(openInvitations.length).toBeGreaterThan(0);
+    expect(openInvitations.every((inv) => inv.revokedAt !== null)).toBe(true);
+    expect(openInvitations.every((inv) => inv.revokedByUserId === admin.id)).toBe(true);
+
+    const [audit] = await db
+      .select({
+        action: auditEvents.action,
+        entityType: auditEvents.entityType,
+        entityId: auditEvents.entityId,
+        actorUserId: auditEvents.actorUserId,
+        after: auditEvents.after,
+      })
+      .from(auditEvents)
+      .where(and(eq(auditEvents.zoneId, zoneId), eq(auditEvents.action, "zone.remove")))
+      .orderBy(desc(auditEvents.occurredAt))
+      .limit(1);
+    expect(audit).toBeDefined();
+    expect(audit.entityType).toBe("zone");
+    expect(audit.entityId).toBe(zoneId);
+    expect(audit.actorUserId).toBe(admin.id);
+    expect((audit.after as { revokedInvitationIds: string[] }).revokedInvitationIds.length).toBe(
+      openInvitations.length,
+    );
+
+    const detail = await adminCall(`/api/admin/zones/${slug}`);
+    expect(detail.status).toBe(404);
+  });
+
+  it("DELETE /zones/:slug returns 404 for an unknown or already-removed zone", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(admin.id, admin.email));
+    const missing = await adminCall(`/api/admin/zones/not-${unique()}`, { method: "DELETE" });
+    expect(missing.status).toBe(404);
+
+    const { slug } = await invite();
+    const first = await adminCall(`/api/admin/zones/${slug}`, { method: "DELETE" });
+    expect(first.status).toBe(200);
+    const second = await adminCall(`/api/admin/zones/${slug}`, { method: "DELETE" });
+    expect(second.status).toBe(404);
   });
 });

@@ -1,3 +1,8 @@
+<!-- packages/web/src/routes/zone/members/+page.svelte -->
+<!-- Zonal member directory with chapter filtering and member creation. -->
+<!-- Exists so zone-level users can search and manage identities across every chapter. -->
+<!-- RELEVANT FILES: packages/web/src/routes/church/members/+page.svelte, packages/api/src/routes/tenant-members.ts, packages/web/src/routes/zone/chapters/+page.svelte -->
+
 <script lang="ts">
   import { api, ApiError } from "$lib/api";
 
@@ -89,7 +94,7 @@
   }
 </script>
 
-<div class="py-10">
+<div class="pt-2 pb-10 lg:pt-0">
   <div class="sl-reveal sl-reveal-1 flex flex-wrap items-end justify-between gap-6">
     <div>
       <span class="sl-eyebrow">§ II · Identities</span>
