@@ -13,6 +13,7 @@ import { CHAPTER_ROLES, ZONE_ROLES } from "@stewardledger/shared";
 import {
   chapters,
   invitations,
+  members,
   roles,
   user as userTable,
   userRoleBindings,
@@ -193,6 +194,9 @@ describe("tenant routes — cross-tenant fuzz", () => {
     // chapters.zone_id is ON DELETE RESTRICT — clear chapters first.
     for (const slug of cleanupSlugs) {
       await db.execute(
+        sql`delete from members where zone_id = (select id from zones where slug = ${slug})`,
+      );
+      await db.execute(
         sql`delete from chapters where zone_id = (select id from zones where slug = ${slug})`,
       );
       await db.execute(sql`delete from zones where slug = ${slug}`);
@@ -209,12 +213,32 @@ describe("tenant routes — cross-tenant fuzz", () => {
   // ─── Listing isolation ──────────────────────────────────────────────
 
   it("GET /chapters from zone A only returns zone A's chapters", async () => {
+    await db.insert(members).values([
+      {
+        zoneId: zoneA.id,
+        referenceCode: `M${unique()}`,
+        firstName: "Active",
+        lastName: "Member",
+        chapterId: chapterA,
+      },
+      {
+        zoneId: zoneA.id,
+        referenceCode: `M${unique()}`,
+        firstName: "Inactive",
+        lastName: "Member",
+        chapterId: chapterA,
+        isActive: false,
+      },
+    ]);
     vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
     const res = await call(zoneA.slug, "/api/tenant/chapters");
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { items: Array<{ id: string; name: string }> };
+    const body = (await res.json()) as {
+      items: Array<{ id: string; name: string; activeMemberCount: number }>;
+    };
     expect(body.items.map((c) => c.id)).toContain(chapterA);
     expect(body.items.map((c) => c.id)).not.toContain(chapterB);
+    expect(body.items.find((c) => c.id === chapterA)?.activeMemberCount).toBeGreaterThanOrEqual(1);
   });
 
   it("GET /chapters resolves the tenant from the split API host zone header", async () => {
@@ -275,6 +299,14 @@ describe("tenant routes — cross-tenant fuzz", () => {
   });
 
   // ─── Cross-tenant id smuggling ──────────────────────────────────────
+
+  it("GET /chapters/:id with another zone's chapter id → 404", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+    const res = await call(zoneA.slug, `/api/tenant/chapters/${chapterB}`);
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("chapter_not_found");
+  });
 
   it("POST /invitations with another zone's chapter_id → 404", async () => {
     vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
@@ -387,11 +419,17 @@ describe("tenant routes — cross-tenant fuzz", () => {
     const res = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      chapter: { id: string; banking: { primaryCurrency: string | null; references: unknown[] } };
+      chapter: {
+        id: string;
+        banking: { primaryCurrency: string | null; references: unknown[] };
+        profile: { pastorName: string | null; address: { line1: string | null } };
+      };
     };
     expect(body.chapter.id).toBe(chapterA);
     expect(body.chapter.banking.primaryCurrency).toBeNull();
     expect(body.chapter.banking.references).toEqual([]);
+    expect(body.chapter.profile.pastorName).toBeNull();
+    expect(body.chapter.profile.address.line1).toBeNull();
   });
 
   it("PATCH /chapters/:id/banking persists references + currency; GET reads them back", async () => {
@@ -423,6 +461,90 @@ describe("tenant routes — cross-tenant fuzz", () => {
     const res = await call(zoneA.slug, `/api/tenant/chapters/${chapterB}/banking`, {
       method: "PATCH",
       body: { primaryCurrency: "USD" },
+    });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("chapter_not_found");
+  });
+
+  it("PATCH /chapters/:id/profile persists address, pastor, and contact details", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+    const patch = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}/profile`, {
+      method: "PATCH",
+      body: {
+        address: {
+          line1: "1 Church Street",
+          city: "Derby",
+          postcode: "DE1 1AA",
+          countryCode: "GB",
+        },
+        pastorName: "Pastor Jane Able",
+        pastorEmail: "pastor@example.com",
+        pastorPhone: "+44 7000 000000",
+        officeEmail: "office@example.com",
+        officePhone: "+44 7000 111111",
+        website: "https://example.com",
+      },
+    });
+    expect(patch.status).toBe(200);
+    const patchBody = (await patch.json()) as {
+      profile: { pastorName: string | null; address: { city: string | null } };
+    };
+    expect(patchBody.profile.pastorName).toBe("Pastor Jane Able");
+    expect(patchBody.profile.address.city).toBe("Derby");
+
+    const get = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}`);
+    const getBody = (await get.json()) as {
+      chapter: { profile: { officeEmail: string | null; address: { countryCode: string | null } } };
+    };
+    expect(getBody.chapter.profile.officeEmail).toBe("office@example.com");
+    expect(getBody.chapter.profile.address.countryCode).toBe("GB");
+  });
+
+  it("PATCH /chapters/:id/profile rejects unsafe website URLs", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+    const res = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}/profile`, {
+      method: "PATCH",
+      body: { website: "javascript:alert(1)" },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("chapter profile and banking updates preserve each other's metadata", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+    const banking = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}/banking`, {
+      method: "PATCH",
+      body: {
+        primaryCurrency: "GBP",
+        references: [{ label: "Offering account", value: "12-34-56 / 12345678" }],
+      },
+    });
+    expect(banking.status).toBe(200);
+
+    const profile = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}/profile`, {
+      method: "PATCH",
+      body: { pastorName: "Pastor Jane Able", website: "https://example.com" },
+    });
+    expect(profile.status).toBe(200);
+
+    const get = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}`);
+    const body = (await get.json()) as {
+      chapter: {
+        banking: { primaryCurrency: string | null; references: { label: string }[] };
+        profile: { pastorName: string | null; website: string | null };
+      };
+    };
+    expect(body.chapter.profile.pastorName).toBe("Pastor Jane Able");
+    expect(body.chapter.profile.website).toBe("https://example.com");
+    expect(body.chapter.banking.primaryCurrency).toBe("GBP");
+    expect(body.chapter.banking.references.map((r) => r.label)).toEqual(["Offering account"]);
+  });
+
+  it("PATCH /chapters/:id/profile against another zone's chapter → 404", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+    const res = await call(zoneA.slug, `/api/tenant/chapters/${chapterB}/profile`, {
+      method: "PATCH",
+      body: { pastorName: "Hidden" },
     });
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };

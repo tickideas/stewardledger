@@ -235,6 +235,7 @@ tenantMembersRouter.get(
           middleNames: members.middleNames,
           lastName: members.lastName,
           fullName: members.fullName,
+          titleName: titles.name,
           gender: members.gender,
           email: members.email,
           mobile: members.mobile,
@@ -243,6 +244,10 @@ tenantMembersRouter.get(
           createdAt: members.createdAt,
         })
         .from(members)
+        .leftJoin(
+          titles,
+          and(eq(titles.zoneId, members.zoneId), eq(titles.id, members.titleId)),
+        )
         .where(where)
         .orderBy(asc(members.referenceCode))
         .limit(q.limit)

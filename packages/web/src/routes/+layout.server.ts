@@ -2,6 +2,7 @@
 // Universal auth gate. Runs on every page render (server-side) and enforces:
 //   - protected paths require a session (else redirect to /login?next=…)
 //   - super-admin-only paths require isSuperAdmin
+//   - signed-in users reaching "/" go to their canonical dashboard
 //
 // Surface-level gates (zonal/church/platform) live in their respective
 // `+layout.server.ts` files so the rule reads next to the routes it guards.
@@ -23,6 +24,14 @@ export const load: LayoutServerLoad = async ({ locals, url }) => {
   if (isProtectedPath(path) && !session) {
     const nextParam = isSafeInternalPath(path) ? `?next=${encodeURIComponent(path + url.search)}` : "";
     redirect(303, `/login${nextParam}`);
+  }
+
+  if (session && path === "/") {
+    const zoneFromQuery = url.searchParams.get("zone");
+    redirect(
+      303,
+      authenticatedLandingPath(landingInputFromServerSession(session, zoneFromQuery)),
+    );
   }
 
   // Super-admin-only paths are also protected paths (verified by

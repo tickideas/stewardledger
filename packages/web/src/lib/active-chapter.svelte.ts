@@ -8,12 +8,14 @@
 import { ACTIVE_CHAPTER_KEY, session } from "$lib/session.svelte";
 
 export type ActiveChapter = { id: string; name: string } | null;
+export type ChapterChoice = { id: string; name: string };
 
 /**
  * The one true active-chapter id for the current tab. `null` until the
  * shell hydrates it from localStorage (or assigns a default).
  */
 export const activeChapter = $state<{ id: string | null }>({ id: null });
+export const activeChapterChoices = $state<{ items: ChapterChoice[] }>({ items: [] });
 
 let storageListenerInstalled = false;
 
@@ -47,6 +49,10 @@ export function setActiveChapter(id: string | null): void {
   else localStorage.removeItem(ACTIVE_CHAPTER_KEY);
 }
 
+export function setActiveChapterChoices(items: ChapterChoice[]): void {
+  activeChapterChoices.items = items;
+}
+
 /**
  * Reactive accessor for the resolved active chapter ({ id, name }). Returns
  * `null` when no chapter is selected or when the stored id no longer
@@ -67,7 +73,10 @@ export function useActiveChapter(): () => ActiveChapter {
     if (s.status !== "authenticated") return null;
     const zone = s.zones.find((z) => z.slug === s.activeZoneSlug);
     const binding = zone?.chapterRoles.find((r) => r.chapterId === id);
-    if (!binding) return null;
+    if (!binding) {
+      const choice = activeChapterChoices.items.find((c) => c.id === id);
+      return choice ? { id: choice.id, name: choice.name } : null;
+    }
     return { id: binding.chapterId, name: binding.chapterName };
   };
 }

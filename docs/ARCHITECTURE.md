@@ -316,6 +316,12 @@ Route groups:
 - `/api/tenant/*` — `tenantMiddleware → requireSession → requireTenantAuth`. Split-host web deployments send `x-stewardledger-zone-slug` because `api.stewardledger.church` is a reserved host and cannot itself identify a tenant; the middleware ignores that header on non-API hosts so custom domains cannot spoof tenant selection.
 - `/api/admin/*` — `requireSession → requirePlatformRole(super_admin, region_curator, ...)`. Cross-zone reads are allowed here and only here. `/api/admin/zones`, `/api/admin/zones/:slug`, `/api/admin/zones/invite`, and `DELETE /api/admin/zones/:slug` are currently super-admin-only; the list endpoint uses cursor pagination on `(created_at, id)` plus per-currency contribution subtotals. Zone removal is a soft delete (`zones.deleted_at`) so tenant data stays recoverable while admin lists, detail reads, and session-zone lookup exclude the removed zone.
 
+The SvelteKit root layout treats `/` as the anonymous marketing landing page only. If a signed-in user reaches `/` directly or through same-tab navigation, the web app redirects to the same canonical destination used after login: platform users to `/admin/zones`, zone users to `/zone/chapters`, chapter-only users to `/church/overview`, and users with no usable binding to `/login?error=no_zone`.
+
+Member profile reference lists (titles, marital statuses, and member types) are managed from the zonal Members page because they only configure member profile fields and member reports. The retired `/zone/lookups` route redirects to `/zone/members?panel=profile-fields` for existing bookmarks.
+
+Zone admins can add members one at a time or upload a CSV roster from the Members page. The CSV workflow is intentionally client-mediated for now: it accepts files up to 1 MB and 500 rows, validates required columns, matches titles and chapters against active in-zone values, then calls the same `POST /api/tenant/members` endpoint row-by-row so tenant checks, reference-code allocation, and audit events stay centralized.
+
 ### 12.2 Invitations
 
 All user onboarding goes through the `invitations` table (see DOMAIN-MODEL.md §2.6):
@@ -328,7 +334,7 @@ All user onboarding goes through the `invitations` table (see DOMAIN-MODEL.md §
 - **Acceptance** runs Better Auth `signUpEmail` with the email pinned by the invitation, then writes the role binding atomically. A `zone_owner` accept also flips the zone from `pending_setup` to `active` and sets `users.default_zone_id`.
 - **Demo seed data** creates zones, chapters, members, and contributions only. It does not create church or zone login accounts. To access a demo zone, create a platform admin with `pnpm create-admin`, open `/onboarding/invites?zone=<demo-slug>`, invite the desired zone-wide or chapter-scoped user, then accept the logged invitation URL to create the password.
 - **Chapter onboarding** is only for zones with no chapters. The web app checks `/api/tenant/chapters` before rendering the first-chapter form and redirects to the zone area when any chapter already exists.
-- **Ongoing chapter management** lives under `Zone → Chapters`, where zone owners/admins can add additional chapters after onboarding. The `Zone` entry opens chapters first because zone setup usually starts there before member management.
+- **Ongoing chapter management** lives under `Zone → Chapters`, where zone owners/admins can add additional chapters after onboarding. The register includes each chapter's active member count, chapter names open a profile page backed by `GET /api/tenant/chapters/:id` and `PATCH /api/tenant/chapters/:id/profile`, and the dashboard action opens the chapter-scoped church overview with that chapter selected. The profile is stored in `chapters.metadata.profile` and records the church address, pastor, and contact details without adding another join target; website values are limited to HTTP(S) URLs. Chapter profile and banking updates write only their own `chapters.metadata` JSON key so one settings form cannot overwrite the other. The `Zone` entry opens chapters first because zone setup usually starts there before member management.
 
 ---
 

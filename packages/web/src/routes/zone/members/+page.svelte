@@ -5,6 +5,9 @@
 
 <script lang="ts">
   import { api, ApiError } from "$lib/api";
+  import { page } from "$app/state";
+  import MemberBulkAdd from "./member-bulk-add.svelte";
+  import MemberProfileFields from "./member-profile-fields.svelte";
 
   type Member = {
     id: string;
@@ -13,6 +16,7 @@
     middleNames: string | null;
     lastName: string | null;
     fullName: string | null;
+    titleName: string | null;
     email: string | null;
     mobile: string | null;
     chapterId: string | null;
@@ -21,22 +25,32 @@
   };
 
   type Chapter = { id: string; name: string };
+  type Lookup = { id: string; name: string; isActive: boolean; gender?: string | null };
 
   let q = $state("");
   let chapterId = $state("");
   let items = $state<Member[]>([]);
   let chapters = $state<Chapter[]>([]);
+  let titles = $state<Lookup[]>([]);
   let total = $state<number | null>(null);
   let loading = $state(false);
   let loadError = $state<string | null>(null);
 
   let createOpen = $state(false);
+  let bulkOpen = $state(false);
+  let profileFieldsOpen = $state(false);
+  let cTitle = $state("");
   let cFirst = $state("");
   let cLast = $state("");
   let cEmail = $state("");
   let cChapter = $state("");
   let creating = $state(false);
   let createError = $state<string | null>(null);
+
+  function memberDisplayName(member: Member): string {
+    const name = member.fullName || `${member.firstName} ${member.lastName ?? ""}`.trim();
+    return member.titleName ? `${member.titleName} ${name}` : name;
+  }
 
   async function refresh() {
     loading = true;
@@ -64,9 +78,25 @@
     }
   }
 
+  async function loadTitles() {
+    try {
+      const res = await api.get<{ items: Lookup[] }>("/api/tenant/lookups/titles");
+      titles = res.items.filter((title) => title.isActive);
+    } catch {
+      titles = [];
+    }
+  }
+
   $effect(() => {
     loadChapters();
+    loadTitles();
     refresh();
+  });
+
+  $effect(() => {
+    if (page.url.searchParams.get("panel") === "profile-fields") {
+      profileFieldsOpen = true;
+    }
   });
 
   async function create(e: SubmitEvent) {
@@ -75,11 +105,13 @@
     creating = true;
     try {
       await api.post("/api/tenant/members", {
+        titleId: cTitle || undefined,
         firstName: cFirst,
         lastName: cLast || undefined,
         email: cEmail || undefined,
         chapterId: cChapter || undefined,
       });
+      cTitle = "";
       cFirst = "";
       cLast = "";
       cEmail = "";
@@ -109,27 +141,63 @@
         {/if}
       </p>
     </div>
-    <button type="button" class="sl-btn sl-btn-primary" onclick={() => (createOpen = !createOpen)}>
-      {#if createOpen}Cancel{:else}
+    <div class="flex flex-wrap items-center gap-3">
+      <button type="button" class="sl-btn sl-btn-ghost" onclick={() => (profileFieldsOpen = !profileFieldsOpen)}>
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-          <path d="M7 3v8M3 7h8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+          <path d="M3 4h8M3 7h8M3 10h8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
         </svg>
-        New member
-      {/if}
-    </button>
+        Profile fields
+      </button>
+      <button type="button" class="sl-btn sl-btn-ghost" onclick={() => (bulkOpen = !bulkOpen)}>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <path d="M3 3.5h8M3 7h8M3 10.5h5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+        </svg>
+        Bulk add
+      </button>
+      <button type="button" class="sl-btn sl-btn-primary" onclick={() => (createOpen = !createOpen)}>
+        {#if createOpen}Cancel{:else}
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path d="M7 3v8M3 7h8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+          </svg>
+          New member
+        {/if}
+      </button>
+    </div>
   </div>
+
+  {#if profileFieldsOpen}
+    <MemberProfileFields onClose={() => (profileFieldsOpen = false)} />
+  {/if}
+
+  {#if bulkOpen}
+    <MemberBulkAdd
+      {chapters}
+      {titles}
+      onComplete={refresh}
+      onClose={() => (bulkOpen = false)}
+    />
+  {/if}
 
   {#if createOpen}
     <form class="sl-reveal sl-card-warm mt-6 grid grid-cols-12 gap-3 p-6" onsubmit={create}>
+      <label class="col-span-12 sm:col-span-2">
+        <span class="sl-eyebrow" style="font-size:10.5px">Title</span>
+        <select bind:value={cTitle} class="sl-select mt-1.5">
+          <option value="">None</option>
+          {#each titles as title (title.id)}
+            <option value={title.id}>{title.name}{title.gender ? ` (${title.gender})` : ""}</option>
+          {/each}
+        </select>
+      </label>
       <label class="col-span-12 sm:col-span-3">
         <span class="sl-eyebrow" style="font-size:10.5px">First name</span>
         <input type="text" required minlength="1" maxlength="120" bind:value={cFirst} class="sl-input mt-1.5" />
       </label>
-      <label class="col-span-12 sm:col-span-3">
+      <label class="col-span-12 sm:col-span-2">
         <span class="sl-eyebrow" style="font-size:10.5px">Last name</span>
         <input type="text" maxlength="120" bind:value={cLast} class="sl-input mt-1.5" />
       </label>
-      <label class="col-span-12 sm:col-span-3">
+      <label class="col-span-12 sm:col-span-2">
         <span class="sl-eyebrow" style="font-size:10.5px">Email</span>
         <input type="email" bind:value={cEmail} class="sl-input mt-1.5" />
       </label>
@@ -150,9 +218,9 @@
   {/if}
 
   <!-- Filters -->
-  <div class="sl-reveal sl-reveal-2 mt-8 flex flex-wrap items-center gap-3">
-    <div class="relative flex-1 min-w-64">
-      <svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ink-mute)]" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+  <div class="sl-reveal sl-reveal-2 mt-8 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(18rem,1fr)_14rem_auto] lg:items-center">
+    <div class="relative min-w-0">
+      <svg class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[var(--ink-mute)]" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
         <circle cx="6" cy="6" r="4" stroke="currentColor" stroke-width="1.25"/>
         <path d="M9 9l3 3" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
       </svg>
@@ -161,14 +229,14 @@
         bind:value={q}
         placeholder="Search name, email, code…"
         onkeydown={(e) => e.key === "Enter" && refresh()}
-        class="sl-input pl-9"
+        class="sl-input pr-9"
       />
     </div>
-    <select bind:value={chapterId} onchange={refresh} class="sl-select w-56">
+    <select bind:value={chapterId} onchange={refresh} class="sl-select">
       <option value="">All chapters</option>
       {#each chapters as ch}<option value={ch.id}>{ch.name}</option>{/each}
     </select>
-    <button class="sl-btn sl-btn-ghost" onclick={refresh}>Search</button>
+    <button class="sl-btn sl-btn-ghost justify-center" onclick={refresh}>Search</button>
   </div>
 
   {#if loadError}
@@ -198,7 +266,7 @@
                 <td class="sl-mono text-[11.5px] text-[var(--ink-mute)]" style="letter-spacing:0.04em">{m.referenceCode}</td>
                 <td>
                   <a href={`/zone/members/${m.id}`} class="sl-display text-[15px] text-[var(--ink)] hover:text-[var(--brass-deep)]">
-                    {m.fullName || `${m.firstName} ${m.lastName ?? ""}`.trim()}
+                    {memberDisplayName(m)}
                   </a>
                 </td>
                 <td class="text-[var(--ink-soft)]">{m.email ?? "—"}</td>

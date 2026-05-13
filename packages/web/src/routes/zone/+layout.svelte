@@ -111,9 +111,9 @@
         </span>
       </a>
 
-      <!-- Active zone (also acts as switcher when the user has >1 zone) -->
-      <div class="mx-4 mb-7 border-t border-[var(--rule)] pt-4">
-        {#if zones.length > 1}
+      <!-- Zone switcher appears only when there is something to switch. -->
+      {#if zones.length > 1}
+        <div class="mx-4 mb-7 border-t border-[var(--rule)] pt-4">
           <div class="relative">
             <button
               type="button"
@@ -164,16 +164,8 @@
               </ul>
             {/if}
           </div>
-        {:else if activeZone}
-          <div class="flex items-start gap-3 px-2">
-            <span class="sl-eyebrow shrink-0 pt-0.5" style="font-size:9.5px">Zone</span>
-            <div class="min-w-0">
-              <div class="truncate text-[13px] font-medium text-[var(--ink)]">{activeZone.name}</div>
-              <div class="sl-mono truncate text-[10.5px] text-[var(--ink-mute)]">{activeZone.slug}</div>
-            </div>
-          </div>
-        {/if}
-      </div>
+        </div>
+      {/if}
 
       <nav class="flex flex-1 flex-col gap-7 overflow-y-auto px-6">
         {#each ZONAL_NAV as group (group.label)}
