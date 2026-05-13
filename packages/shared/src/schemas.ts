@@ -119,6 +119,50 @@ export const chapterBankingSettingsSchema = z
   .strict();
 export type ChapterBankingSettings = z.infer<typeof chapterBankingSettingsSchema>;
 
+/** Chapter profile details stored with the chapter registry record. */
+export const chapterProfileAddressSchema = z
+  .object({
+    line1: z.string().trim().max(160).nullable().optional(),
+    line2: z.string().trim().max(160).nullable().optional(),
+    city: z.string().trim().max(100).nullable().optional(),
+    county: z.string().trim().max(100).nullable().optional(),
+    postcode: z.string().trim().max(24).nullable().optional(),
+    countryCode: countryCodeSchema.nullable().optional(),
+  })
+  .strict();
+export type ChapterProfileAddress = z.infer<typeof chapterProfileAddressSchema>;
+
+const chapterWebsiteSchema = z
+  .string()
+  .trim()
+  .max(200)
+  .refine(
+    (value) => {
+      if (value === "") return true;
+      try {
+        const url = new URL(value);
+        return url.protocol === "http:" || url.protocol === "https:";
+      } catch {
+        return false;
+      }
+    },
+    { message: "website must be an http(s) URL" },
+  );
+
+export const chapterProfileSchema = z
+  .object({
+    address: chapterProfileAddressSchema.optional(),
+    pastorName: z.string().trim().max(120).nullable().optional(),
+    pastorEmail: z.string().trim().email().nullable().optional(),
+    pastorPhone: z.string().trim().max(40).nullable().optional(),
+    officeEmail: z.string().trim().email().nullable().optional(),
+    officePhone: z.string().trim().max(40).nullable().optional(),
+    website: chapterWebsiteSchema.nullable().optional(),
+    notes: z.string().trim().max(2000).nullable().optional(),
+  })
+  .strict();
+export type ChapterProfile = z.infer<typeof chapterProfileSchema>;
+
 /**
  * Batch-template payload. Mirrors the chapter-batch create form: the
  * treasurer picks a template, the form prefills these fields, and they

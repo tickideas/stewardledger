@@ -36,7 +36,7 @@
   $effect(() => {
     if (session.current.status !== "authenticated") return;
     const path = page.url.pathname;
-    if (path === "/login") {
+    if (path === "/" || path === "/login") {
       const input = landingInputFor(session.current);
       if (input) goto(authenticatedLandingPath(input), { replaceState: true });
     }
@@ -51,6 +51,10 @@
   });
 
   const isAuthed = $derived(session.current.status === "authenticated");
+  const dashboardHref = $derived.by(() => {
+    const input = landingInputFor(session.current);
+    return input ? authenticatedLandingPath(input) : null;
+  });
 
   const path = $derived(page.url.pathname);
   // Each dashboard owns its own shell (sidebar + content). The root layout
@@ -81,6 +85,14 @@
 
       <nav class="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-x-5 gap-y-3 sm:gap-x-7">
         {#if isAuthed}
+          {#if dashboardHref}
+            <a
+              href={dashboardHref}
+              class="text-[13px] font-medium text-[var(--ink)] hover:text-[var(--brass-deep)] transition-colors"
+            >
+              Dashboard
+            </a>
+          {/if}
           <button
             type="button"
             onclick={handleSignOut}

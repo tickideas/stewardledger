@@ -15,7 +15,14 @@
 
   import { goto, invalidateAll } from "$app/navigation";
   import { page } from "$app/state";
-  import { activeChapter as activeChapterStore, hydrateActiveChapter, setActiveChapter } from "$lib/active-chapter.svelte";
+  import {
+    activeChapter as activeChapterStore,
+    hydrateActiveChapter,
+    setActiveChapter,
+    setActiveChapterChoices,
+    type ChapterChoice,
+  } from "$lib/active-chapter.svelte";
+  import { api } from "$lib/api";
   import { CHURCH_NAV, isNavActive } from "$lib/nav";
   import {
     authenticatedLandingPath,
@@ -60,11 +67,17 @@
   // A user may hold several roles within the same chapter (e.g. treasurer +
   // pastor-viewer); collapse those into one entry. The server already sorts
   // by chapter name, so a Map preserves that order.
-  type ChapterChoice = { id: string; name: string };
-  const chapters = $derived.by<ChapterChoice[]>(() => {
+  let zoneChapterChoices = $state<ChapterChoice[]>([]);
+  let loadedZoneSlug = $state<string | null>(null);
+
+  const activeZone = $derived.by(() => {
     const s = session.current;
-    if (s.status !== "authenticated") return [];
-    const activeZone = s.zones.find((z) => z.slug === s.activeZoneSlug);
+    if (s.status !== "authenticated") return null;
+    return s.zones.find((z) => z.slug === s.activeZoneSlug) ?? null;
+  });
+
+  const hasZoneRole = $derived((activeZone?.zoneRoles.length ?? 0) > 0);
+  const chapterRoleChoices = $derived.by<ChapterChoice[]>(() => {
     if (!activeZone) return [];
     const seen = new Map<string, ChapterChoice>();
     for (const r of activeZone.chapterRoles) {
@@ -73,6 +86,58 @@
       }
     }
     return [...seen.values()];
+  });
+
+  $effect(() => {
+    const zone = activeZone;
+    const requestedChapterId = page.url.searchParams.get("chapterId");
+    if (!zone || !requestedChapterId) return;
+    if (!hasZoneRole) {
+      const match = chapterRoleChoices.find((chapter) => chapter.id === requestedChapterId);
+      if (!match) return;
+      setActiveChapter(match.id);
+      setActiveChapterChoices(chapterRoleChoices);
+      return;
+    }
+    const match = zoneChapterChoices.find((chapter) => chapter.id === requestedChapterId);
+    if (!match) return;
+    setActiveChapter(match.id);
+    setActiveChapterChoices(zoneChapterChoices);
+  });
+
+  $effect(() => {
+    const zone = activeZone;
+    if (!zone || !hasZoneRole) {
+      zoneChapterChoices = [];
+      loadedZoneSlug = null;
+      return;
+    }
+    if (loadedZoneSlug === zone.slug) return;
+    let cancelled = false;
+    api
+      .get<{ items: Array<{ id: string; name: string }> }>("/api/tenant/chapters")
+      .then((res) => {
+        if (cancelled) return;
+        zoneChapterChoices = res.items.map((chapter) => ({
+          id: chapter.id,
+          name: chapter.name,
+        }));
+        loadedZoneSlug = zone.slug;
+      })
+      .catch(() => {
+        if (cancelled) return;
+        zoneChapterChoices = [];
+        loadedZoneSlug = null;
+      });
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  const chapters = $derived.by<ChapterChoice[]>(() => {
+    if (!activeZone) return [];
+    if (hasZoneRole) return zoneChapterChoices;
+    return chapterRoleChoices;
   });
 
   // Active chapter id lives in a module-level rune (`activeChapterStore`)
@@ -84,7 +149,9 @@
   $effect(() => {
     hydrateActiveChapter();
     const list = chapters;
+    if (list.length > 0) setActiveChapterChoices(list);
     if (list.length === 0) {
+      if (hasZoneRole) return;
       if (activeChapterStore.id !== null) setActiveChapter(null);
       return;
     }
@@ -160,9 +227,9 @@
         </span>
       </a>
 
-      <!-- Chapter strip / switcher -->
-      <div class="mx-6 mb-7 border-t border-[var(--rule)] pt-5">
-        {#if chapters.length > 1}
+      <!-- Chapter switcher appears only when there is something to switch. -->
+      {#if chapters.length > 1}
+        <div class="mx-6 mb-7 border-t border-[var(--rule)] pt-5">
           <div class="relative">
             <button
               type="button"
@@ -215,36 +282,8 @@
               </ul>
             {/if}
           </div>
-        {:else if activeChapter}
-          <div class="flex items-start gap-3">
-            <span
-              class="mt-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full"
-              style="background:var(--brass);box-shadow:0 0 0 3px rgba(168,116,50,0.18)"
-              aria-hidden="true"
-            ></span>
-            <div class="min-w-0">
-              <div class="sl-eyebrow" style="color:var(--brass-deep)">Chapter</div>
-              <div class="mt-1 truncate text-[13px] font-medium text-[var(--ink)]">{activeChapter.name}</div>
-              <div class="truncate text-[11.5px] leading-snug text-[var(--ink-mute)]">One chapter</div>
-            </div>
-          </div>
-        {:else}
-          <!-- No chapter bindings at all. A super-admin browsing /church will -->
-          <!-- land here; the surface is read-only-ish without a chapter. -->
-          <div class="flex items-start gap-3">
-            <span
-              class="mt-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full"
-              style="background:var(--ink-faint);box-shadow:0 0 0 3px rgba(148,140,120,0.16)"
-              aria-hidden="true"
-            ></span>
-            <div class="min-w-0">
-              <div class="sl-eyebrow">Chapter</div>
-              <div class="mt-1 truncate text-[13px] text-[var(--ink-mute)]">No chapter bindings</div>
-              <div class="truncate text-[11.5px] leading-snug text-[var(--ink-faint)]">Request access</div>
-            </div>
-          </div>
-        {/if}
-      </div>
+        </div>
+      {/if}
 
       <nav class="flex flex-1 flex-col gap-7 overflow-y-auto px-6">
         {#each CHURCH_NAV as group (group.label)}

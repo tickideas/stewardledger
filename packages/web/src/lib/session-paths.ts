@@ -208,7 +208,8 @@ export function canAccessRole(s: AuthenticatedLandingInput, role: PrimaryRole): 
 /**
  * Canonical post-auth landing rule. Platform super-admins land on the
  * platform surface; zone-scoped admins land on the zonal dashboard;
- * chapter-only admins land on the church dashboard. A safe `next` overrides
+ * chapter-only admins land on the church dashboard; signed-in users with no
+ * usable binding land on the no-zone login banner. A safe `next` overrides
  * the default *within* the surface the user is allowed to reach.
  */
 export function authenticatedLandingPath(
@@ -225,6 +226,7 @@ export function authenticatedLandingPath(
 
   const role = primaryRole(session);
   if (role === "platform") return "/admin/zones";
+  if (role === null) return "/login?error=no_zone";
 
   const zoneQs = session.activeZoneSlug
     ? `?zone=${encodeURIComponent(session.activeZoneSlug)}`

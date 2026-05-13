@@ -89,6 +89,12 @@ describe("authenticatedLandingPath", () => {
     expect(authenticatedLandingPath(session, "//evil.com")).toBe("/admin/zones");
   });
 
+  it("routes signed-in users without a usable binding to the no-zone banner", () => {
+    expect(authenticatedLandingPath({ activeZoneSlug: null, isSuperAdmin: false })).toBe(
+      "/login?error=no_zone",
+    );
+  });
+
   it("honors protected next paths for tenant-bound users", () => {
     expect(
       authenticatedLandingPath(

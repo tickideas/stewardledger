@@ -6,6 +6,7 @@ import {
   chapterBatchTemplates,
   chapters,
   invitations,
+  members,
   roles as rolesTable,
   user as userTable,
   userRoleBindings,
@@ -16,11 +17,12 @@ import {
   CHAPTER_ROLES,
   chapterBankingSettingsSchema,
   chapterCreateSchema,
+  chapterProfileSchema,
   contributionBatchTemplateCreateSchema,
   invitationCreateSchema,
   ZONE_ROLES,
 } from "@stewardledger/shared";
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
 import {
@@ -93,9 +95,48 @@ const CHAPTER_SETTINGS_WRITE_ROLES = [
   ZONE_ROLES.ZONE_ADMIN,
   CHAPTER_ROLES.CHAPTER_ADMIN,
 ] as const;
+const CHAPTER_SETTINGS_ZONE_WRITE_ROLES = [ZONE_ROLES.ZONE_OWNER, ZONE_ROLES.ZONE_ADMIN] as const;
+
+const EMPTY_CHAPTER_PROFILE = {
+  address: {
+    line1: null,
+    line2: null,
+    city: null,
+    county: null,
+    postcode: null,
+    countryCode: null,
+  },
+  pastorName: null,
+  pastorEmail: null,
+  pastorPhone: null,
+  officeEmail: null,
+  officePhone: null,
+  website: null,
+  notes: null,
+} as const;
 
 function forbidden(c: { json: (b: unknown, s: number) => Response }, msg = "Insufficient role") {
   return c.json({ error: { code: "forbidden", message: msg } }, 403);
+}
+
+async function canWriteChapterSettings(ctx: AuthorizedContext, chapterId: string): Promise<boolean> {
+  if (hasAnyRole(ctx, ...CHAPTER_SETTINGS_ZONE_WRITE_ROLES)) return true;
+  if (!ctx.roleCodes.includes(CHAPTER_ROLES.CHAPTER_ADMIN)) return false;
+  const [binding] = await db
+    .select({ id: userRoleBindings.id })
+    .from(userRoleBindings)
+    .innerJoin(rolesTable, eq(userRoleBindings.roleId, rolesTable.id))
+    .where(
+      and(
+        eq(userRoleBindings.userId, ctx.userId),
+        eq(userRoleBindings.zoneId, ctx.zoneId),
+        eq(userRoleBindings.chapterId, chapterId),
+        eq(rolesTable.code, CHAPTER_ROLES.CHAPTER_ADMIN),
+        isNull(userRoleBindings.revokedAt),
+      ),
+    )
+    .limit(1);
+  return Boolean(binding);
 }
 
 tenantRouter.get("/chapters", async (c) => {
@@ -113,9 +154,20 @@ tenantRouter.get("/chapters", async (c) => {
       dateFrom: chapters.dateFrom,
       dateTo: chapters.dateTo,
       createdAt: chapters.createdAt,
+      activeMemberCount: sql<number>`count(${members.id})::int`,
     })
     .from(chapters)
+    .leftJoin(
+      members,
+      and(
+        eq(members.zoneId, chapters.zoneId),
+        eq(members.chapterId, chapters.id),
+        eq(members.isActive, true),
+        isNull(members.deletedAt),
+      ),
+    )
     .where(and(...conditions))
+    .groupBy(chapters.id)
     .orderBy(asc(chapters.referenceCode));
   return c.json({ items: rows });
 });
@@ -189,16 +241,24 @@ tenantRouter.get("/chapters/:id", async (c) => {
       updatedAt: chapters.updatedAt,
     })
     .from(chapters)
-    .where(and(eq(chapters.id, id), isNull(chapters.deletedAt)))
+    .where(and(eq(chapters.id, id), eq(chapters.zoneId, ctx.zoneId), isNull(chapters.deletedAt)))
     .limit(1);
   if (!row) return c.json({ error: { code: "not_found", message: "Chapter not found" } }, 404);
-  const meta = (row.metadata ?? {}) as { banking?: unknown };
+  const meta = (row.metadata ?? {}) as { banking?: unknown; profile?: unknown };
   // If older data is malformed we hand back the defaults rather than
   // 500ing the whole settings page; the next PATCH will rewrite it.
   const parsed = chapterBankingSettingsSchema.safeParse(meta.banking);
   const banking = parsed.success
     ? { primaryCurrency: parsed.data.primaryCurrency ?? null, references: parsed.data.references ?? [] }
     : { primaryCurrency: null, references: [] };
+  const parsedProfile = chapterProfileSchema.safeParse(meta.profile);
+  const profile = parsedProfile.success
+    ? {
+        ...EMPTY_CHAPTER_PROFILE,
+        ...parsedProfile.data,
+        address: { ...EMPTY_CHAPTER_PROFILE.address, ...parsedProfile.data.address },
+      }
+    : EMPTY_CHAPTER_PROFILE;
   return c.json({
     chapter: {
       id: row.id,
@@ -210,9 +270,65 @@ tenantRouter.get("/chapters/:id", async (c) => {
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
       banking,
+      profile,
     },
   });
 });
+
+tenantRouter.patch(
+  "/chapters/:id/profile",
+  zValidator("json", chapterProfileSchema),
+  async (c) => {
+    const ctx = c.get("auth") as AuthorizedContext;
+    const id = c.req.param("id");
+    if (!hasAnyRole(ctx, ...CHAPTER_SETTINGS_WRITE_ROLES)) return forbidden(c);
+    const scope = await requireChapterScope(ctx, id, CHAPTER_READ_ZONE_ROLES);
+    if (!scope.ok)
+      return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
+    if (!(await canWriteChapterSettings(ctx, id))) return forbidden(c);
+    const input = c.req.valid("json");
+
+    const result = await db.transaction(async (tx) => {
+      const [existing] = await tx
+        .select({ metadata: chapters.metadata })
+        .from(chapters)
+        .where(
+          and(eq(chapters.id, id), eq(chapters.zoneId, ctx.zoneId), isNull(chapters.deletedAt)),
+        )
+        .limit(1);
+      if (!existing) return null;
+      const prevMeta = (existing.metadata ?? {}) as Record<string, unknown>;
+      const prevProfile = (prevMeta.profile as unknown) ?? null;
+      const nextProfile = {
+        ...EMPTY_CHAPTER_PROFILE,
+        ...input,
+        address: { ...EMPTY_CHAPTER_PROFILE.address, ...input.address },
+      };
+      await tx
+        .update(chapters)
+        .set({
+          metadata: sql`jsonb_set(coalesce(${chapters.metadata}, '{}'::jsonb), '{profile}', ${JSON.stringify(nextProfile)}::jsonb, true)`,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(eq(chapters.id, id), eq(chapters.zoneId, ctx.zoneId), isNull(chapters.deletedAt)),
+        );
+      await writeAudit(tx, {
+        zoneId: ctx.zoneId,
+        actorUserId: ctx.userId,
+        action: "chapter.profile.update",
+        entityType: "chapter",
+        entityId: id,
+        before: prevProfile,
+        after: nextProfile,
+      });
+      return nextProfile;
+    });
+    if (!result)
+      return c.json({ error: { code: "not_found", message: "Chapter not found" } }, 404);
+    return c.json({ profile: result });
+  },
+);
 
 tenantRouter.patch(
   "/chapters/:id/banking",
@@ -227,6 +343,7 @@ tenantRouter.patch(
     const scope = await requireChapterScope(ctx, id, CHAPTER_READ_ZONE_ROLES);
     if (!scope.ok)
       return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
+    if (!(await canWriteChapterSettings(ctx, id))) return forbidden(c);
     const input = c.req.valid("json");
 
     const result = await db.transaction(async (tx) => {
@@ -245,11 +362,15 @@ tenantRouter.patch(
         primaryCurrency: input.primaryCurrency ?? null,
         references: input.references ?? [],
       };
-      const nextMeta = { ...prevMeta, banking: nextBanking };
       await tx
         .update(chapters)
-        .set({ metadata: nextMeta, updatedAt: new Date() })
-        .where(eq(chapters.id, id));
+        .set({
+          metadata: sql`jsonb_set(coalesce(${chapters.metadata}, '{}'::jsonb), '{banking}', ${JSON.stringify(nextBanking)}::jsonb, true)`,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(eq(chapters.id, id), eq(chapters.zoneId, ctx.zoneId), isNull(chapters.deletedAt)),
+        );
       await writeAudit(tx, {
         zoneId: ctx.zoneId,
         actorUserId: ctx.userId,
@@ -727,4 +848,3 @@ tenantRouter.post("/invitations/:id/revoke", async (c) => {
   }
   return c.json({ status: "revoked" });
 });
-

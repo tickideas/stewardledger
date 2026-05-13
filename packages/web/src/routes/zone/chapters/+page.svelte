@@ -4,6 +4,7 @@
 <!-- RELEVANT FILES: packages/web/src/routes/zone/+layout.svelte, packages/api/src/routes/tenant.ts, packages/web/src/routes/church/overview/+page.svelte -->
 
 <script lang="ts">
+  import { setActiveChapter } from "$lib/active-chapter.svelte";
   import { api, ApiError } from "$lib/api";
   import type { AuthorizedContext } from "@stewardledger/shared";
 
@@ -15,6 +16,7 @@
     dateFrom: string;
     dateTo: string | null;
     createdAt: string;
+    activeMemberCount: number;
   };
 
   const adminRoles = new Set(["zone_owner", "zone_admin"]);
@@ -75,6 +77,21 @@
     } finally {
       creating = false;
     }
+  }
+
+  function openChapterDashboard(event: MouseEvent, chapter: Chapter) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      return;
+    }
+    setActiveChapter(chapter.id);
+  }
+
+  function chapterDashboardHref(chapter: Chapter): string {
+    const qs = new URLSearchParams({
+      chapterId: chapter.id,
+      chapterName: chapter.name,
+    });
+    return `/church/overview?${qs.toString()}`;
   }
 </script>
 
@@ -163,21 +180,35 @@
               <th>Reference</th>
               <th>Name</th>
               <th>Country</th>
+              <th>Members</th>
               <th>Active since</th>
               <th>Created</th>
+              <th aria-label="Actions"></th>
             </tr>
           </thead>
           <tbody>
             {#each chapters as chapter (chapter.id)}
               <tr>
                 <td class="sl-mono text-[11.5px] text-[var(--ink-mute)]" style="letter-spacing:0.04em">{chapter.referenceCode}</td>
-                <td class="sl-display text-[15px] text-[var(--ink)]">{chapter.name}</td>
+                <td>
+                  <a href={`/zone/chapters/${chapter.id}`} class="sl-display text-[15px] text-[var(--ink)] hover:text-[var(--brass-deep)]">
+                    {chapter.name}
+                  </a>
+                </td>
                 <td class="sl-mono text-[12px] uppercase text-[var(--ink-soft)]">{chapter.countryCode ?? "—"}</td>
+                <td class="sl-mono text-[12px] text-[var(--ink-soft)]">{chapter.activeMemberCount}</td>
                 <td class="sl-mono text-[12px] text-[var(--ink-soft)]">
                   {new Date(chapter.dateFrom).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
                 </td>
                 <td class="sl-mono text-[11.5px] text-[var(--ink-mute)]">
                   {new Date(chapter.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                </td>
+                <td class="text-right">
+                  <a
+                    href={chapterDashboardHref(chapter)}
+                    class="sl-btn sl-btn-ghost justify-center"
+                    onclick={(event) => openChapterDashboard(event, chapter)}
+                  >Dashboard</a>
                 </td>
               </tr>
             {/each}

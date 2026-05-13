@@ -59,7 +59,6 @@ export const ZONAL_NAV: NavGroup[] = [
     items: [
       { href: "/zone/chapters", label: "Chapters" },
       { href: "/zone/members", label: "Members" },
-      { href: "/zone/lookups", label: "Lookups" },
       { href: "/zone/merge", label: "Merge proposals" },
     ],
   },
