@@ -46,7 +46,7 @@
 - **Group by**: member.
 - **Export**: Excel, PDF.
 - **Legacy mapping**: `Givings_All_MemberFinanceSummaryView`, `ChurchEnvelope_MemberFinanceSummaryView`, `MemberFinanceReport`, `MemberFinanceReport_PIVOT` (legacy).
-- **Acceptance**: per-member sums match legacy values; pivot column names equal active giving types (sorted by ordinal).
+- **Acceptance**: per-member sums match legacy values; pivot column names follow giving types sorted by ordinal, with inactive historical giving types clearly marked.
 
 ### 2.3 Weekly finance report
 

@@ -65,6 +65,7 @@ function toArrayBuffer(view: Uint8Array): ArrayBuffer {
 interface SeededZone {
   id: string;
   chapterId: string;
+  chapterRef: string;
   otherChapterId: string;
   memberIds: string[]; // [m0 in chapterA, m1 in chapterA, m2 in chapterB]
   memberRefs: string[];
@@ -112,7 +113,7 @@ async function seedZone(): Promise<SeededZone> {
         dateFrom: "2024-01-01",
       },
     ])
-    .returning({ id: chapters.id });
+    .returning({ id: chapters.id, referenceCode: chapters.referenceCode });
 
   const memberIds: string[] = [];
   const memberRefs: string[] = [];
@@ -159,6 +160,7 @@ async function seedZone(): Promise<SeededZone> {
   return {
     id: zone.id,
     chapterId: chapterA.id,
+    chapterRef: chapterA.referenceCode,
     otherChapterId: chapterB.id,
     memberIds,
     memberRefs,
@@ -715,7 +717,43 @@ describe("member-finance-summary report", () => {
     const poisonedHeader = values.find(
       (value) => typeof value === "string" && value.includes("HYPERLINK"),
     );
-    expect(typeof poisonedHeader === "string" && poisonedHeader.startsWith("=")).toBe(false);
+    expect(poisonedHeader).toBeDefined();
+    expect(typeof poisonedHeader).toBe("string");
+    expect(poisonedHeader as string).not.toMatch(/^=/);
+  });
+
+  it("includes inactive giving types so historical totals tie out", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    await db
+      .update(givingTypes)
+      .set({ isActive: false })
+      .where(sql`${givingTypes.zoneId} = ${zone.id} and ${givingTypes.id} = ${zone.offeringGivingTypeId}`);
+
+    const contribution = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[0],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: zone.offeringGivingTypeId, amount: "45.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, contribution.contribution.id);
+
+    const result = await memberFinanceSummaryReport.fetch(db, ctx, {
+      givingTypeId: zone.offeringGivingTypeId,
+      dateFrom: shiftDays(TODAY, -1),
+      dateTo: shiftDays(TODAY, 1),
+    });
+
+    const inactiveCol = result.columns?.find((c) => c.label.includes("(inactive)"));
+    expect(inactiveCol).toBeTruthy();
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0][inactiveCol!.key]).toBe("45.0000");
+    expect(result.rows[0].total).toBe("45.0000");
+    expect(result.subtotals).toEqual([{ currencyCode: "GBP", total: "45.0000" }]);
   });
 
   it("aggregates same-member giving into one visible ISO-week period row", async () => {
@@ -776,11 +814,33 @@ describe("member-finance-summary report", () => {
     });
     expect(denial).toBe("forbidden");
 
+    const inScope = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[0],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: zone.givingTypeId, amount: "15.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, inScope.contribution.id);
+
+    const outOfScope = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.otherChapterId,
+      memberId: zone.memberIds[2],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: zone.givingTypeId, amount: "99.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, outOfScope.contribution.id);
+
     const result = await memberFinanceSummaryReport.fetch(db, chapterScopedCtx, {
       dateFrom: shiftDays(TODAY, -1),
       dateTo: shiftDays(TODAY, 1),
     });
-    expect(result.rows.every((r) => r.chapterReferenceCode?.startsWith("CA"))).toBe(true);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].chapterReferenceCode).toBe(zone.chapterRef);
+    expect(result.rows[0].total).toBe("15.0000");
   });
 });
 

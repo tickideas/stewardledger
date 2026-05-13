@@ -67,6 +67,7 @@ interface GivingTypeColumn {
   key: string;
   label: string;
   shortCode: string | null;
+  isActive: boolean;
 }
 
 const BASE_COLUMNS: ReportColumn[] = [
@@ -86,7 +87,7 @@ export const memberFinanceSummaryReport: ReportSpec<
   id: "member-finance-summary",
   title: "Member finance summary",
   description:
-    "Per-member giving totals over a date range, pivoted by active giving type.",
+    "Per-member giving totals over a date range, pivoted by giving type.",
   filtersSchema: memberFinanceSummaryFiltersSchema,
   columns: (filters) => [
     ...BASE_COLUMNS,
@@ -370,13 +371,14 @@ async function loadGivingTypeColumns(
   zoneId: string,
   filters: MemberFinanceSummaryFilters,
 ): Promise<GivingTypeColumn[]> {
-  const conditions = [eq(givingTypes.zoneId, zoneId), eq(givingTypes.isActive, true)];
+  const conditions = [eq(givingTypes.zoneId, zoneId)];
   if (filters.givingTypeId) conditions.push(eq(givingTypes.id, filters.givingTypeId));
   const rows = await database
     .select({
       id: givingTypes.id,
       name: givingTypes.name,
       shortCode: givingTypes.shortCode,
+      isActive: givingTypes.isActive,
     })
     .from(givingTypes)
     .where(and(...conditions))
@@ -384,8 +386,14 @@ async function loadGivingTypeColumns(
   return rows.map((row) => ({
     id: row.id,
     key: givingTypeKey(row.id),
-    label: row.shortCode ? `${row.shortCode} - ${row.name}` : row.name,
+    label: [
+      row.shortCode ? `${row.shortCode} - ${row.name}` : row.name,
+      row.isActive ? null : "(inactive)",
+    ]
+      .filter(Boolean)
+      .join(" "),
     shortCode: row.shortCode,
+    isActive: row.isActive,
   }));
 }
 
@@ -405,7 +413,8 @@ function isGivingTypeColumn(value: unknown): value is GivingTypeColumn {
     typeof record.id === "string" &&
     typeof record.key === "string" &&
     typeof record.label === "string" &&
-    (typeof record.shortCode === "string" || record.shortCode === null)
+    (typeof record.shortCode === "string" || record.shortCode === null) &&
+    typeof record.isActive === "boolean"
   );
 }
 
