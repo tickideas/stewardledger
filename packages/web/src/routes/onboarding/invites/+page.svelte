@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from "$lib/api";
+  import { INVITABLE_CHAPTER_ROLE_OPTIONS, INVITABLE_ZONE_ROLE_OPTIONS } from "$lib/role-options";
 
   type Chapter = { id: string; name: string; referenceCode: string };
   type Invitation = {
@@ -11,19 +12,6 @@
     acceptedAt: string | null;
     revokedAt: string | null;
   };
-
-  const ZONE_ROLES = [
-    "zone_admin",
-    "zone_finance_admin",
-    "zone_auditor",
-    "zone_pastor_viewer",
-  ] as const;
-  const CHAPTER_ROLES = [
-    "chapter_admin",
-    "chapter_treasurer",
-    "chapter_bookkeeper",
-    "chapter_pastor_viewer",
-  ] as const;
 
   let chapters = $state<Chapter[]>([]);
   let invitations = $state<Invitation[]>([]);
@@ -98,13 +86,13 @@
       class="col-span-7 sm:col-span-3 rounded-lg border border-slate-300 px-3 py-2 text-sm"
     >
       <optgroup label="Zone-wide">
-        {#each ZONE_ROLES as r}
-          <option value={r}>{r}</option>
+        {#each INVITABLE_ZONE_ROLE_OPTIONS as r}
+          <option value={r.value}>{r.label}</option>
         {/each}
       </optgroup>
       <optgroup label="Chapter">
-        {#each CHAPTER_ROLES as r}
-          <option value={r}>{r}</option>
+        {#each INVITABLE_CHAPTER_ROLE_OPTIONS as r}
+          <option value={r.value}>{r.label}</option>
         {/each}
       </optgroup>
     </select>

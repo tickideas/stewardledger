@@ -6,6 +6,7 @@
 <script lang="ts">
   import { setActiveChapter } from "$lib/active-chapter.svelte";
   import { api, ApiError } from "$lib/api";
+  import { INVITABLE_CHAPTER_ROLE_OPTIONS } from "$lib/role-options";
   import type { AuthorizedContext } from "@stewardledger/shared";
 
   type Chapter = {
@@ -18,6 +19,14 @@
     createdAt: string;
     activeMemberCount: number;
   };
+  type ChapterInviteRow = {
+    id: number;
+    email: string;
+    roleCode: string;
+  };
+  type ChapterCreateResponse = {
+    chapter: Pick<Chapter, "id" | "referenceCode" | "name">;
+  };
 
   const adminRoles = new Set(["zone_owner", "zone_admin"]);
 
@@ -29,12 +38,37 @@
   let name = $state("");
   let countryCode = $state("");
   let dateFrom = $state("");
+  let inviteRows = $state<ChapterInviteRow[]>([]);
+  let nextInviteRowId = $state(1);
+  let createdChapter = $state<ChapterCreateResponse["chapter"] | null>(null);
   let creating = $state(false);
   let createError = $state<string | null>(null);
+  let createFlash = $state<string | null>(null);
 
   const canCreate = $derived(
     auth?.isPlatformAdmin === true || auth?.roleCodes.some((role) => adminRoles.has(role)) === true,
   );
+
+  function addInviteRow() {
+    inviteRows = [
+      ...inviteRows,
+      { id: nextInviteRowId, email: "", roleCode: "chapter_admin" },
+    ];
+    nextInviteRowId += 1;
+  }
+
+  function removeInviteRow(id: number) {
+    inviteRows = inviteRows.filter((row) => row.id !== id);
+  }
+
+  function resetCreateForm() {
+    name = "";
+    countryCode = "";
+    dateFrom = "";
+    inviteRows = [];
+    nextInviteRowId = 1;
+    createdChapter = null;
+  }
 
   async function refresh() {
     loading = true;
@@ -60,20 +94,57 @@
   async function create(e: SubmitEvent) {
     e.preventDefault();
     createError = null;
+    createFlash = null;
     creating = true;
     try {
-      await api.post("/api/tenant/chapters", {
-        name,
-        countryCode: countryCode.trim() ? countryCode.trim().toUpperCase() : undefined,
-        dateFrom: dateFrom || undefined,
-      });
-      name = "";
-      countryCode = "";
-      dateFrom = "";
+      const result =
+        createdChapter === null
+          ? await api.post<ChapterCreateResponse>("/api/tenant/chapters", {
+              name,
+              countryCode: countryCode.trim() ? countryCode.trim().toUpperCase() : undefined,
+              dateFrom: dateFrom || undefined,
+            })
+          : { chapter: createdChapter };
+      createdChapter = result.chapter;
+      const invites = inviteRows
+        .map((row) => ({ ...row, email: row.email.trim() }))
+        .filter((row) => row.email.length > 0);
+      let sentInvites = 0;
+      for (const row of invites) {
+        try {
+          await api.post("/api/tenant/invitations", {
+            email: row.email,
+            roleCode: row.roleCode,
+            chapterId: result.chapter.id,
+          });
+          sentInvites += 1;
+          inviteRows = inviteRows.filter((existing) => existing.id !== row.id);
+        } catch (err) {
+          await refresh();
+          createFlash =
+            sentInvites > 0
+              ? `${sentInvites} ${sentInvites === 1 ? "invitation" : "invitations"} sent.`
+              : null;
+          createError =
+            err instanceof ApiError
+              ? `${result.chapter.name} was added, but ${row.email} could not be invited: ${err.message}`
+              : `${result.chapter.name} was added, but ${row.email} could not be invited.`;
+          return;
+        }
+      }
+      const inviteText =
+        sentInvites === 0
+          ? "Chapter added."
+          : `Chapter added and ${sentInvites} ${sentInvites === 1 ? "invitation" : "invitations"} sent.`;
+      resetCreateForm();
       createOpen = false;
+      createFlash = inviteText;
       await refresh();
     } catch (err) {
-      createError = err instanceof ApiError ? err.message : "Could not add chapter.";
+      createError =
+        err instanceof ApiError
+          ? err.message
+          : "Could not add chapter or send administrator invitations.";
     } finally {
       creating = false;
     }
@@ -126,22 +197,67 @@
 
   {#if createOpen}
     <form class="sl-reveal sl-card-warm mt-6 grid grid-cols-12 gap-3 p-6" onsubmit={create}>
+      {#if createdChapter}
+        <p class="col-span-12 border-l-2 border-[var(--ok)] bg-[var(--ok-soft)] px-3 py-2 text-[13px] text-[var(--ok)]">
+          {createdChapter.name} has been added. Fix the remaining invitations and retry.
+        </p>
+      {/if}
       <label class="col-span-12 sm:col-span-5">
         <span class="sl-eyebrow" style="font-size:10.5px">Chapter name</span>
-        <input type="text" required minlength="2" maxlength="120" bind:value={name} class="sl-input mt-1.5" />
+        <input type="text" required minlength="2" maxlength="120" bind:value={name} disabled={createdChapter !== null} class="sl-input mt-1.5" />
       </label>
       <label class="col-span-6 sm:col-span-2">
         <span class="sl-eyebrow" style="font-size:10.5px">Country</span>
-        <input type="text" maxlength="2" bind:value={countryCode} placeholder="GB" class="sl-input mt-1.5 uppercase" />
+        <input type="text" maxlength="2" bind:value={countryCode} disabled={createdChapter !== null} placeholder="GB" class="sl-input mt-1.5 uppercase" />
       </label>
       <label class="col-span-6 sm:col-span-3">
         <span class="sl-eyebrow" style="font-size:10.5px">Active since</span>
-        <input type="date" bind:value={dateFrom} class="sl-input mt-1.5" />
+        <input type="date" bind:value={dateFrom} disabled={createdChapter !== null} class="sl-input mt-1.5" />
       </label>
       <div class="col-span-12 flex items-end sm:col-span-2">
         <button type="submit" disabled={creating} class="sl-btn sl-btn-primary w-full justify-center">
-          {creating ? "Adding…" : "Add"}
+          {#if creating}
+            {createdChapter ? "Retrying…" : "Adding…"}
+          {:else}
+            {createdChapter ? "Retry invites" : "Add"}
+          {/if}
         </button>
+      </div>
+      <div class="col-span-12 mt-2 border-t border-[var(--rule)] pt-5">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <span class="sl-eyebrow" style="font-size:10.5px">Chapter administrators</span>
+            <p class="mt-1 text-[13px] text-[var(--ink-mute)]">
+              Send one or more chapter-scoped invitations as soon as this chapter is created.
+            </p>
+          </div>
+          <button type="button" class="sl-btn sl-btn-ghost" onclick={addInviteRow}>+ Add administrator</button>
+        </div>
+        {#if inviteRows.length > 0}
+          <div class="mt-4 space-y-3">
+            {#each inviteRows as row (row.id)}
+              <div class="grid grid-cols-12 gap-3">
+                <label class="col-span-12 sm:col-span-6">
+                  <span class="sl-eyebrow" style="font-size:10.5px">Email</span>
+                  <input type="email" bind:value={row.email} placeholder="admin@example.com" class="sl-input mt-1.5" />
+                </label>
+                <label class="col-span-8 sm:col-span-4">
+                  <span class="sl-eyebrow" style="font-size:10.5px">Role</span>
+                  <select bind:value={row.roleCode} class="sl-select mt-1.5">
+                    {#each INVITABLE_CHAPTER_ROLE_OPTIONS as role}
+                      <option value={role.value}>{role.label}</option>
+                    {/each}
+                  </select>
+                </label>
+                <div class="col-span-4 flex items-end sm:col-span-2">
+                  <button type="button" class="sl-btn sl-btn-ghost w-full justify-center" onclick={() => removeInviteRow(row.id)}>
+                    Remove
+                  </button>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
       </div>
       {#if createError}
         <p class="col-span-12 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{createError}</p>
@@ -151,6 +267,13 @@
     <p class="mt-6 text-[13px] text-[var(--ink-mute)]">
       Chapter creation is available to zone owners and zone admins.
     </p>
+  {/if}
+
+  {#if createFlash}
+    <p class="mt-6 border-l-2 border-[var(--ok)] bg-[var(--ok-soft)] px-3 py-2 text-[13px] text-[var(--ok)]">{createFlash}</p>
+  {/if}
+  {#if createError && !createOpen}
+    <p class="mt-6 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{createError}</p>
   {/if}
 
   {#if loadError}

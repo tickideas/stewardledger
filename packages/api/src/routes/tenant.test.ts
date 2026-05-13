@@ -278,6 +278,76 @@ describe("tenant routes — cross-tenant fuzz", () => {
     expect(body.items.map((i) => i.id)).not.toContain(invB);
   });
 
+  it("GET /administrators returns active bindings for this zone only", async () => {
+    const chapterAdmin = await seedUser(`admin-roster+${unique()}@example.com`);
+    cleanupUserIds.push(chapterAdmin);
+    await db.insert(userRoleBindings).values({
+      userId: chapterAdmin,
+      zoneId: zoneA.id,
+      chapterId: chapterA,
+      roleId: zoneA.chapterAdminRoleId,
+    });
+
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+    const res = await call(zoneA.slug, "/api/tenant/administrators");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      items: Array<{ userId: string; roleCode: string; chapterId: string | null }>;
+    };
+    expect(body.items).toContainEqual(
+      expect.objectContaining({
+        userId: userA,
+        roleCode: ZONE_ROLES.ZONE_OWNER,
+        chapterId: null,
+      }),
+    );
+    expect(body.items).toContainEqual(
+      expect.objectContaining({
+        userId: chapterAdmin,
+        roleCode: CHAPTER_ROLES.CHAPTER_ADMIN,
+        chapterId: chapterA,
+      }),
+    );
+    expect(body.items.some((item) => item.userId === userBOwner)).toBe(false);
+  });
+
+  it("DELETE /administrators/:bindingId revokes in-zone binding and rejects self-lockout", async () => {
+    const chapterAdmin = await seedUser(`admin-revoke+${unique()}@example.com`);
+    cleanupUserIds.push(chapterAdmin);
+    const [binding] = await db
+      .insert(userRoleBindings)
+      .values({
+        userId: chapterAdmin,
+        zoneId: zoneA.id,
+        chapterId: chapterA,
+        roleId: zoneA.chapterAdminRoleId,
+      })
+      .returning({ id: userRoleBindings.id });
+
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+    const revoked = await call(zoneA.slug, `/api/tenant/administrators/${binding.id}`, {
+      method: "DELETE",
+    });
+    expect(revoked.status).toBe(200);
+    const [row] = await db
+      .select({ revokedAt: userRoleBindings.revokedAt })
+      .from(userRoleBindings)
+      .where(sql`${userRoleBindings.id} = ${binding.id}`);
+    expect(row.revokedAt).toBeInstanceOf(Date);
+
+    const [ownBinding] = await db
+      .select({ id: userRoleBindings.id })
+      .from(userRoleBindings)
+      .where(
+        sql`${userRoleBindings.userId} = ${userA} and ${userRoleBindings.zoneId} = ${zoneA.id} and ${userRoleBindings.roleId} = ${zoneA.ownerRoleId} and ${userRoleBindings.revokedAt} is null`,
+      )
+      .limit(1);
+    const self = await call(zoneA.slug, `/api/tenant/administrators/${ownBinding.id}`, {
+      method: "DELETE",
+    });
+    expect(self.status).toBe(409);
+  });
+
   // ─── Forbidden zone access ──────────────────────────────────────────
 
   it("user A cannot read zone B (Host=zone B without a binding) → 403", async () => {
