@@ -222,6 +222,7 @@ describe("tenant reports routes", () => {
     const ids = body.items.map((r) => r.id).sort();
     expect(ids).toEqual([
       "import-reconciliation",
+      "member-finance-summary",
       "member-list",
       "member-statement",
     ]);
@@ -247,6 +248,25 @@ describe("tenant reports routes", () => {
     expect(Array.isArray(body.rows)).toBe(true);
     expect(Array.isArray(body.columns)).toBe(true);
     expect(body.columns.length).toBeGreaterThan(0);
+  });
+
+  it("returns dynamic member-finance-summary pivot columns for an owner", async () => {
+    asUser(ownerA, "owner@example.com");
+    const params = new URLSearchParams({
+      dateFrom: today,
+      dateTo: today,
+    });
+    const res = await get(
+      zoneA.slug,
+      `/api/tenant/reports/member-finance-summary/data?${params.toString()}`,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      columns: Array<{ key: string; label: string; kind: string }>;
+    };
+    expect(body.columns.some((c) => c.label.startsWith("TITHE - "))).toBe(true);
+    expect(body.columns.some((c) => c.label.startsWith("OFFERING - "))).toBe(true);
+    expect(body.columns.at(-1)).toMatchObject({ key: "total", kind: "money" });
   });
 
   it("rejects an auditor's export request (forbidden_export)", async () => {

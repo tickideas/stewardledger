@@ -51,6 +51,12 @@ export interface CurrencySubtotal {
  */
 export interface ReportFetchResult<R> {
   rows: R[];
+  /**
+   * Optional resolved columns for reports whose projection depends on
+   * database state (for example a giving-type pivot). Static reports
+   * continue to use `ReportSpec.columns(filters)`.
+   */
+  columns?: ReportColumn[];
   /** Per-currency money totals. Always grouped by currency. */
   subtotals?: CurrencySubtotal[];
   /** Optional supplementary structured payload (e.g. statement header). */
