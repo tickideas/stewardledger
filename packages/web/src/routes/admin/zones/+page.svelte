@@ -34,6 +34,10 @@
   };
 
   type ZonesListResponse = { items: ZoneRow[]; nextCursor: string | null };
+  type RemoveZoneResponse = {
+    status: string;
+    zone: { slug: string; deletedAt: string | null };
+  };
 
   let zones = $state<ZoneRow[]>([]);
   let nextCursor = $state<string | null>(null);
@@ -121,7 +125,7 @@
     removeSubmitting = true;
     removeError = null;
     try {
-      await api.delete<{ status: string }>(
+      await api.delete<RemoveZoneResponse>(
         `/api/admin/zones/${encodeURIComponent(removeTarget.slug)}`,
       );
       inviteFlash = `${removeTarget.name} removed from the platform dashboard.`;
@@ -140,12 +144,19 @@
     }
   }
 
+  function onKeydown(e: KeyboardEvent) {
+    if (e.key !== "Escape" || !removeTarget) return;
+    closeRemove();
+  }
+
   // Aggregate KPIs across the loaded page — gives the dashboard headline numbers
   const kpiActive = $derived(zones.filter((z) => z.status === "active").length);
   const kpiPending = $derived(zones.filter((z) => z.status === "pending_setup").length);
   const kpiChapters = $derived(zones.reduce((s, z) => s + z.chapterCount, 0));
   const kpiMembers = $derived(zones.reduce((s, z) => s + z.memberCount, 0));
 </script>
+
+<svelte:window onkeydown={onKeydown} />
 
 <div class="pt-2 pb-10 lg:pt-0">
   <!-- Title block -->
