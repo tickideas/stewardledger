@@ -96,6 +96,7 @@ const CHAPTER_SETTINGS_WRITE_ROLES = [
   CHAPTER_ROLES.CHAPTER_ADMIN,
 ] as const;
 const CHAPTER_SETTINGS_ZONE_WRITE_ROLES = [ZONE_ROLES.ZONE_OWNER, ZONE_ROLES.ZONE_ADMIN] as const;
+const ADMIN_BINDING_WRITE_ROLES = [ZONE_ROLES.ZONE_OWNER, ZONE_ROLES.ZONE_ADMIN] as const;
 
 const EMPTY_CHAPTER_PROFILE = {
   address: {
@@ -657,6 +658,134 @@ tenantRouter.delete("/chapters/:id/batch-templates/:templateId", async (c) => {
   if (!result)
     return c.json({ error: { code: "not_found", message: "Template not found" } }, 404);
   return c.json({ status: "deleted" });
+});
+
+// ─── Administrator bindings ──────────────────────────────────────────
+
+tenantRouter.get("/administrators", async (c) => {
+  const ctx = c.get("auth") as AuthorizedContext;
+  if (!hasAnyRole(ctx, ...ADMIN_BINDING_WRITE_ROLES)) return forbidden(c, "Zone admin required");
+
+  const rows = await db
+    .select({
+      bindingId: userRoleBindings.id,
+      userId: userTable.id,
+      email: userTable.email,
+      name: userTable.name,
+      roleId: rolesTable.id,
+      roleCode: rolesTable.code,
+      roleName: rolesTable.name,
+      roleScope: rolesTable.scope,
+      chapterId: userRoleBindings.chapterId,
+      chapterName: chapters.name,
+      chapterReferenceCode: chapters.referenceCode,
+      grantedAt: userRoleBindings.grantedAt,
+    })
+    .from(userRoleBindings)
+    .innerJoin(userTable, eq(userRoleBindings.userId, userTable.id))
+    .innerJoin(rolesTable, eq(userRoleBindings.roleId, rolesTable.id))
+    .leftJoin(
+      chapters,
+      and(eq(chapters.zoneId, userRoleBindings.zoneId), eq(chapters.id, userRoleBindings.chapterId)),
+    )
+    .where(
+      and(
+        eq(userRoleBindings.zoneId, ctx.zoneId),
+        isNull(userRoleBindings.revokedAt),
+        inArray(rolesTable.scope, ["zone", "chapter"]),
+      ),
+    )
+    .orderBy(asc(userTable.email), asc(rolesTable.scope), asc(rolesTable.code));
+
+  return c.json({ items: rows });
+});
+
+tenantRouter.delete("/administrators/:bindingId", async (c) => {
+  const ctx = c.get("auth") as AuthorizedContext;
+  if (!hasAnyRole(ctx, ...ADMIN_BINDING_WRITE_ROLES)) return forbidden(c, "Zone admin required");
+  const bindingId = c.req.param("bindingId");
+
+  const result = await db.transaction(async (tx) => {
+    const [binding] = await tx
+      .select({
+        id: userRoleBindings.id,
+        userId: userRoleBindings.userId,
+        chapterId: userRoleBindings.chapterId,
+        roleCode: rolesTable.code,
+        roleScope: rolesTable.scope,
+      })
+      .from(userRoleBindings)
+      .innerJoin(rolesTable, eq(userRoleBindings.roleId, rolesTable.id))
+      .where(
+        and(
+          eq(userRoleBindings.id, bindingId),
+          eq(userRoleBindings.zoneId, ctx.zoneId),
+          isNull(userRoleBindings.revokedAt),
+        ),
+      )
+      .limit(1);
+    if (!binding) return { kind: "not_found" as const };
+    if (binding.roleScope !== "zone" && binding.roleScope !== "chapter") {
+      return { kind: "forbidden" as const };
+    }
+    if (
+      binding.userId === ctx.userId &&
+      (binding.roleCode === ZONE_ROLES.ZONE_OWNER || binding.roleCode === ZONE_ROLES.ZONE_ADMIN)
+    ) {
+      return { kind: "self_lockout" as const };
+    }
+    if (binding.roleCode === ZONE_ROLES.ZONE_OWNER) {
+      const [ownerCount] = await tx
+        .select({ count: sql<number>`count(*)::int` })
+        .from(userRoleBindings)
+        .innerJoin(rolesTable, eq(userRoleBindings.roleId, rolesTable.id))
+        .where(
+          and(
+            eq(userRoleBindings.zoneId, ctx.zoneId),
+            eq(rolesTable.code, ZONE_ROLES.ZONE_OWNER),
+            isNull(userRoleBindings.revokedAt),
+          ),
+        );
+      if ((ownerCount?.count ?? 0) <= 1) return { kind: "sole_owner" as const };
+    }
+
+    await tx
+      .update(userRoleBindings)
+      .set({ revokedAt: new Date() })
+      .where(eq(userRoleBindings.id, binding.id));
+    await writeAudit(tx, {
+      zoneId: ctx.zoneId,
+      actorUserId: ctx.userId,
+      action: "administrator.role_binding.revoke",
+      entityType: "user_role_binding",
+      entityId: binding.id,
+      before: {
+        userId: binding.userId,
+        chapterId: binding.chapterId,
+        roleCode: binding.roleCode,
+      },
+    });
+    return { kind: "ok" as const };
+  });
+
+  if (result.kind === "not_found")
+    return c.json({ error: { code: "not_found", message: "Binding not found" } }, 404);
+  if (result.kind === "forbidden")
+    return c.json(
+      { error: { code: "forbidden", message: "Only tenant role bindings can be revoked here" } },
+      403,
+    );
+  if (result.kind === "self_lockout")
+    return c.json(
+      { error: { code: "self_lockout", message: "Cannot revoke your own zone admin access." } },
+      409,
+    );
+  if (result.kind === "sole_owner")
+    return c.json(
+      { error: { code: "sole_owner", message: "Cannot revoke the zone's only owner." } },
+      409,
+    );
+  return c.json({ status: "revoked" });
 });
 
 // ─── Invitations ──────────────────────────────────────────────────────

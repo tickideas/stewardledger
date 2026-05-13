@@ -200,7 +200,8 @@ invitations
 
 - A successful **admin-issued zone invite** (`POST /api/admin/zones/invite`, super-admin only) writes one invitation for the primary contact email pinned to `zone_owner` and emails them a magic-link-style accept URL. No Better Auth user is created at this stage. StewardLedger is invitation-only; there is no public signup endpoint.
 - On accept (`POST /api/public/invitations/accept`): the invited person supplies their name and chooses a password. Better Auth `signUpEmail` runs with the email pinned by the invitation, then `applyAcceptedInvitation` writes a `user_role_bindings` row, marks the invite accepted, and — for `zone_owner` invites — promotes the zone from `pending_setup` to `active`.
-- Team invitations follow the same shape but are created via `POST /api/tenant/invitations` (zone_owner / zone_admin only); the API forbids inviting a second `zone_owner`.
+- Team invitations follow the same shape but are created via `POST /api/tenant/invitations` (zone_owner / zone_admin for zone-wide or any chapter; chapter_admin only for chapter-scoped roles in their own chapter); the API forbids inviting a second `zone_owner`.
+- Active zone/chapter administrator access is read from `user_role_bindings` via `GET /api/tenant/administrators` and revoked via `DELETE /api/tenant/administrators/:bindingId` by `zone_owner` / `zone_admin`. Revocation sets `revoked_at`, writes `administrator.role_binding.revoke`, and refuses to revoke the caller's own `zone_owner` / `zone_admin` binding.
 - Demo seeding creates tenant data only, not user accounts. Demo church/zone login accounts must be created by invitation acceptance, or accessed by a platform super-admin.
 
 ---
@@ -705,7 +706,7 @@ audit_events
 
 Append-only. Never updated. Retained per tenant retention policy.
 
-Action codes are dotted strings rooted at the entity type. Phase 2 / chapter-settings additions: `chapter.banking.update`, `chapter.roster.revoke`, `chapter.batch_template.create`, `chapter.batch_template.delete`. Existing Phase 5 / contributions actions remain `contribution.{create,update,post,void,reverse}` and `import.{commit,rollback}` (see §6 and §7).
+Action codes are dotted strings rooted at the entity type. Phase 2 / chapter-settings additions: `chapter.banking.update`, `chapter.roster.revoke`, `chapter.batch_template.create`, `chapter.batch_template.delete`, `administrator.role_binding.revoke`. Existing Phase 5 / contributions actions remain `contribution.{create,update,post,void,reverse}` and `import.{commit,rollback}` (see §6 and §7).
 
 ---
 

@@ -10,6 +10,7 @@
 
   import { useActiveChapter } from "$lib/active-chapter.svelte";
   import { api, ApiError, isAbortError } from "$lib/api";
+  import { INVITABLE_CHAPTER_ROLE_OPTIONS, roleLabel } from "$lib/role-options";
   import { session } from "$lib/session.svelte";
 
   type BankingReference = { label: string; value: string; note?: string };
@@ -71,13 +72,6 @@
     "bank_import",
     "oblation",
     "manual",
-  ];
-
-  const INVITABLE_CHAPTER_ROLES: Array<{ value: string; label: string }> = [
-    { value: "chapter_admin", label: "Chapter admin" },
-    { value: "chapter_treasurer", label: "Chapter treasurer" },
-    { value: "chapter_bookkeeper", label: "Chapter bookkeeper" },
-    { value: "chapter_pastor_viewer", label: "Chapter pastor (read-only)" },
   ];
 
   const active = useActiveChapter();
@@ -388,9 +382,6 @@
     }
   }
 
-  function roleLabel(code: string): string {
-    return INVITABLE_CHAPTER_ROLES.find((r) => r.value === code)?.label ?? code;
-  }
 </script>
 
 <svelte:head><title>Settings · {active()?.name ?? "Chapter"} · StewardLedger</title></svelte:head>
@@ -619,7 +610,7 @@
           <label class="col-span-12 sm:col-span-5">
             <span class="sl-eyebrow" style="font-size:10.5px">Role</span>
             <select bind:value={inviteRole} class="sl-input mt-1.5">
-              {#each INVITABLE_CHAPTER_ROLES as r (r.value)}
+              {#each INVITABLE_CHAPTER_ROLE_OPTIONS as r (r.value)}
                 <option value={r.value}>{r.label}</option>
               {/each}
             </select>
