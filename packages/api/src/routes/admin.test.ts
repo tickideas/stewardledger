@@ -336,4 +336,35 @@ describe("admin zone onboarding routes", () => {
     const second = await adminCall(`/api/admin/zones/${slug}`, { method: "DELETE" });
     expect(second.status).toBe(404);
   });
+
+  it("excludes removed zones from region inbox and promotion", async () => {
+    const { slug, zoneId } = await invite();
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(admin.id, admin.email));
+
+    const removed = await adminCall(`/api/admin/zones/${slug}`, { method: "DELETE" });
+    expect(removed.status).toBe(200);
+
+    const inbox = await adminCall("/api/admin/regions/inbox");
+    expect(inbox.status).toBe(200);
+    const inboxBody = (await inbox.json()) as { items: Array<{ zoneId: string }> };
+    expect(inboxBody.items.map((row) => row.zoneId)).not.toContain(zoneId);
+
+    const promote = await adminCall("/api/admin/regions/promote", {
+      method: "POST",
+      body: {
+        zoneIds: [zoneId],
+        regionDraft: { name: `Removed Region ${unique()}` },
+      },
+    });
+    expect(promote.status).toBe(409);
+    const promoteBody = (await promote.json()) as { error: { code: string } };
+    expect(promoteBody.error.code).toBe("zone_not_found");
+
+    const [after] = await db
+      .select({ regionId: zones.regionId, regionNameUnverified: zones.regionNameUnverified })
+      .from(zones)
+      .where(eq(zones.id, zoneId));
+    expect(after.regionId).toBeNull();
+    expect(after.regionNameUnverified).not.toBeNull();
+  });
 });

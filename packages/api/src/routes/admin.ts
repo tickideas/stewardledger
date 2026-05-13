@@ -821,7 +821,13 @@ adminRouter.get("/regions/inbox", async (c) => {
       createdAt: zones.createdAt,
     })
     .from(zones)
-    .where(and(isNull(zones.regionId), sql`${zones.regionNameUnverified} is not null`))
+    .where(
+      and(
+        isNull(zones.regionId),
+        isNull(zones.deletedAt),
+        sql`${zones.regionNameUnverified} is not null`,
+      ),
+    )
     .orderBy(desc(zones.createdAt));
   return c.json({ items: rows });
 });
@@ -880,7 +886,7 @@ adminRouter.post("/regions/promote", zValidator("json", regionPromoteSchema), as
         regionId: zones.regionId,
       })
       .from(zones)
-      .where(inArray(zones.id, input.zoneIds));
+      .where(and(inArray(zones.id, input.zoneIds), isNull(zones.deletedAt)));
 
     if (targets.length !== input.zoneIds.length) {
       throw new PromoteError("zone_not_found", "One or more zones do not exist.");
@@ -897,7 +903,7 @@ adminRouter.post("/regions/promote", zValidator("json", regionPromoteSchema), as
     await tx
       .update(zones)
       .set({ regionId, regionNameUnverified: null, updatedAt: new Date() })
-      .where(inArray(zones.id, input.zoneIds));
+      .where(and(inArray(zones.id, input.zoneIds), isNull(zones.deletedAt)));
 
     // Fan out denormalized region_id to chapters.
     await tx
