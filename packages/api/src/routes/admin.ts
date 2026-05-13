@@ -1,7 +1,7 @@
 // packages/api/src/routes/admin.ts
 // Platform-admin API. Mounted on the API host (apex / api subdomain).
 // Guarded by requireSession + requirePlatformRole. Cross-zone reads are allowed
-// here and ONLY here. Every write is audited.
+// RELEVANT FILES: packages/api/src/routes/admin.test.ts, packages/db/src/schema/zones.ts, docs/ARCHITECTURE.md
 
 import { zValidator } from "@hono/zod-validator";
 import {
@@ -451,6 +451,73 @@ adminRouter.get("/zones/:slug", async (c) => {
   });
 });
 
+/**
+ * Remove a zone from the platform dashboard by soft-deleting it. We keep the
+ * tenant data for audit/recovery, but all session and admin list/detail reads
+ * exclude rows with `deleted_at`, so users lose access immediately.
+ */
+adminRouter.delete("/zones/:slug", async (c) => {
+  const denied = superAdminGate(c);
+  if (denied) return denied;
+  const user = c.get("user") as SessionUser;
+  const slug = c.req.param("slug");
+  logAdminAccess(c, "admin.zones.remove", { zoneSlug: slug });
+
+  const result = await db.transaction(async (tx) => {
+    const [zone] = await tx
+      .select({
+        id: zones.id,
+        slug: zones.slug,
+        name: zones.name,
+        status: zones.status,
+        deletedAt: zones.deletedAt,
+      })
+      .from(zones)
+      .where(eq(zones.slug, slug))
+      .for("update")
+      .limit(1);
+
+    if (!zone || zone.deletedAt) return { kind: "not_found" as const };
+
+    const deletedAt = new Date();
+    const [removed] = await tx
+      .update(zones)
+      .set({ deletedAt, updatedAt: deletedAt })
+      .where(and(eq(zones.id, zone.id), isNull(zones.deletedAt)))
+      .returning({ slug: zones.slug, deletedAt: zones.deletedAt });
+
+    if (!removed) return { kind: "not_found" as const };
+    const { revokedIds } = await revokeOpenInvitations(tx, { zoneId: zone.id }, user.id);
+
+    await writeAudit(tx, {
+      zoneId: zone.id,
+      actorUserId: user.id,
+      action: "zone.remove",
+      entityType: "zone",
+      entityId: zone.id,
+      before: { slug: zone.slug, name: zone.name, status: zone.status, deletedAt: null },
+      after: {
+        slug: removed.slug,
+        deletedAt: removed.deletedAt?.toISOString() ?? null,
+        revokedInvitationIds: revokedIds,
+      },
+    });
+
+    return { kind: "ok" as const, slug: removed.slug, deletedAt: removed.deletedAt };
+  });
+
+  if (result.kind === "not_found") {
+    return c.json({ error: { code: "not_found", message: "Zone not found" } }, 404);
+  }
+  return c.json({
+    status: "removed",
+    zone: {
+      slug: result.slug,
+      deletedAt: result.deletedAt?.toISOString() ?? null,
+    },
+  });
+});
+
 // ─── Onboarding (closed signup) ──────────────────────────────
 
 /**
@@ -754,7 +821,13 @@ adminRouter.get("/regions/inbox", async (c) => {
       createdAt: zones.createdAt,
     })
     .from(zones)
-    .where(and(isNull(zones.regionId), sql`${zones.regionNameUnverified} is not null`))
+    .where(
+      and(
+        isNull(zones.regionId),
+        isNull(zones.deletedAt),
+        sql`${zones.regionNameUnverified} is not null`,
+      ),
+    )
     .orderBy(desc(zones.createdAt));
   return c.json({ items: rows });
 });
@@ -780,7 +853,7 @@ adminRouter.post("/regions/promote", zValidator("json", regionPromoteSchema), as
         .from(regions)
         .where(eq(regions.id, input.regionId))
         .limit(1);
-      if (!region || !region.isActive) {
+      if (!region?.isActive) {
         throw new PromoteError("region_not_found", "Region not found or inactive.");
       }
       regionId = region.id;
@@ -813,7 +886,7 @@ adminRouter.post("/regions/promote", zValidator("json", regionPromoteSchema), as
         regionId: zones.regionId,
       })
       .from(zones)
-      .where(inArray(zones.id, input.zoneIds));
+      .where(and(inArray(zones.id, input.zoneIds), isNull(zones.deletedAt)));
 
     if (targets.length !== input.zoneIds.length) {
       throw new PromoteError("zone_not_found", "One or more zones do not exist.");
@@ -830,7 +903,7 @@ adminRouter.post("/regions/promote", zValidator("json", regionPromoteSchema), as
     await tx
       .update(zones)
       .set({ regionId, regionNameUnverified: null, updatedAt: new Date() })
-      .where(inArray(zones.id, input.zoneIds));
+      .where(and(inArray(zones.id, input.zoneIds), isNull(zones.deletedAt)));
 
     // Fan out denormalized region_id to chapters.
     await tx

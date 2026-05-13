@@ -226,6 +226,23 @@ describe("tenant routes — cross-tenant fuzz", () => {
     expect(body.items.map((c) => c.id)).not.toContain(chapterB);
   });
 
+  it("does not resolve a soft-deleted zone as a tenant", async () => {
+    const removed = await seedZone(`removed-${unique()}`, `Removed Zone ${unique()}`);
+    cleanupSlugs.push(removed.slug);
+    await db
+      .update(zones)
+      .set({ deletedAt: new Date() })
+      .where(sql`${zones.id} = ${removed.id}`);
+
+    const res = await call(removed.slug, "/api/tenant/me");
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("tenant_not_found");
+
+    const viaApiHost = await callApiHostWithZoneHeader(removed.slug, "/api/tenant/me");
+    expect(viaApiHost.status).toBe(404);
+  });
+
   it("GET /invitations from zone A only returns zone A's invitations", async () => {
     vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
     const res = await call(zoneA.slug, "/api/tenant/invitations");

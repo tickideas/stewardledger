@@ -4,7 +4,7 @@
 // RELEVANT FILES: ./auth.ts, ../app.ts, ../../../web/src/lib/api.ts
 
 import { zoneSlugSchema, type AuthorizedContext } from "@stewardledger/shared";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { Context, MiddlewareHandler } from "hono";
 import { customDomains, zones } from "@stewardledger/db/schema";
 import { db } from "../db";
@@ -83,7 +83,7 @@ export const tenantMiddleware: MiddlewareHandler = async (c: Context, next) => {
     const rows = await db
       .select({ id: zones.id, slug: zones.slug, regionId: zones.regionId })
       .from(zones)
-      .where(eq(zones.slug, slug))
+      .where(and(eq(zones.slug, slug), isNull(zones.deletedAt)))
       .limit(1);
     if (rows[0]) {
       tenant = { zoneId: rows[0].id, zoneSlug: rows[0].slug, regionId: rows[0].regionId };
@@ -96,7 +96,12 @@ export const tenantMiddleware: MiddlewareHandler = async (c: Context, next) => {
       .select({ id: zones.id, slug: zones.slug, regionId: zones.regionId })
       .from(customDomains)
       .innerJoin(zones, eq(customDomains.zoneId, zones.id))
-      .where(eq(customDomains.hostname, host.toLowerCase().split(":")[0]))
+      .where(
+        and(
+          eq(customDomains.hostname, host.toLowerCase().split(":")[0]),
+          isNull(zones.deletedAt),
+        ),
+      )
       .limit(1);
     if (rows[0]) {
       tenant = { zoneId: rows[0].id, zoneSlug: rows[0].slug, regionId: rows[0].regionId };

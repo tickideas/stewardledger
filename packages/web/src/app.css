@@ -1,3 +1,8 @@
+/* packages/web/src/app.css */
+/* Global StewardLedger design tokens, typography, and shared UI primitives. */
+/* Keeps every role surface visually consistent without duplicating shell CSS. */
+/* RELEVANT FILES: packages/web/src/routes/admin/+layout.svelte, packages/web/src/routes/zone/+layout.svelte, packages/web/src/routes/church/+layout.svelte */
+
 @import "tailwindcss";
 
 @font-face {
@@ -335,6 +340,43 @@ body::before {
   left: 0; right: 0; bottom: -17px;
   height: 1px;
   background: var(--brass);
+}
+
+.sl-side-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.5rem 0.5rem 0.5rem 0.75rem;
+  font-size: 13px;
+  color: var(--ink-mute);
+  border-radius: 2px;
+  transition: color 120ms ease, background 120ms ease;
+}
+.sl-side-link:hover {
+  color: var(--ink);
+  background: var(--paper-soft);
+}
+.sl-side-link-active {
+  color: var(--ink);
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+.sl-side-link-rail {
+  display: inline-block;
+  width: 2px;
+  height: 14px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background 120ms ease;
+}
+.sl-side-link:hover .sl-side-link-rail {
+  background: var(--rule-strong);
+}
+.sl-profile-trigger:focus-visible,
+.sl-scope-trigger:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 2px;
 }
 
 /* ---------- Animations ---------- */

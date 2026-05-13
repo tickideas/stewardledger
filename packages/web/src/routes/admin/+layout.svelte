@@ -1,3 +1,8 @@
+<!-- packages/web/src/routes/admin/+layout.svelte -->
+<!-- Platform-admin shell with brand, scoped navigation, and account controls. -->
+<!-- Exists to keep platform-only routes visually and behaviorally separate from tenant surfaces. -->
+<!-- RELEVANT FILES: packages/web/src/lib/nav.ts, packages/web/src/routes/zone/+layout.svelte, packages/web/src/routes/church/+layout.svelte -->
+
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
@@ -239,44 +244,3 @@
     </div>
   </div>
 {/if}
-
-<style>
-  /* Sidebar link — a quiet vertical rail flips to brass on active. Hover
-     warms the row without committing to a full pill, which would feel
-     heavier than the editorial aesthetic allows. */
-  :global(.sl-side-link) {
-    position: relative;
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    padding: 0.5rem 0.5rem 0.5rem 0.75rem;
-    font-size: 13px;
-    color: var(--ink-mute);
-    border-radius: 2px;
-    transition: color 120ms ease, background 120ms ease;
-  }
-  :global(.sl-side-link:hover) {
-    color: var(--ink);
-    background: var(--paper-soft);
-  }
-  :global(.sl-side-link-active) {
-    color: var(--ink);
-    background: var(--card);
-    box-shadow: inset 0 0 0 1px var(--rule);
-  }
-  :global(.sl-side-link-rail) {
-    display: inline-block;
-    width: 2px;
-    height: 14px;
-    border-radius: 1px;
-    background: transparent;
-    transition: background 120ms ease;
-  }
-  :global(.sl-side-link:hover .sl-side-link-rail) {
-    background: var(--rule-strong);
-  }
-  :global(.sl-profile-trigger:focus-visible) {
-    outline: 2px solid var(--brass);
-    outline-offset: 2px;
-  }
-</style>

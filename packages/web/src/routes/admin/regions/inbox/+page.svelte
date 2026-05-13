@@ -1,3 +1,8 @@
+<!-- packages/web/src/routes/admin/regions/inbox/+page.svelte -->
+<!-- Platform-admin inbox for zones submitted with unverified free-text region names. -->
+<!-- Exists so super-admins can promote submitted names into curated region records. -->
+<!-- RELEVANT FILES: packages/web/src/routes/admin/regions/+page.svelte, packages/api/src/routes/admin.ts, docs/ARCHITECTURE.md -->
+
 <script lang="ts">
   import { api, ApiError } from "$lib/api";
 
@@ -60,7 +65,7 @@
   }
 </script>
 
-<div class="py-10">
+<div class="pt-2 pb-10 lg:pt-0">
   <div class="sl-reveal sl-reveal-1">
     <span class="sl-eyebrow">§ Section III · Curation</span>
     <h1 class="mt-3 sl-display text-[44px] leading-[1] text-[var(--ink)]">

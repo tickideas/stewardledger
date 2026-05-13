@@ -1,3 +1,8 @@
+<!-- packages/web/src/routes/zone/chapters/+page.svelte -->
+<!-- Zonal chapter register with chapter creation for zone-level administrators. -->
+<!-- Exists as the main zonal dashboard entry point for managing churches in a zone. -->
+<!-- RELEVANT FILES: packages/web/src/routes/zone/+layout.svelte, packages/api/src/routes/tenant.ts, packages/web/src/routes/church/overview/+page.svelte -->
+
 <script lang="ts">
   import { api, ApiError } from "$lib/api";
   import type { AuthorizedContext } from "@stewardledger/shared";
@@ -73,7 +78,7 @@
   }
 </script>
 
-<div class="py-10">
+<div class="pt-2 pb-10 lg:pt-0">
   <div class="sl-reveal sl-reveal-1 flex flex-wrap items-end justify-between gap-6">
     <div>
       <span class="sl-eyebrow">§ I · Church administration</span>

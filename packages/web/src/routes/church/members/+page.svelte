@@ -1,3 +1,8 @@
+<!-- packages/web/src/routes/church/members/+page.svelte -->
+<!-- Chapter-scoped member directory and member creation surface. -->
+<!-- Exists so chapter users manage only the active chapter selected in the church shell. -->
+<!-- RELEVANT FILES: packages/web/src/routes/church/+layout.svelte, packages/web/src/lib/active-chapter.svelte.ts, packages/api/src/routes/tenant-members.ts -->
+
 <script lang="ts">
   // Chapter-scoped members directory. Forks /zone/members but drops the
   // chapter filter (there's only one chapter in scope) and the create flow's
@@ -108,7 +113,7 @@
 
 <svelte:head><title>Members · {chapter()?.name ?? "Chapter"} · StewardLedger</title></svelte:head>
 
-<div class="py-10">
+<div class="pt-2 pb-10 lg:pt-0">
   <div class="sl-reveal sl-reveal-1 flex flex-wrap items-end justify-between gap-6">
     <div>
       <span class="sl-eyebrow">§ Chapter II · People</span>

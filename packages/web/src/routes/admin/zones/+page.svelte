@@ -1,3 +1,8 @@
+<!-- packages/web/src/routes/admin/zones/+page.svelte -->
+<!-- Platform zones register with tenant KPIs, onboarding, diagnostics, and removal actions. -->
+<!-- Exists so super-admins can inspect and manage tenant lifecycle from one audited surface. -->
+<!-- RELEVANT FILES: packages/api/src/routes/admin.ts, packages/web/src/routes/admin/zones/[slug]/+page.svelte, docs/ARCHITECTURE.md -->
+
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, ApiError } from "$lib/api";
@@ -29,6 +34,10 @@
   };
 
   type ZonesListResponse = { items: ZoneRow[]; nextCursor: string | null };
+  type RemoveZoneResponse = {
+    status: string;
+    zone: { slug: string; deletedAt: string | null };
+  };
 
   let zones = $state<ZoneRow[]>([]);
   let nextCursor = $state<string | null>(null);
@@ -39,6 +48,10 @@
   let inviteOpen = $state(false);
   let inviteFlash = $state<string | null>(null);
   let inviteFlashTimer: ReturnType<typeof setTimeout> | null = null;
+  let removeTarget = $state<ZoneRow | null>(null);
+  let removeConfirm = $state("");
+  let removeSubmitting = $state(false);
+  let removeError = $state<string | null>(null);
 
   function onInvited() {
     inviteFlash = "Invitation sent. The new zone is in pending_setup until the contact accepts.";
@@ -94,6 +107,48 @@
     searchDebounce = setTimeout(() => refresh(), 200);
   }
 
+  function openRemove(zone: ZoneRow) {
+    removeTarget = zone;
+    removeConfirm = "";
+    removeError = null;
+  }
+
+  function closeRemove() {
+    if (removeSubmitting) return;
+    removeTarget = null;
+    removeConfirm = "";
+    removeError = null;
+  }
+
+  async function confirmRemove() {
+    if (!removeTarget || removeConfirm.trim() !== removeTarget.slug) return;
+    removeSubmitting = true;
+    removeError = null;
+    try {
+      await api.delete<RemoveZoneResponse>(
+        `/api/admin/zones/${encodeURIComponent(removeTarget.slug)}`,
+      );
+      inviteFlash = `${removeTarget.name} removed from the platform dashboard.`;
+      if (inviteFlashTimer) clearTimeout(inviteFlashTimer);
+      inviteFlashTimer = setTimeout(() => {
+        inviteFlash = null;
+        inviteFlashTimer = null;
+      }, 6000);
+      removeTarget = null;
+      removeConfirm = "";
+      await refresh();
+    } catch (err) {
+      removeError = err instanceof ApiError ? err.message : "Could not remove this zone.";
+    } finally {
+      removeSubmitting = false;
+    }
+  }
+
+  function onKeydown(e: KeyboardEvent) {
+    if (e.key !== "Escape" || !removeTarget) return;
+    closeRemove();
+  }
+
   // Aggregate KPIs across the loaded page — gives the dashboard headline numbers
   const kpiActive = $derived(zones.filter((z) => z.status === "active").length);
   const kpiPending = $derived(zones.filter((z) => z.status === "pending_setup").length);
@@ -101,7 +156,9 @@
   const kpiMembers = $derived(zones.reduce((s, z) => s + z.memberCount, 0));
 </script>
 
-<div class="py-10">
+<svelte:window onkeydown={onKeydown} />
+
+<div class="pt-2 pb-10 lg:pt-0">
   <!-- Title block -->
   <div class="sl-reveal sl-reveal-1 flex flex-wrap items-end justify-between gap-6">
     <div>
@@ -201,6 +258,7 @@
               <th class="!text-right">Members</th>
               <th class="!text-right">Contributions</th>
               <th>Created</th>
+              <th class="!text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -249,6 +307,16 @@
                 <td class="sl-mono text-[11.5px] text-[var(--ink-mute)]">
                   {new Date(z.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
                 </td>
+                <td class="text-right">
+                  <button
+                    type="button"
+                    onclick={() => openRemove(z)}
+                    class="text-[12px] font-medium text-[var(--bad)] underline-offset-4 hover:underline"
+                    aria-label={`Remove ${z.name}`}
+                  >
+                    Remove
+                  </button>
+                </td>
               </tr>
             {/each}
           </tbody>
@@ -270,3 +338,66 @@
     {/if}
   </div>
 </div>
+
+{#if removeTarget}
+  <div
+    class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 sm:p-8"
+    role="presentation"
+    onclick={(e) => {
+      if (e.target === e.currentTarget) closeRemove();
+    }}
+  >
+    <div
+      class="w-full max-w-lg rounded-[4px] border border-[var(--rule)] bg-[var(--card)] shadow-[var(--shadow-lift)]"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="remove-zone-title"
+    >
+      <div class="border-b border-[var(--rule)] px-6 py-5">
+        <div class="sl-eyebrow" style="color:var(--bad)">Destructive action</div>
+        <h2 id="remove-zone-title" class="mt-2 sl-display text-[26px] leading-tight text-[var(--ink)]">
+          Remove {removeTarget.name}?
+        </h2>
+        <p class="mt-2 text-[13px] leading-6 text-[var(--ink-mute)]">
+          This hides the zone from platform lists and active sessions. Tenant data is kept for audit and recovery,
+          and this zone slug and name remain reserved.
+        </p>
+      </div>
+      <div class="space-y-4 px-6 py-5">
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10px">Type zone slug to confirm</span>
+          <span class="mt-1 block sl-mono text-[12px] text-[var(--ink)]">{removeTarget.slug}</span>
+          <input
+            class="sl-input mt-2"
+            value={removeConfirm}
+            oninput={(e) => (removeConfirm = (e.target as HTMLInputElement).value)}
+            autocomplete="off"
+          />
+        </label>
+        {#if removeError}
+          <p class="border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">
+            {removeError}
+          </p>
+        {/if}
+      </div>
+      <div class="flex items-center justify-end gap-3 border-t border-[var(--rule)] px-6 py-4">
+        <button
+          type="button"
+          onclick={closeRemove}
+          disabled={removeSubmitting}
+          class="sl-btn sl-btn-ghost"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onclick={confirmRemove}
+          disabled={removeSubmitting || removeConfirm.trim() !== removeTarget.slug}
+          class="sl-btn border-[var(--bad)] bg-[var(--bad)] text-white hover:bg-[#742f26] disabled:opacity-45"
+        >
+          {removeSubmitting ? "Removing..." : "Remove zone"}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}

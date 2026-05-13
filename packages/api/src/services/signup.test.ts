@@ -398,4 +398,38 @@ describe("applyAcceptedInvitation", () => {
       );
     expect(bindings.length).toBe(1);
   });
+
+  it("does not expose or accept invitations for a removed zone", async () => {
+    const slug = `t-${unique()}`;
+    cleanups.push(slug);
+    const signup = await signupZone(db, {
+      name: `Removed Invite Zone ${unique()}`,
+      slug,
+      countryCode: "GB",
+      timeZone: "Europe/London",
+      defaultCurrency: "GBP",
+      fiscalYearStartMonth: 1,
+      ministryYearStartMonth: 3,
+      regionNameUnverified: `URegion ${unique()}`,
+      primaryContactName: "A",
+      primaryContactEmail: `a+${unique()}@example.com`,
+    });
+
+    const { createInvitation } = await import("./invitations");
+    const inv = await createInvitation(db, {
+      zoneId: signup.zoneId,
+      email: `removed+${unique()}@example.com`,
+      roleCode: ZONE_ROLES.ZONE_OWNER,
+    });
+
+    await db
+      .update(zones)
+      .set({ deletedAt: new Date() })
+      .where(sql`${zones.id} = ${signup.zoneId}`);
+
+    await expect(findInvitationByToken(db, inv.token)).resolves.toBeNull();
+    await expect(
+      applyAcceptedInvitation(db, { invitationId: inv.id, userId }),
+    ).rejects.toMatchObject({ code: "invitation_not_found" });
+  });
 });

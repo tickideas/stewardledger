@@ -1,3 +1,8 @@
+<!-- packages/web/src/routes/admin/regions/+page.svelte -->
+<!-- Platform-admin region reference data register and create form. -->
+<!-- Exists so tenant region names stay curated before zones are assigned to them. -->
+<!-- RELEVANT FILES: packages/web/src/routes/admin/regions/inbox/+page.svelte, packages/api/src/routes/admin.ts, docs/ARCHITECTURE.md -->
+
 <script lang="ts">
   import { api, ApiError } from "$lib/api";
 
@@ -63,7 +68,7 @@
   }
 </script>
 
-<div class="py-10">
+<div class="pt-2 pb-10 lg:pt-0">
   <div class="sl-reveal sl-reveal-1">
     <span class="sl-eyebrow">§ Section II · Reference data</span>
     <h1 class="mt-3 sl-display text-[44px] leading-[1] text-[var(--ink)]">

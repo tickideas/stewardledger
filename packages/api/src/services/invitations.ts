@@ -145,7 +145,7 @@ export async function findInvitationByToken(
     })
     .from(invitations)
     .innerJoin(zones, eq(invitations.zoneId, zones.id))
-    .where(eq(invitations.tokenHash, tokenHash))
+    .where(and(eq(invitations.tokenHash, tokenHash), isNull(zones.deletedAt)))
     .limit(1);
   return rows[0] ?? null;
 }
@@ -174,7 +174,8 @@ export async function applyAcceptedInvitation(
         revokedAt: invitations.revokedAt,
       })
       .from(invitations)
-      .where(eq(invitations.id, args.invitationId))
+      .innerJoin(zones, eq(invitations.zoneId, zones.id))
+      .where(and(eq(invitations.id, args.invitationId), isNull(zones.deletedAt)))
       .limit(1);
     if (!inv) throw new InvitationError("invitation_not_found", "Invitation not found.");
     if (inv.acceptedAt)
