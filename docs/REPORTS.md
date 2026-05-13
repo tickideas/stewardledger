@@ -46,7 +46,7 @@
 - **Group by**: member.
 - **Export**: Excel, PDF.
 - **Legacy mapping**: `Givings_All_MemberFinanceSummaryView`, `ChurchEnvelope_MemberFinanceSummaryView`, `MemberFinanceReport`, `MemberFinanceReport_PIVOT` (legacy).
-- **Acceptance**: per-member sums match legacy values; pivot column names equal active giving types (sorted by ordinal).
+- **Acceptance**: per-member sums match legacy values; pivot column names follow giving types sorted by ordinal, with inactive historical giving types clearly marked.
 
 ### 2.3 Weekly finance report
 
@@ -157,15 +157,26 @@
 
 ## 4. Implementation notes
 
-- Reports are services in `apps/api/src/reports/<report-id>.ts`, each exporting:
+- Reports are services in `packages/api/src/services/reports/<report-id>.ts`, each exporting:
   ```ts
   type ReportSpec<F, R> = {
     id: string;
-    filtersSchema: ZodSchema<F>;
-    fetch(ctx: AuthorizedContext, filters: F): Promise<R[]>;
+    title: string;
+    description: string;
+    filtersSchema: ZodTypeAny;
+    fetch(
+      database: Database,
+      ctx: AuthorizedContext,
+      filters: F
+    ): Promise<ReportFetchResult<R>>; // { rows, columns?, subtotals?, meta? }
     columns(filters: F): ReportColumn[];
-    excel(rows: R[], filters: F, ctx: AuthorizedContext): Promise<Buffer>;
-    pdf(rows: R[], filters: F, ctx: AuthorizedContext): Promise<Buffer>;
+    excel(
+      rows: R[],
+      subtotals: CurrencySubtotal[] | undefined,
+      filters: F,
+      branding: ReportBranding
+    ): Promise<Uint8Array>;
+    accessCheck?: (ctx: AuthorizedContext, filters: F) => string | null;
   };
   ```
 - A registry exposes reports to the API and the UI; both read the same `columns()` to render screen and exports consistently.

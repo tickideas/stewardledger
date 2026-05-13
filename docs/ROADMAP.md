@@ -224,8 +224,9 @@ Exit checklist:
 
 Deliverables (full list in [`REPORTS.md`](REPORTS.md)):
 
-- Member statement (annual, period; PDF + Excel; branded). *(PR-1: Excel landed; PDF deferred until the Playwright/Chromium infra ships.)*
-- Giving by chapter / zone / period / category / giving type (PIVOT in app code). *(queued)*
+- Member statement (annual, period; PDF + Excel; branded). *(Excel landed; PDF deferred until the Playwright/Chromium infra ships.)*
+- Member finance summary (range; pivot by giving type). *(Excel landed.)*
+- Giving by chapter / zone / period / category / giving type (PIVOT in app code). *(queued — next unimplemented report.)*
 - Top partners, top chapters. *(queued)*
 - Partnership progress. *(queued; depends on Phase 8 targets)*
 - Weekly finance report. *(queued)*
@@ -245,9 +246,22 @@ Implementation notes:
 - Tenant routes at `/api/tenant/reports[/:id/data|/:id/export.xlsx]` (`packages/api/src/routes/tenant-reports.ts`). Filters arrive as query params so a treasurer can bookmark a URL and re-run the same report.
 - SvelteKit UI at `/reports` (picker) and `/reports/[id]` (filter form + table + Excel download). The per-report shell is metadata-driven from `columns()` so adding a report on the API lights it up here without UI changes.
 
+Audited implementation status (2026-05-13):
+
+- [x] Report registry / tenant routes / generic Svelte report UI are in place (`packages/api/src/services/reports/{registry,types}.ts`, `packages/api/src/routes/tenant-reports.ts`, `packages/web/src/routes/zone/reports/`).
+- [x] Member statement data + Excel export are implemented and tested (`member-statement.ts`, `reports.test.ts`, `tenant-reports.test.ts`).
+- [x] Member finance summary data + Excel export are implemented and tested (`member-finance-summary.ts`, `reports.test.ts`, `tenant-reports.test.ts`).
+- [x] Statement import reconciliation data + Excel export are implemented and tested (`import-reconciliation.ts`, `reports.test.ts`).
+- [x] Member list data + Excel export are implemented and tested (`member-list.ts`, `reports.test.ts`).
+- [ ] Giving by chapter / zone / period / category / giving type is the next unimplemented report.
+- [ ] Weekly finance report, envelope ledger, online giving ledger, general ledger, top partners, top chapters, audit log report, dashboards.
+- [ ] PDF export infrastructure and per-report PDF renderers.
+- [ ] Saved filters.
+- [ ] Background `report.generate` worker + object-storage retention for large exports.
+
 Exit checklist:
 
-- [ ] Each v1 report ties out against a hand-curated test dataset. *(PR-1: member-statement, import-reconciliation, member-list covered in `reports.test.ts`; remaining reports queued.)*
+- [ ] Each v1 report ties out against a hand-curated test dataset. *(member-statement, member-finance-summary, import-reconciliation, member-list covered in `reports.test.ts`; remaining reports queued.)*
 - [ ] All exports work in Excel and PDF. *(PR-1: Excel verified end-to-end; PDF deferred to a follow-up PR that adds the Playwright/Chromium infra per ARCHITECTURE.md §2.)*
 - [ ] Reports of >100k rows stream/paginate, never time out. *(queued; the registry shape supports paginated `fetch` already.)*
 - [x] Multi-currency reports show per-currency subtotals (no silent FX). *(`CurrencySubtotal[]` returned by every spec; reports never call `addMoney` across currencies.)*

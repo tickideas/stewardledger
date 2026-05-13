@@ -89,11 +89,12 @@ tenantReportsRouter.get("/reports/:id/data", async (c) => {
 
   try {
     const result = await spec.fetch(db, ctx, filters);
+    const columns = result.columns ?? spec.columns(filters);
     c.header("cache-control", NO_STORE);
     return c.json({
       reportId: id,
       filters,
-      columns: spec.columns(filters),
+      columns,
       rows: result.rows,
       subtotals: result.subtotals ?? [],
       meta: result.meta ?? null,

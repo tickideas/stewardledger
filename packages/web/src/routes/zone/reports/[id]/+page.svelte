@@ -30,6 +30,8 @@
   };
 
   type Chapter = { id: string; referenceCode: string; name: string };
+  type GivingType = { id: string; name: string; shortCode: string | null; isActive: boolean };
+  type PaymentMethod = { id: string; code: string; name: string; isActive: boolean };
 
   const reportId = $derived(page.params.id ?? "");
 
@@ -55,14 +57,26 @@
   let isActive = $state<"" | "true" | "false">("");
   let importJobId = $state("");
   let importStatus = $state("");
+  let givingTypeId = $state("");
+  let paymentMethodId = $state("");
 
   let chapters = $state<Chapter[]>([]);
+  let givingTypes = $state<GivingType[]>([]);
+  let paymentMethods = $state<PaymentMethod[]>([]);
 
   // Map report id → which filter inputs to surface. Keeps the form
   // honest: the registry chooses what the report needs; this picks
   // which inputs render. Adding a report drops a new entry here.
   const SHAPES: Record<string, string[]> = {
     "member-statement": ["memberId", "dateFrom", "dateTo", "includeVoided"],
+    "member-finance-summary": [
+      "chapterId",
+      "memberId",
+      "dateFrom",
+      "dateTo",
+      "paymentMethodId",
+      "givingTypeId",
+    ],
     "import-reconciliation": ["importJobId", "dateFrom", "dateTo", "importStatus"],
     "member-list": ["chapterId", "isActive"],
   };
@@ -70,14 +84,28 @@
 
   $effect(() => {
     const controller = new AbortController();
-    api
-      .get<{ items: Chapter[] }>("/api/tenant/chapters", controller.signal)
-      .then((res) => {
-        chapters = res.items;
+    Promise.all([
+      visible.includes("chapterId")
+        ? api.get<{ items: Chapter[] }>("/api/tenant/chapters", controller.signal)
+        : Promise.resolve({ items: [] }),
+      visible.includes("givingTypeId")
+        ? api.get<{ items: GivingType[] }>("/api/tenant/giving/types", controller.signal)
+        : Promise.resolve({ items: [] }),
+      visible.includes("paymentMethodId")
+        ? api.get<{ items: PaymentMethod[] }>(
+            "/api/tenant/giving/payment-methods",
+            controller.signal,
+          )
+        : Promise.resolve({ items: [] }),
+    ])
+      .then(([chapterRes, givingTypeRes, paymentMethodRes]) => {
+        chapters = chapterRes.items;
+        givingTypes = givingTypeRes.items.filter((item) => item.isActive !== false);
+        paymentMethods = paymentMethodRes.items.filter((item) => item.isActive !== false);
       })
       .catch((err) => {
         if (!isAbortError(err)) {
-          // Non-fatal — the report may not need chapters.
+          // Non-fatal — the report may not need setup lookups.
         }
       });
     return () => controller.abort();
@@ -93,6 +121,8 @@
     if (visible.includes("isActive") && isActive) params.set("isActive", isActive);
     if (visible.includes("importJobId") && importJobId) params.set("importJobId", importJobId);
     if (visible.includes("importStatus") && importStatus) params.set("status", importStatus);
+    if (visible.includes("paymentMethodId") && paymentMethodId) params.set("paymentMethodId", paymentMethodId);
+    if (visible.includes("givingTypeId") && givingTypeId) params.set("givingTypeId", givingTypeId);
     return params;
   }
 
@@ -217,7 +247,7 @@
             bind:value={memberId}
             class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
             placeholder="member uuid"
-            required
+            required={reportId === "member-statement"}
           />
         </label>
       {/if}
@@ -275,6 +305,34 @@
             <option value="">All</option>
             <option value="true">Active only</option>
             <option value="false">Inactive only</option>
+          </select>
+        </label>
+      {/if}
+      {#if visible.includes("paymentMethodId")}
+        <label class="text-sm">
+          <span class="block text-slate-600">Payment method</span>
+          <select
+            bind:value={paymentMethodId}
+            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+          >
+            <option value="">All methods</option>
+            {#each paymentMethods as method (method.id)}
+              <option value={method.id}>{method.name}</option>
+            {/each}
+          </select>
+        </label>
+      {/if}
+      {#if visible.includes("givingTypeId")}
+        <label class="text-sm">
+          <span class="block text-slate-600">Giving type</span>
+          <select
+            bind:value={givingTypeId}
+            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+          >
+            <option value="">All giving types</option>
+            {#each givingTypes as type (type.id)}
+              <option value={type.id}>{type.shortCode ? `${type.shortCode} · ${type.name}` : type.name}</option>
+            {/each}
           </select>
         </label>
       {/if}

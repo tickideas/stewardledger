@@ -21,6 +21,7 @@ import {
   chapters,
   givingTypes,
   members,
+  paymentMethods,
   user as userTable,
   zones,
 } from "@stewardledger/db";
@@ -40,6 +41,7 @@ import { InMemoryStorage, setStorageForTesting } from "../storage";
 import { createContribution, postContribution, reverseContribution } from "../contributions";
 import { importReconciliationReport } from "./import-reconciliation";
 import { loadReportBranding } from "./branding";
+import { memberFinanceSummaryReport } from "./member-finance-summary";
 import { memberListReport } from "./member-list";
 import { memberStatementReport } from "./member-statement";
 import { ReportError, parseReportFilters } from "./types";
@@ -63,12 +65,15 @@ function toArrayBuffer(view: Uint8Array): ArrayBuffer {
 interface SeededZone {
   id: string;
   chapterId: string;
+  chapterRef: string;
   otherChapterId: string;
   memberIds: string[]; // [m0 in chapterA, m1 in chapterA, m2 in chapterB]
   memberRefs: string[];
   userId: string;
   givingTypeId: string;
   givingTypeShortCode: string;
+  offeringGivingTypeId: string;
+  cashPaymentMethodId: string;
 }
 
 async function seedZone(): Promise<SeededZone> {
@@ -108,7 +113,7 @@ async function seedZone(): Promise<SeededZone> {
         dateFrom: "2024-01-01",
       },
     ])
-    .returning({ id: chapters.id });
+    .returning({ id: chapters.id, referenceCode: chapters.referenceCode });
 
   const memberIds: string[] = [];
   const memberRefs: string[] = [];
@@ -134,6 +139,16 @@ async function seedZone(): Promise<SeededZone> {
     .from(givingTypes)
     .where(sql`${givingTypes.zoneId} = ${zone.id} and ${givingTypes.shortCode} = 'TITHE'`)
     .limit(1);
+  const [offering] = await db
+    .select({ id: givingTypes.id })
+    .from(givingTypes)
+    .where(sql`${givingTypes.zoneId} = ${zone.id} and ${givingTypes.shortCode} = 'OFFERING'`)
+    .limit(1);
+  const [cash] = await db
+    .select({ id: paymentMethods.id })
+    .from(paymentMethods)
+    .where(sql`${paymentMethods.zoneId} = ${zone.id} and ${paymentMethods.code} = 'cash'`)
+    .limit(1);
 
   const userId = `u-${unique()}`;
   await db.insert(userTable).values({
@@ -145,12 +160,15 @@ async function seedZone(): Promise<SeededZone> {
   return {
     id: zone.id,
     chapterId: chapterA.id,
+    chapterRef: chapterA.referenceCode,
     otherChapterId: chapterB.id,
     memberIds,
     memberRefs,
     userId,
     givingTypeId: gt.id,
     givingTypeShortCode: gt.shortCode!,
+    offeringGivingTypeId: offering.id,
+    cashPaymentMethodId: cash.id,
   };
 }
 
@@ -169,6 +187,14 @@ const TODAY = new Date().toISOString().slice(0, 10);
 function shiftDays(iso: string, days: number): string {
   const d = new Date(`${iso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function firstTuesdayOfYear(year: number): string {
+  const d = new Date(Date.UTC(year, 0, 1));
+  while (d.getUTCDay() !== 2) {
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
   return d.toISOString().slice(0, 10);
 }
 
@@ -577,6 +603,244 @@ describe("member-statement filter schema", () => {
     }
     expect(caught).toBeInstanceOf(ReportError);
     expect((caught as ReportError).code).toBe("invalid_filters");
+  });
+});
+
+describe("member-finance-summary report", () => {
+  it("pivots per-member totals by giving type and renders Excel", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    const first = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[0],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [
+        { givingTypeId: zone.givingTypeId, amount: "100.00" },
+        { givingTypeId: zone.offeringGivingTypeId, amount: "25.00" },
+      ],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, first.contribution.id);
+
+    const second = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[1],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: zone.givingTypeId, amount: "40.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, second.contribution.id);
+
+    const result = await memberFinanceSummaryReport.fetch(db, ctx, {
+      chapterId: zone.chapterId,
+      dateFrom: shiftDays(TODAY, -1),
+      dateTo: shiftDays(TODAY, 1),
+    });
+    expect(result.rows).toHaveLength(2);
+    expect(result.subtotals).toEqual([{ currencyCode: "GBP", total: "165.0000" }]);
+
+    const columns = result.columns as Array<{ key: string; label: string }> | undefined;
+    const titheCol = columns?.find((c) => c.label.startsWith("TITHE - "));
+    const offeringCol = columns?.find((c) => c.label.startsWith("OFFERING - "));
+    expect(titheCol).toBeTruthy();
+    expect(offeringCol).toBeTruthy();
+
+    const member0 = result.rows.find((r) => r.memberReferenceCode === zone.memberRefs[0]);
+    expect(member0?.[titheCol!.key]).toBe("100.0000");
+    expect(member0?.[offeringCol!.key]).toBe("25.0000");
+    expect(member0?.total).toBe("125.0000");
+
+    const member1 = result.rows.find((r) => r.memberReferenceCode === zone.memberRefs[1]);
+    expect(member1?.[titheCol!.key]).toBe("40.0000");
+    expect(member1?.[offeringCol!.key]).toBe("0.0000");
+    expect(member1?.total).toBe("40.0000");
+
+    const branding = await loadReportBranding(db, zone.id);
+    const bytes = await memberFinanceSummaryReport.excel(
+      result.rows,
+      result.subtotals,
+      {
+        chapterId: zone.chapterId,
+        dateFrom: shiftDays(TODAY, -1),
+        dateTo: shiftDays(TODAY, 1),
+      },
+      branding,
+      result.meta,
+    );
+    expect(bytes.byteLength).toBeGreaterThan(500);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(toArrayBuffer(bytes));
+    const sheet = wb.getWorksheet("Member summary");
+    expect(sheet).toBeTruthy();
+    expect(sheet!.getCell("A1").value).toBe(branding.zoneName);
+  });
+
+  it("escapes formula-injection prefixes in dynamic giving-type headers", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    await db
+      .update(givingTypes)
+      .set({
+        name: `=HYPERLINK("http://attacker/x","click")`,
+        shortCode: null,
+      })
+      .where(sql`${givingTypes.zoneId} = ${zone.id} and ${givingTypes.id} = ${zone.offeringGivingTypeId}`);
+
+    const result = await memberFinanceSummaryReport.fetch(db, ctx, {
+      dateFrom: shiftDays(TODAY, -1),
+      dateTo: shiftDays(TODAY, 1),
+    });
+    const branding = await loadReportBranding(db, zone.id);
+    const bytes = await memberFinanceSummaryReport.excel(
+      result.rows,
+      result.subtotals,
+      {
+        dateFrom: shiftDays(TODAY, -1),
+        dateTo: shiftDays(TODAY, 1),
+      },
+      branding,
+      result.meta,
+    );
+
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(toArrayBuffer(bytes));
+    const sheet = wb.getWorksheet("Member summary")!;
+    const headerRow = sheet.getRow(6);
+    const values: unknown[] = [];
+    headerRow.eachCell((cell) => values.push(cell.value));
+    const poisonedHeader = values.find(
+      (value) => typeof value === "string" && value.includes("HYPERLINK"),
+    );
+    expect(poisonedHeader).toBeDefined();
+    expect(typeof poisonedHeader).toBe("string");
+    expect(poisonedHeader as string).not.toMatch(/^=/);
+  });
+
+  it("includes inactive giving types so historical totals tie out", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    await db
+      .update(givingTypes)
+      .set({ isActive: false })
+      .where(sql`${givingTypes.zoneId} = ${zone.id} and ${givingTypes.id} = ${zone.offeringGivingTypeId}`);
+
+    const contribution = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[0],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: zone.offeringGivingTypeId, amount: "45.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, contribution.contribution.id);
+
+    const result = await memberFinanceSummaryReport.fetch(db, ctx, {
+      givingTypeId: zone.offeringGivingTypeId,
+      dateFrom: shiftDays(TODAY, -1),
+      dateTo: shiftDays(TODAY, 1),
+    });
+
+    const inactiveCol = result.columns?.find((c) => c.label.includes("(inactive)"));
+    expect(inactiveCol).toBeTruthy();
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0][inactiveCol!.key]).toBe("45.0000");
+    expect(result.rows[0].total).toBe("45.0000");
+    expect(result.subtotals).toEqual([{ currencyCode: "GBP", total: "45.0000" }]);
+  });
+
+  it("aggregates same-member giving into one visible ISO-week period row", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+    const firstDate = firstTuesdayOfYear(new Date().getUTCFullYear());
+    const secondDate = shiftDays(firstDate, 1);
+
+    const first = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[0],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: firstDate,
+      lines: [{ givingTypeId: zone.givingTypeId, amount: "10.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, first.contribution.id);
+
+    const second = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[0],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: secondDate,
+      lines: [{ givingTypeId: zone.givingTypeId, amount: "20.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, second.contribution.id);
+
+    const result = await memberFinanceSummaryReport.fetch(db, ctx, {
+      chapterId: zone.chapterId,
+      dateFrom: firstDate,
+      dateTo: secondDate,
+    });
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].periodLabel).toMatch(/^ISO \d{4}-W\d{2}$/);
+    expect(result.rows[0].total).toBe("30.0000");
+  });
+
+  it("scopes chapter callers and rejects an out-of-scope chapter filter", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+
+    const chapterScopedCtx: AuthorizedContext = {
+      userId: zone.userId,
+      zoneId: zone.id,
+      regionId: null,
+      roleCodes: ["chapter_treasurer"],
+      chapterIds: [zone.chapterId],
+      isPlatformAdmin: false,
+    };
+
+    const denial = memberFinanceSummaryReport.accessCheck?.(chapterScopedCtx, {
+      chapterId: zone.otherChapterId,
+      dateFrom: shiftDays(TODAY, -1),
+      dateTo: shiftDays(TODAY, 1),
+    });
+    expect(denial).toBe("forbidden");
+
+    const inScope = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[0],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: zone.givingTypeId, amount: "15.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, inScope.contribution.id);
+
+    const outOfScope = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.otherChapterId,
+      memberId: zone.memberIds[2],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: zone.givingTypeId, amount: "99.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, outOfScope.contribution.id);
+
+    const result = await memberFinanceSummaryReport.fetch(db, chapterScopedCtx, {
+      dateFrom: shiftDays(TODAY, -1),
+      dateTo: shiftDays(TODAY, 1),
+    });
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].chapterReferenceCode).toBe(zone.chapterRef);
+    expect(result.rows[0].total).toBe("15.0000");
   });
 });
 
