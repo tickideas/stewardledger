@@ -734,6 +734,20 @@ tenantRouter.delete("/administrators/:bindingId", async (c) => {
     ) {
       return { kind: "self_lockout" as const };
     }
+    if (binding.roleCode === ZONE_ROLES.ZONE_OWNER) {
+      const [ownerCount] = await tx
+        .select({ count: sql<number>`count(*)::int` })
+        .from(userRoleBindings)
+        .innerJoin(rolesTable, eq(userRoleBindings.roleId, rolesTable.id))
+        .where(
+          and(
+            eq(userRoleBindings.zoneId, ctx.zoneId),
+            eq(rolesTable.code, ZONE_ROLES.ZONE_OWNER),
+            isNull(userRoleBindings.revokedAt),
+          ),
+        );
+      if ((ownerCount?.count ?? 0) <= 1) return { kind: "sole_owner" as const };
+    }
 
     await tx
       .update(userRoleBindings)
@@ -764,6 +778,11 @@ tenantRouter.delete("/administrators/:bindingId", async (c) => {
   if (result.kind === "self_lockout")
     return c.json(
       { error: { code: "self_lockout", message: "Cannot revoke your own zone admin access." } },
+      409,
+    );
+  if (result.kind === "sole_owner")
+    return c.json(
+      { error: { code: "sole_owner", message: "Cannot revoke the zone's only owner." } },
       409,
     );
   return c.json({ status: "revoked" });

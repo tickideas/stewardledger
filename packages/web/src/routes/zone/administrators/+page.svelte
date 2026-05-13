@@ -140,7 +140,7 @@
   });
 
   async function revokeBinding(binding: AdministratorBinding) {
-    if (!confirm(`Remove ${roleLabel(binding.roleCode)} access from ${binding.email}?`)) return;
+    if (!confirm(`Remove ${binding.roleName} access from ${binding.email}?`)) return;
     revokingBindingId = binding.bindingId;
     rosterError = null;
     try {
@@ -304,7 +304,7 @@
                       <p class="mt-0.5 text-[12px] text-[var(--ink-mute)]">{binding.name}</p>
                     {/if}
                   </td>
-                  <td class="text-[13px] text-[var(--ink-soft)]">{roleLabel(binding.roleCode)}</td>
+                  <td class="text-[13px] text-[var(--ink-soft)]">{binding.roleName}</td>
                   <td class="text-[13px] text-[var(--ink-soft)]">{bindingScope(binding)}</td>
                   <td class="sl-mono text-[11.5px] uppercase text-[var(--ink-mute)]">{formatDate(binding.grantedAt)}</td>
                   <td class="text-right">

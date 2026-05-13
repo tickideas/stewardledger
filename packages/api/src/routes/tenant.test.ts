@@ -313,7 +313,9 @@ describe("tenant routes — cross-tenant fuzz", () => {
 
   it("DELETE /administrators/:bindingId revokes in-zone binding and rejects self-lockout", async () => {
     const chapterAdmin = await seedUser(`admin-revoke+${unique()}@example.com`);
+    const zoneAdmin = await seedUser(`zone-admin-revoke+${unique()}@example.com`);
     cleanupUserIds.push(chapterAdmin);
+    cleanupUserIds.push(zoneAdmin);
     const [binding] = await db
       .insert(userRoleBindings)
       .values({
@@ -323,6 +325,16 @@ describe("tenant routes — cross-tenant fuzz", () => {
         roleId: zoneA.chapterAdminRoleId,
       })
       .returning({ id: userRoleBindings.id });
+    const [zoneAdminRole] = await db
+      .select({ id: roles.id })
+      .from(roles)
+      .where(sql`${roles.zoneId} = ${zoneA.id} and ${roles.code} = ${ZONE_ROLES.ZONE_ADMIN}`)
+      .limit(1);
+    await db.insert(userRoleBindings).values({
+      userId: zoneAdmin,
+      zoneId: zoneA.id,
+      roleId: zoneAdminRole.id,
+    });
 
     vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
     const revoked = await call(zoneA.slug, `/api/tenant/administrators/${binding.id}`, {
@@ -346,6 +358,14 @@ describe("tenant routes — cross-tenant fuzz", () => {
       method: "DELETE",
     });
     expect(self.status).toBe(409);
+
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(zoneAdmin, "za@x"));
+    const soleOwner = await call(zoneA.slug, `/api/tenant/administrators/${ownBinding.id}`, {
+      method: "DELETE",
+    });
+    expect(soleOwner.status).toBe(409);
+    const soleOwnerBody = (await soleOwner.json()) as { error: { code: string } };
+    expect(soleOwnerBody.error.code).toBe("sole_owner");
   });
 
   // ─── Forbidden zone access ──────────────────────────────────────────

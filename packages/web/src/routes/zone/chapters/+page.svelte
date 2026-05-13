@@ -70,6 +70,17 @@
     createdChapter = null;
   }
 
+  function toggleCreate() {
+    if (createOpen) {
+      createOpen = false;
+      createError = null;
+      createFlash = null;
+      resetCreateForm();
+      return;
+    }
+    createOpen = true;
+  }
+
   async function refresh() {
     loading = true;
     try {
@@ -182,7 +193,7 @@
       </p>
     </div>
     {#if canCreate}
-      <button type="button" class="sl-btn sl-btn-primary" onclick={() => (createOpen = !createOpen)}>
+      <button type="button" class="sl-btn sl-btn-primary" onclick={toggleCreate}>
         {#if createOpen}
           Cancel
         {:else}
