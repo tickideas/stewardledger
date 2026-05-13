@@ -36,6 +36,7 @@ interface SeededZone {
   name: string;
   ownerRoleId: string;
   chapterAdminRoleId: string;
+  chapterTreasurerRoleId: string;
 }
 
 async function seedZone(slug: string, name: string): Promise<SeededZone> {
@@ -58,6 +59,7 @@ async function seedZone(slug: string, name: string): Promise<SeededZone> {
     name: zone.name,
     ownerRoleId: seeded.get(ZONE_ROLES.ZONE_OWNER)!,
     chapterAdminRoleId: seeded.get(CHAPTER_ROLES.CHAPTER_ADMIN)!,
+    chapterTreasurerRoleId: seeded.get(CHAPTER_ROLES.CHAPTER_TREASURER)!,
   };
 }
 
@@ -549,6 +551,39 @@ describe("tenant routes — cross-tenant fuzz", () => {
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("chapter_not_found");
+  });
+
+  it("chapter admin can only update profiles for chapters where that exact role is bound", async () => {
+    const otherChapter = await seedChapter(zoneA.id, "Chapter A Profile Other");
+    const mixedRoleUser = await seedUser(`mixed-chapter+${unique()}@example.com`);
+    cleanupUserIds.push(mixedRoleUser);
+    await db.insert(userRoleBindings).values([
+      {
+        userId: mixedRoleUser,
+        zoneId: zoneA.id,
+        chapterId: chapterA,
+        roleId: zoneA.chapterAdminRoleId,
+      },
+      {
+        userId: mixedRoleUser,
+        zoneId: zoneA.id,
+        chapterId: otherChapter,
+        roleId: zoneA.chapterTreasurerRoleId,
+      },
+    ]);
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(mixedRoleUser, "mixed@x"));
+
+    const ownPatch = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}/profile`, {
+      method: "PATCH",
+      body: { pastorName: "Pastor Own Chapter" },
+    });
+    expect(ownPatch.status).toBe(200);
+
+    const otherPatch = await call(zoneA.slug, `/api/tenant/chapters/${otherChapter}/profile`, {
+      method: "PATCH",
+      body: { pastorName: "Pastor Other Chapter" },
+    });
+    expect(otherPatch.status).toBe(403);
   });
 
   it("chapter admin can read + write their own chapter's banking but not another", async () => {

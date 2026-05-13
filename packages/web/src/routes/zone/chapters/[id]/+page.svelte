@@ -135,6 +135,10 @@
     if (detail) seedProfile(detail.profile);
   }
 
+  function onKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") closeEdit();
+  }
+
   function flash(message: string) {
     saveFlash = message;
     if (flashTimer) clearTimeout(flashTimer);
@@ -209,6 +213,8 @@
     }
   }
 </script>
+
+<svelte:window onkeydown={onKeydown} />
 
 <svelte:head><title>{detail?.name ?? "Chapter"} profile · StewardLedger</title></svelte:head>
 
@@ -391,8 +397,19 @@
 </div>
 
 {#if editOpen && detail}
-  <div class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/35 px-4 py-8 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="chapter-profile-edit-title">
-    <div class="sl-card w-full max-w-4xl overflow-hidden bg-[var(--paper)] shadow-2xl">
+  <div
+    class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/35 px-4 py-8 backdrop-blur-sm"
+    role="presentation"
+    onclick={(e) => {
+      if (e.target === e.currentTarget) closeEdit();
+    }}
+  >
+    <div
+      class="sl-card w-full max-w-4xl overflow-hidden bg-[var(--paper)] shadow-2xl"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="chapter-profile-edit-title"
+    >
       <div class="flex flex-wrap items-start justify-between gap-4 border-b border-[var(--rule)] bg-[var(--paper-soft)] px-6 py-4">
         <div>
           <span class="sl-eyebrow">Edit chapter profile</span>

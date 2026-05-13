@@ -17,7 +17,6 @@
   import { page } from "$app/state";
   import {
     activeChapter as activeChapterStore,
-    activeChapterChoices,
     hydrateActiveChapter,
     setActiveChapter,
     setActiveChapterChoices,
@@ -92,7 +91,6 @@
   $effect(() => {
     const zone = activeZone;
     const requestedChapterId = page.url.searchParams.get("chapterId");
-    const requestedChapterName = page.url.searchParams.get("chapterName");
     if (!zone || !requestedChapterId) return;
     if (!hasZoneRole) {
       const match = chapterRoleChoices.find((chapter) => chapter.id === requestedChapterId);
@@ -101,14 +99,10 @@
       setActiveChapterChoices(chapterRoleChoices);
       return;
     }
-    setActiveChapter(requestedChapterId);
-    if (requestedChapterName) {
-      const existing = activeChapterChoices.items.filter((c) => c.id !== requestedChapterId);
-      setActiveChapterChoices([
-        { id: requestedChapterId, name: requestedChapterName },
-        ...existing,
-      ]);
-    }
+    const match = zoneChapterChoices.find((chapter) => chapter.id === requestedChapterId);
+    if (!match) return;
+    setActiveChapter(match.id);
+    setActiveChapterChoices(zoneChapterChoices);
   });
 
   $effect(() => {
@@ -119,7 +113,6 @@
       return;
     }
     if (loadedZoneSlug === zone.slug) return;
-    loadedZoneSlug = zone.slug;
     let cancelled = false;
     api
       .get<{ items: Array<{ id: string; name: string }> }>("/api/tenant/chapters")
@@ -129,10 +122,12 @@
           id: chapter.id,
           name: chapter.name,
         }));
+        loadedZoneSlug = zone.slug;
       })
       .catch(() => {
         if (cancelled) return;
         zoneChapterChoices = [];
+        loadedZoneSlug = null;
       });
     return () => {
       cancelled = true;

@@ -79,7 +79,10 @@
     }
   }
 
-  function openChapterDashboard(chapter: Chapter) {
+  function openChapterDashboard(event: MouseEvent, chapter: Chapter) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      return;
+    }
     setActiveChapter(chapter.id);
   }
 
@@ -204,7 +207,7 @@
                   <a
                     href={chapterDashboardHref(chapter)}
                     class="sl-btn sl-btn-ghost justify-center"
-                    onclick={() => openChapterDashboard(chapter)}
+                    onclick={(event) => openChapterDashboard(event, chapter)}
                   >Dashboard</a>
                 </td>
               </tr>

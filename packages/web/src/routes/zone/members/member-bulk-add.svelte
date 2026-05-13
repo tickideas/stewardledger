@@ -230,8 +230,9 @@
         Upload a <span class="sl-serif-italic font-light text-[var(--brass-deep)]">CSV roster</span>
       </h2>
       <p class="mt-2 max-w-2xl text-[13px] leading-relaxed text-[var(--ink-mute)]">
-        Use one row per member. Titles and chapters must match existing values exactly; download the sample
-        file to keep the format aligned. Uploads are limited to {MAX_CSV_ROWS} rows and 1 MB.
+        Use one row per member. Titles and chapters are matched after trimming spaces and ignoring case;
+        download the sample file to keep the format aligned. Uploads are limited to {MAX_CSV_ROWS} rows
+        and 1 MB.
       </p>
     </div>
     <button type="button" class="sl-btn sl-btn-ghost" onclick={onClose}>Close</button>
@@ -251,9 +252,12 @@
   </div>
 
   <div class="mt-4 rounded-[3px] border border-[var(--rule)] bg-[var(--card)] px-4 py-3">
-    <div class="sl-eyebrow" style="font-size:10px">Required columns</div>
+    <div class="sl-eyebrow" style="font-size:10px">Supported columns</div>
     <p class="mt-1 text-[13px] text-[var(--ink-mute)]">
       <span class="sl-mono">title, first_name, last_name, email, mobile, chapter</span>
+    </p>
+    <p class="mt-1 text-[12px] text-[var(--ink-mute)]">
+      Only <span class="sl-mono">first_name</span> is required.
     </p>
   </div>
 

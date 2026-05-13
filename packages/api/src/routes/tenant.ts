@@ -95,6 +95,7 @@ const CHAPTER_SETTINGS_WRITE_ROLES = [
   ZONE_ROLES.ZONE_ADMIN,
   CHAPTER_ROLES.CHAPTER_ADMIN,
 ] as const;
+const CHAPTER_SETTINGS_ZONE_WRITE_ROLES = [ZONE_ROLES.ZONE_OWNER, ZONE_ROLES.ZONE_ADMIN] as const;
 
 const EMPTY_CHAPTER_PROFILE = {
   address: {
@@ -116,6 +117,26 @@ const EMPTY_CHAPTER_PROFILE = {
 
 function forbidden(c: { json: (b: unknown, s: number) => Response }, msg = "Insufficient role") {
   return c.json({ error: { code: "forbidden", message: msg } }, 403);
+}
+
+async function canWriteChapterSettings(ctx: AuthorizedContext, chapterId: string): Promise<boolean> {
+  if (hasAnyRole(ctx, ...CHAPTER_SETTINGS_ZONE_WRITE_ROLES)) return true;
+  if (!ctx.roleCodes.includes(CHAPTER_ROLES.CHAPTER_ADMIN)) return false;
+  const [binding] = await db
+    .select({ id: userRoleBindings.id })
+    .from(userRoleBindings)
+    .innerJoin(rolesTable, eq(userRoleBindings.roleId, rolesTable.id))
+    .where(
+      and(
+        eq(userRoleBindings.userId, ctx.userId),
+        eq(userRoleBindings.zoneId, ctx.zoneId),
+        eq(userRoleBindings.chapterId, chapterId),
+        eq(rolesTable.code, CHAPTER_ROLES.CHAPTER_ADMIN),
+        isNull(userRoleBindings.revokedAt),
+      ),
+    )
+    .limit(1);
+  return Boolean(binding);
 }
 
 tenantRouter.get("/chapters", async (c) => {
@@ -264,6 +285,7 @@ tenantRouter.patch(
     const scope = await requireChapterScope(ctx, id, CHAPTER_READ_ZONE_ROLES);
     if (!scope.ok)
       return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
+    if (!(await canWriteChapterSettings(ctx, id))) return forbidden(c);
     const input = c.req.valid("json");
 
     const result = await db.transaction(async (tx) => {
@@ -321,6 +343,7 @@ tenantRouter.patch(
     const scope = await requireChapterScope(ctx, id, CHAPTER_READ_ZONE_ROLES);
     if (!scope.ok)
       return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
+    if (!(await canWriteChapterSettings(ctx, id))) return forbidden(c);
     const input = c.req.valid("json");
 
     const result = await db.transaction(async (tx) => {
