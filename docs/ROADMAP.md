@@ -224,18 +224,18 @@ Exit checklist:
 
 Deliverables (full list in [`REPORTS.md`](REPORTS.md)):
 
-- Member statement (annual, period; PDF + Excel; branded). *(Excel landed; PDF deferred until the Playwright/Chromium infra ships.)*
-- Member finance summary (range; pivot by giving type). *(Excel landed.)*
-- Giving by chapter / zone / period / category / giving type (PIVOT in app code). *(Excel landed; pivots by giving type, category, or month with optional ministry / partnership year clamps.)*
-- General ledger (giving). *(Excel landed; flat line-level ledger with chapter / account / giving type / payment method / source filters.)*
-- Envelope ledger. *(Excel landed; one row per posted envelope contribution with rolled-up line breakdown.)*
-- Online giving ledger. *(Excel landed; preset on `source_type in ('online','bank_import')` with transaction-id column.)*
-- Top partners, top chapters. *(Excel landed; per-currency ranking with `topN` (default 20) and `partnershipOnly` toggle.)*
-- Audit log report. *(Excel landed; reads `audit_events`; admin-only access — owner / admin / finance_admin only, viewer roles denied.)*
+- Member statement (annual, period; PDF + Excel; branded). *(Excel + PDF landed; bespoke letter-style PDF deferred until Playwright lands.)*
+- Member finance summary (range; pivot by giving type). *(Excel + PDF landed.)*
+- Giving by chapter / zone / period / category / giving type (PIVOT in app code). *(Excel + PDF landed; pivots by giving type, category, or month with optional ministry / partnership year clamps.)*
+- General ledger (giving). *(Excel + PDF landed; flat line-level ledger with chapter / account / giving type / payment method / source filters.)*
+- Envelope ledger. *(Excel + PDF landed; one row per posted envelope contribution with rolled-up line breakdown.)*
+- Online giving ledger. *(Excel + PDF landed; preset on `source_type in ('online','bank_import')` with transaction-id column.)*
+- Top partners, top chapters. *(Excel + PDF landed; per-currency ranking with `topN` (default 20) and `partnershipOnly` toggle.)*
+- Audit log report. *(Excel + PDF landed; reads `audit_events`; admin-only access — owner / admin / finance_admin only, viewer roles denied.)*
 - Partnership progress. *(queued; depends on Phase 8 targets)*
-- Weekly finance report. *(Excel landed; reads `service_events` joined with the new `service_event_attendance` sibling table, rolls up per-event cash / cheque / line totals per currency.)*
-- Statement import reconciliation report. *(PR-1: Excel landed.)*
-- Member list (active, by chapter, by status). *(PR-1: Excel landed.)*
+- Weekly finance report. *(Excel + PDF landed; reads `service_events` joined with the new `service_event_attendance` sibling table, rolls up per-event cash / cheque / line totals per currency.)*
+- Statement import reconciliation report. *(Excel + PDF landed.)*
+- Member list (active, by chapter, by status). *(Excel + PDF landed.)*
 - Saved filters. *(queued)*
 - Background `report.generate` jobs with email-when-ready. *(queued; requires pg-boss worker, Phase 7+)*
 
@@ -264,15 +264,14 @@ Audited implementation status (2026-05-13):
 - [x] Zone dashboard endpoint + UI are implemented and tested (`services/dashboards/zone-dashboard.ts`, `routes/tenant-dashboard.ts`, `routes/zone/dashboard/+page.svelte`).
 - [x] Chapter dashboard endpoint + UI are implemented and tested (`services/dashboards/chapter-dashboard.ts`, `routes/tenant-dashboard.ts`, `routes/church/overview/+page.svelte`).
 - [x] Weekly finance report data + Excel export are implemented and tested (`weekly-finance.ts`, `reports.test.ts`); attendance lives in `service_event_attendance` (migration `0002_hesitant_human_robot.sql`).
-- [ ] PDF export infrastructure and per-report PDF renderers.
-- [ ] PDF export infrastructure and per-report PDF renderers.
+- [x] PDF export infrastructure (`pdfkit`-based generic branded-table renderer at `services/reports/pdf/branded-table.ts`; `GET /api/tenant/reports/:id/export.pdf` route; UI "Download PDF" alongside "Download Excel"). Bespoke layouts (letter-style member statement, partnership receipts) deferred until Playwright lands.
 - [ ] Saved filters.
 - [ ] Background `report.generate` worker + object-storage retention for large exports.
 
 Exit checklist:
 
 - [ ] Each v1 report ties out against a hand-curated test dataset. *(member-statement, member-finance-summary, import-reconciliation, member-list, giving-by-chapter, general-ledger, envelope-ledger, online-giving-ledger, top-partners, top-chapters, audit-log, weekly-finance all covered in `reports.test.ts`; partnership progress remains queued on Phase 8 targets.)*
-- [ ] All exports work in Excel and PDF. *(PR-1: Excel verified end-to-end; PDF deferred to a follow-up PR that adds the Playwright/Chromium infra per ARCHITECTURE.md §2.)*
+- [x] All exports work in Excel and PDF. *(Generic `pdfkit`-based renderer at `services/reports/pdf/branded-table.ts` backs every shipped report; bespoke letter-style layouts are tracked separately on the Playwright follow-up.)*
 - [ ] Reports of >100k rows stream/paginate, never time out. *(queued; the registry shape supports paginated `fetch` already.)*
 - [x] Multi-currency reports show per-currency subtotals (no silent FX). *(`CurrencySubtotal[]` returned by every spec; reports never call `addMoney` across currencies.)*
 
