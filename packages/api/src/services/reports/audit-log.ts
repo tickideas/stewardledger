@@ -9,7 +9,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import ExcelJS from "exceljs";
 import { auditEvents, user as userTable } from "@stewardledger/db/schema";
-import { CHAPTER_ROLES, type AuthorizedContext } from "@stewardledger/shared";
+import { hasZoneAdminRole } from "./access";
 import { addBrandedSheet, escapeExcelText } from "./branding";
 import type { ReportColumn, ReportFetchResult, ReportSpec } from "./types";
 
@@ -47,12 +47,28 @@ const COLUMNS: ReportColumn[] = [
   { key: "actorEmail", label: "Actor", kind: "text", pii: true },
   { key: "actorRoleCode", label: "Role", kind: "text" },
   { key: "action", label: "Action", kind: "text" },
+  { key: "reason", label: "Reason", kind: "text" },
   { key: "entityType", label: "Entity type", kind: "text" },
   { key: "entityId", label: "Entity id", kind: "text" },
-  { key: "reason", label: "Reason", kind: "text" },
   { key: "before", label: "Before", kind: "text" },
   { key: "after", label: "After", kind: "text" },
 ];
+
+/**
+ * Excel cell value limit is 32,767 characters. JSON-stringified
+ * before/after payloads can occasionally exceed that (e.g. a full
+ * contribution-batch snapshot). Soft-truncate so the export never
+ * silently drops the trailing bytes — the marker tells a reader the
+ * row was clipped and the raw value is still available via the API.
+ */
+const EXCEL_CELL_CHAR_LIMIT = 32_000;
+
+function stringifyJson(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const raw = JSON.stringify(value);
+  if (raw.length <= EXCEL_CELL_CHAR_LIMIT) return raw;
+  return `${raw.slice(0, EXCEL_CELL_CHAR_LIMIT)}…(truncated)`;
+}
 
 export const auditLogReport: ReportSpec<AuditLogFilters, AuditLogRow> = {
   id: "audit-log",
@@ -62,22 +78,23 @@ export const auditLogReport: ReportSpec<AuditLogFilters, AuditLogRow> = {
   filtersSchema: auditLogFiltersSchema,
   columns: () => COLUMNS,
   accessCheck: (ctx) => {
-    // Audit events have no chapter dimension. A purely chapter-scoped
-    // caller would need a zone-wide view to make sense of the
-    // trail, so deny outright rather than serve a partial / confusing
-    // dataset.
-    if (!hasAnyZoneRole(ctx)) return "forbidden";
+    // Audit-log is admin-tier: it surfaces every actor's edits across
+    // the zone, which is sensitive even when read-only. Viewer roles
+    // (zone_auditor, zone_pastor_viewer) and any chapter-scoped role
+    // are denied outright — see REPORTS.md §2.13 ("admin-facing").
+    if (!hasZoneAdminRole(ctx)) return "forbidden";
     return null;
   },
   async fetch(database, ctx, filters): Promise<ReportFetchResult<AuditLogRow>> {
-    // Date semantics: `dateFrom` is inclusive from start-of-day,
-    // `dateTo` is inclusive of the whole day. The column is
-    // `timestamptz`, so we compare against `date_trunc('day', ...)`
-    // boundaries to keep the comparison index-friendly.
+    // Date semantics: `dateFrom` is inclusive from start-of-day UTC,
+    // `dateTo` is inclusive of the whole day UTC. The column is
+    // `timestamptz`, so we pin both boundaries to UTC explicitly —
+    // otherwise Postgres' session `TimeZone` GUC would silently
+    // shift the window between environments (test box vs prod).
     const conditions = [
       eq(auditEvents.zoneId, ctx.zoneId),
-      sql`${auditEvents.occurredAt} >= ${filters.dateFrom}::date`,
-      sql`${auditEvents.occurredAt} < (${filters.dateTo}::date + interval '1 day')`,
+      sql`${auditEvents.occurredAt} >= (${filters.dateFrom}::date at time zone 'UTC')`,
+      sql`${auditEvents.occurredAt} < ((${filters.dateTo}::date + interval '1 day') at time zone 'UTC')`,
     ];
     if (filters.actorUserId) {
       conditions.push(eq(auditEvents.actorUserId, filters.actorUserId));
@@ -108,9 +125,11 @@ export const auditLogReport: ReportSpec<AuditLogFilters, AuditLogRow> = {
       .from(auditEvents)
       .leftJoin(userTable, eq(userTable.id, auditEvents.actorUserId))
       .where(and(...conditions))
-      // Stable secondary sort on `id` for events sharing a timestamp
-      // (services that emit batched events inside one transaction can
-      // share a microsecond on Postgres' clock).
+      // Stable tie-breaker on `id` for events sharing an
+      // `occurred_at` microsecond. Note: `id` is a random UUID so the
+      // tie-breaker is stable across queries but is *not*
+      // chronological — events written inside the same transaction
+      // may render in any relative order.
       .orderBy(desc(auditEvents.occurredAt), desc(auditEvents.id));
 
     const mapped: AuditLogRow[] = rows.map((r) => ({
@@ -121,8 +140,8 @@ export const auditLogReport: ReportSpec<AuditLogFilters, AuditLogRow> = {
       entityType: r.entityType,
       entityId: r.entityId,
       reason: r.reason,
-      before: r.before === null ? null : JSON.stringify(r.before),
-      after: r.after === null ? null : JSON.stringify(r.after),
+      before: stringifyJson(r.before),
+      after: stringifyJson(r.after),
     }));
 
     return { rows: mapped, meta: { eventCount: mapped.length } };
@@ -160,13 +179,18 @@ export const auditLogReport: ReportSpec<AuditLogFilters, AuditLogRow> = {
     // and JSON payloads can contain values that start with `=`, `+`,
     // `-`, or `@` — route every string through `escapeExcelText` so
     // a poisoned value never executes when a workbook is opened.
+    // The `When` column ships as a real Date so spreadsheets can
+    // sort it numerically.
     let r = 7;
     for (const row of rows) {
       const dataRow = sheet.getRow(r);
       COLUMNS.forEach((col, i) => {
         const cell = dataRow.getCell(i + 1);
         const value = (row as unknown as Record<string, unknown>)[col.key];
-        if (typeof value === "string") {
+        if (col.key === "occurredAt" && typeof value === "string") {
+          cell.value = new Date(value);
+          cell.numFmt = "yyyy-mm-dd hh:mm:ss";
+        } else if (typeof value === "string") {
           cell.value = escapeExcelText(value);
         } else {
           cell.value = (value as ExcelJS.CellValue) ?? null;
@@ -184,9 +208,9 @@ export const auditLogReport: ReportSpec<AuditLogFilters, AuditLogRow> = {
     setWidthByKey(sheet, "occurredAt", 24);
     setWidthByKey(sheet, "actorEmail", 28);
     setWidthByKey(sheet, "action", 28);
+    setWidthByKey(sheet, "reason", 32);
     setWidthByKey(sheet, "entityType", 22);
     setWidthByKey(sheet, "entityId", 24);
-    setWidthByKey(sheet, "reason", 32);
     setWidthByKey(sheet, "before", 40);
     setWidthByKey(sheet, "after", 40);
 
@@ -198,9 +222,4 @@ export const auditLogReport: ReportSpec<AuditLogFilters, AuditLogRow> = {
 function setWidthByKey(sheet: ExcelJS.Worksheet, key: string, width: number): void {
   const idx = COLUMNS.findIndex((c) => c.key === key) + 1;
   if (idx > 0) sheet.getColumn(idx).width = width;
-}
-
-function hasAnyZoneRole(ctx: AuthorizedContext): boolean {
-  const chapterCodes: readonly string[] = Object.values(CHAPTER_ROLES);
-  return ctx.roleCodes.some((c) => !chapterCodes.includes(c));
 }
