@@ -5,7 +5,7 @@ import { BRAND_WORDMARK, OTP_VALIDITY_MINUTES } from "@stewardledger/shared";
 import * as schema from "@stewardledger/db/schema";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { emailOTP, magicLink } from "better-auth/plugins";
+import { emailOTP, magicLink, twoFactor } from "better-auth/plugins";
 import { db } from "./db";
 import { env } from "./env";
 import { log } from "./logger";
@@ -73,6 +73,7 @@ export const auth = betterAuth({
       session: schema.session,
       account: schema.account,
       verification: schema.verification,
+      twoFactor: schema.twoFactor,
     },
   }),
   emailAndPassword: {
@@ -148,6 +149,21 @@ export const auth = betterAuth({
           }),
         });
       },
+    }),
+    /**
+     * TOTP-based two-factor authentication. Enrolment is currently
+     * gated to super-admins on the UI side (`/account/security`) —
+     * Better Auth's after-hook only challenges `/sign-in/email`, not
+     * the OTP / magic-link paths, so an MFA-enrolled user can still
+     * sign in unchallenged via those routes. PR 2 will plug that
+     * gap and lift the super-admin gate. See `tasks/totp-mfa.md`.
+     *
+     * `skipVerificationOnEnable: false` (default) means the user
+     * must enter a fresh TOTP code before MFA arms — a typo'd
+     * authenticator setup cannot lock the user out.
+     */
+    twoFactor({
+      issuer: BRAND_WORDMARK,
     }),
   ],
   trustedOrigins: () => {
