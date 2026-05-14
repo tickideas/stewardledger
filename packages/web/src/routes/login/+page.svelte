@@ -13,6 +13,16 @@
   let submitting = $state(false);
   let errorMsg = $state<string | null>(null);
 
+  // Two-factor challenge state. Better Auth's two-factor plugin
+  // intercepts /sign-in/email when the user has TOTP enabled and
+  // returns `{ twoFactorRedirect: true }` instead of setting the
+  // session cookie. The plugin parks the half-finished sign-in in a
+  // signed `better-auth.two_factor` cookie that the verify endpoint
+  // consumes. We swap the form into a 6-digit TOTP prompt and POST
+  // to /api/auth/two-factor/verify-totp.
+  let mfaPending = $state(false);
+  let totpCode = $state("");
+
   const banner = $derived.by(() => {
     const code = page.url.searchParams.get("error");
     if (code === "no_zone") {
@@ -23,6 +33,51 @@
     }
     return null;
   });
+
+  /**
+   * Resolve the post-sign-in destination by reading the session zones
+   * and routing to the canonical landing page. Shared between the
+   * password sign-in path and the TOTP verify path because both end
+   * with "a fresh session cookie is set; figure out where to send
+   * the user".
+   */
+  async function landAfterSignIn(): Promise<void> {
+    const zonesRes = await fetch(`${PUBLIC_API_URL}/api/public/session-zones`, {
+      credentials: "include",
+    });
+    if (!zonesRes.ok) throw new Error("Could not load your zones.");
+    const zonesBody = (await zonesRes.json()) as {
+      items: Array<{
+        slug: string;
+        zoneRoles?: string[];
+        chapterRoles?: Array<{ chapterId: string; roleCode: string }>;
+      }>;
+      isSuperAdmin?: boolean;
+    };
+    const firstZone = zonesBody.items[0];
+    const zoneSlug = firstZone?.slug;
+    const isSuperAdminFlag = zonesBody.isSuperAdmin === true;
+
+    if (!zoneSlug && !isSuperAdminFlag) {
+      throw new Error("Your account is not linked to a zone.");
+    }
+    if (zoneSlug) {
+      localStorage.setItem(ACTIVE_ZONE_KEY, zoneSlug);
+    }
+    await loadSession({ force: true });
+
+    await goto(
+      authenticatedLandingPath(
+        {
+          activeZoneSlug: zoneSlug ?? null,
+          isSuperAdmin: isSuperAdminFlag,
+          activeZoneRoles: firstZone?.zoneRoles ?? [],
+          activeZoneChapterRoles: firstZone?.chapterRoles ?? [],
+        },
+        page.url.searchParams.get("next"),
+      ),
+    );
+  }
 
   async function submit(e: SubmitEvent) {
     e.preventDefault();
@@ -39,47 +94,55 @@
         const body = (await res.json().catch(() => null)) as { message?: string } | null;
         throw new Error(body?.message ?? "Could not sign in.");
       }
-
-      const zonesRes = await fetch(`${PUBLIC_API_URL}/api/public/session-zones`, {
-        credentials: "include",
-      });
-      if (!zonesRes.ok) throw new Error("Could not load your zones.");
-      const zonesBody = (await zonesRes.json()) as {
-        items: Array<{
-          slug: string;
-          zoneRoles?: string[];
-          chapterRoles?: Array<{ chapterId: string; roleCode: string }>;
-        }>;
-        isSuperAdmin?: boolean;
-      };
-      const firstZone = zonesBody.items[0];
-      const zoneSlug = firstZone?.slug;
-      const isSuperAdmin = zonesBody.isSuperAdmin === true;
-
-      if (!zoneSlug && !isSuperAdmin) {
-        throw new Error("Your account is not linked to a zone.");
+      // Two-factor enrolled accounts get a `twoFactorRedirect: true`
+      // body instead of a session. Swap into the TOTP-prompt branch
+      // — the password is already discarded by the plugin's
+      // verification cookie.
+      const body = (await res.json().catch(() => null)) as
+        | { twoFactorRedirect?: boolean }
+        | null;
+      if (body?.twoFactorRedirect) {
+        mfaPending = true;
+        password = "";
+        return;
       }
-      if (zoneSlug) {
-        localStorage.setItem(ACTIVE_ZONE_KEY, zoneSlug);
-      }
-      await loadSession({ force: true });
-
-      await goto(
-        authenticatedLandingPath(
-          {
-            activeZoneSlug: zoneSlug ?? null,
-            isSuperAdmin,
-            activeZoneRoles: firstZone?.zoneRoles ?? [],
-            activeZoneChapterRoles: firstZone?.chapterRoles ?? [],
-          },
-          page.url.searchParams.get("next"),
-        ),
-      );
+      await landAfterSignIn();
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : "Could not sign in.";
     } finally {
       submitting = false;
     }
+  }
+
+  async function verifyTotp(e: SubmitEvent) {
+    e.preventDefault();
+    errorMsg = null;
+    submitting = true;
+    try {
+      const res = await fetch(`${PUBLIC_API_URL}/api/auth/two-factor/verify-totp`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ code: totpCode }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(body?.message ?? "Code rejected.");
+      }
+      totpCode = "";
+      mfaPending = false;
+      await landAfterSignIn();
+    } catch (err) {
+      errorMsg = err instanceof Error ? err.message : "Could not verify the code.";
+    } finally {
+      submitting = false;
+    }
+  }
+
+  function cancelMfa() {
+    mfaPending = false;
+    totpCode = "";
+    errorMsg = null;
   }
 </script>
 
@@ -131,49 +194,95 @@
         </div>
       {/if}
 
-      <form class="mt-10 space-y-6" onsubmit={submit}>
-        <label class="block">
-          <span class="sl-eyebrow" style="font-size:10.5px">Email</span>
-          <input
-            type="email"
-            name="email"
-            required
-            autocomplete="email"
-            bind:value={email}
-            class="sl-input mt-2"
-            placeholder="treasurer@chapter.church"
-          />
-        </label>
-        <label class="block">
-          <div class="flex items-baseline justify-between">
-            <span class="sl-eyebrow" style="font-size:10.5px">Password</span>
-          </div>
-          <input
-            type="password"
-            name="password"
-            required
-            autocomplete="current-password"
-            bind:value={password}
-            class="sl-input mt-2"
-            placeholder="••••••••••••"
-          />
-        </label>
+      {#if !mfaPending}
+        <form class="mt-10 space-y-6" onsubmit={submit}>
+          <label class="block">
+            <span class="sl-eyebrow" style="font-size:10.5px">Email</span>
+            <input
+              type="email"
+              name="email"
+              required
+              autocomplete="email"
+              bind:value={email}
+              class="sl-input mt-2"
+              placeholder="treasurer@chapter.church"
+            />
+          </label>
+          <label class="block">
+            <div class="flex items-baseline justify-between">
+              <span class="sl-eyebrow" style="font-size:10.5px">Password</span>
+            </div>
+            <input
+              type="password"
+              name="password"
+              required
+              autocomplete="current-password"
+              bind:value={password}
+              class="sl-input mt-2"
+              placeholder="••••••••••••"
+            />
+          </label>
 
-        {#if errorMsg}
-          <p class="border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">
-            {errorMsg}
+          {#if errorMsg}
+            <p class="border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">
+              {errorMsg}
+            </p>
+          {/if}
+
+          <button
+            type="submit"
+            disabled={submitting}
+            class="sl-btn sl-btn-primary w-full justify-center"
+            style="padding:0.85rem 1rem"
+          >
+            {submitting ? "Signing in…" : "Sign in"}
+          </button>
+        </form>
+      {:else}
+        <form class="mt-10 space-y-6" onsubmit={verifyTotp}>
+          <p class="text-[13px] text-[var(--ink-mute)]">
+            Two-factor required. Enter the 6-digit code from your
+            authenticator app.
           </p>
-        {/if}
+          <label class="block">
+            <span class="sl-eyebrow" style="font-size:10.5px">6-digit code</span>
+            <input
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              autocomplete="one-time-code"
+              required
+              maxlength={6}
+              bind:value={totpCode}
+              class="sl-input sl-mono mt-2"
+              placeholder="123456"
+            />
+          </label>
 
-        <button
-          type="submit"
-          disabled={submitting}
-          class="sl-btn sl-btn-primary w-full justify-center"
-          style="padding:0.85rem 1rem"
-        >
-          {submitting ? "Signing in…" : "Sign in"}
-        </button>
-      </form>
+          {#if errorMsg}
+            <p class="border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">
+              {errorMsg}
+            </p>
+          {/if}
+
+          <div class="flex items-center gap-3">
+            <button
+              type="submit"
+              disabled={submitting}
+              class="sl-btn sl-btn-primary flex-1 justify-center"
+              style="padding:0.85rem 1rem"
+            >
+              {submitting ? "Verifying…" : "Verify"}
+            </button>
+            <button
+              type="button"
+              onclick={cancelMfa}
+              disabled={submitting}
+              class="text-[13px] text-[var(--ink-mute)] hover:text-[var(--ink)]"
+            >Start over</button>
+          </div>
+        </form>
+      {/if}
 
       <div class="mt-10 flex items-center gap-3 text-[11px] text-[var(--ink-mute)]">
         <span class="h-px flex-1 bg-[var(--rule)]"></span>
