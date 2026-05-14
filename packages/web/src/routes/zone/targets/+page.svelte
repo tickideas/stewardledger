@@ -10,6 +10,7 @@
     hasChapterWriteTargets,
     hasZoneWriteTargets,
   } from "$lib/targets/access";
+  import { parseOptionalCount } from "$lib/targets/numeric";
   import type { AuthorizedContext } from "@stewardledger/shared";
 
   type Chapter = { id: string; referenceCode: string; name: string };
@@ -190,6 +191,14 @@
     creating = true;
     createError = null;
     try {
+      const fullTargetCopies = parseOptionalCount(
+        createFullTargetCopies,
+        "Target copies",
+      );
+      const numberOfPartners = parseOptionalCount(
+        createNumberOfPartners,
+        "Number of partners",
+      );
       await api.post<{ target: FinancialTarget }>("/api/tenant/targets", {
         chapterId: createChapterId === "" ? null : createChapterId,
         givingTypeId: createGivingTypeId,
@@ -199,10 +208,8 @@
         monthlyTarget: createMonthlyTarget.trim() === "" ? null : createMonthlyTarget.trim(),
         weeklyBreakdown:
           createWeeklyBreakdown.trim() === "" ? null : createWeeklyBreakdown.trim(),
-        fullTargetCopies:
-          createFullTargetCopies.trim() === "" ? null : Number(createFullTargetCopies),
-        numberOfPartners:
-          createNumberOfPartners.trim() === "" ? null : Number(createNumberOfPartners),
+        fullTargetCopies,
+        numberOfPartners,
       });
       resetCreateForm();
       createOpen = false;
@@ -210,7 +217,9 @@
       const controller = new AbortController();
       await loadAll(controller.signal);
     } catch (err) {
-      createError = err instanceof ApiError ? err.message : "Could not create the target.";
+      if (err instanceof ApiError) createError = err.message;
+      else if (err instanceof Error) createError = err.message;
+      else createError = "Could not create the target.";
     } finally {
       creating = false;
     }
@@ -236,21 +245,29 @@
     saving = true;
     editError = null;
     try {
+      const fullTargetCopies = parseOptionalCount(
+        editFullTargetCopies,
+        "Target copies",
+      );
+      const numberOfPartners = parseOptionalCount(
+        editNumberOfPartners,
+        "Number of partners",
+      );
       await api.patch<{ target: FinancialTarget }>(`/api/tenant/targets/${t.id}`, {
         fullTarget: editFullTarget.trim(),
         monthlyTarget: editMonthlyTarget.trim() === "" ? null : editMonthlyTarget.trim(),
         weeklyBreakdown:
           editWeeklyBreakdown.trim() === "" ? null : editWeeklyBreakdown.trim(),
-        fullTargetCopies:
-          editFullTargetCopies.trim() === "" ? null : Number(editFullTargetCopies),
-        numberOfPartners:
-          editNumberOfPartners.trim() === "" ? null : Number(editNumberOfPartners),
+        fullTargetCopies,
+        numberOfPartners,
       });
       editingId = null;
       const controller = new AbortController();
       await loadAll(controller.signal);
     } catch (err) {
-      editError = err instanceof ApiError ? err.message : "Could not save the target.";
+      if (err instanceof ApiError) editError = err.message;
+      else if (err instanceof Error) editError = err.message;
+      else editError = "Could not save the target.";
     } finally {
       saving = false;
     }
