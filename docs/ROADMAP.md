@@ -233,7 +233,7 @@ Deliverables (full list in [`REPORTS.md`](REPORTS.md)):
 - Top partners, top chapters. *(Excel landed; per-currency ranking with `topN` (default 20) and `partnershipOnly` toggle.)*
 - Audit log report. *(Excel landed; reads `audit_events`; admin-only access — owner / admin / finance_admin only, viewer roles denied.)*
 - Partnership progress. *(queued; depends on Phase 8 targets)*
-- Weekly finance report. *(queued)*
+- Weekly finance report. *(Excel landed; reads `service_events` joined with the new `service_event_attendance` sibling table, rolls up per-event cash / cheque / line totals per currency.)*
 - Statement import reconciliation report. *(PR-1: Excel landed.)*
 - Member list (active, by chapter, by status). *(PR-1: Excel landed.)*
 - Saved filters. *(queued)*
@@ -263,14 +263,15 @@ Audited implementation status (2026-05-13):
 - [x] Audit log report data + Excel export are implemented and tested (`audit-log.ts`, `reports.test.ts`).
 - [x] Zone dashboard endpoint + UI are implemented and tested (`services/dashboards/zone-dashboard.ts`, `routes/tenant-dashboard.ts`, `routes/zone/dashboard/+page.svelte`).
 - [x] Chapter dashboard endpoint + UI are implemented and tested (`services/dashboards/chapter-dashboard.ts`, `routes/tenant-dashboard.ts`, `routes/church/overview/+page.svelte`).
-- [ ] Weekly finance report remains the next unimplemented batch. *(Needs an attendance schema add on `service_events` before the pivot can be built.)*
+- [x] Weekly finance report data + Excel export are implemented and tested (`weekly-finance.ts`, `reports.test.ts`); attendance lives in `service_event_attendance` (migration `0002_hesitant_human_robot.sql`).
+- [ ] PDF export infrastructure and per-report PDF renderers.
 - [ ] PDF export infrastructure and per-report PDF renderers.
 - [ ] Saved filters.
 - [ ] Background `report.generate` worker + object-storage retention for large exports.
 
 Exit checklist:
 
-- [ ] Each v1 report ties out against a hand-curated test dataset. *(member-statement, member-finance-summary, import-reconciliation, member-list, giving-by-chapter, general-ledger, envelope-ledger, online-giving-ledger, top-partners, top-chapters, audit-log all covered in `reports.test.ts`; weekly finance, dashboards, partnership progress remain queued.)*
+- [ ] Each v1 report ties out against a hand-curated test dataset. *(member-statement, member-finance-summary, import-reconciliation, member-list, giving-by-chapter, general-ledger, envelope-ledger, online-giving-ledger, top-partners, top-chapters, audit-log, weekly-finance all covered in `reports.test.ts`; partnership progress remains queued on Phase 8 targets.)*
 - [ ] All exports work in Excel and PDF. *(PR-1: Excel verified end-to-end; PDF deferred to a follow-up PR that adds the Playwright/Chromium infra per ARCHITECTURE.md §2.)*
 - [ ] Reports of >100k rows stream/paginate, never time out. *(queued; the registry shape supports paginated `fetch` already.)*
 - [x] Multi-currency reports show per-currency subtotals (no silent FX). *(`CurrencySubtotal[]` returned by every spec; reports never call `addMoney` across currencies.)*

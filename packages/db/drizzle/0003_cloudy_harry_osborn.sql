@@ -1,0 +1,1 @@
+CREATE INDEX "contributions_zone_service_event_idx" ON "contributions" USING btree ("zone_id","service_event_id") WHERE "contributions"."service_event_id" is not null;

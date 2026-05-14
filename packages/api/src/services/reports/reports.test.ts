@@ -23,6 +23,9 @@ import {
   givingTypes,
   members,
   paymentMethods,
+  serviceEventAttendance,
+  serviceEvents,
+  serviceTypes,
   user as userTable,
   zones,
 } from "@stewardledger/db";
@@ -53,6 +56,7 @@ import { memberStatementReport } from "./member-statement";
 import { onlineGivingLedgerReport } from "./online-giving-ledger";
 import { topChaptersReport } from "./top-chapters";
 import { topPartnersReport } from "./top-partners";
+import { weeklyFinanceReport } from "./weekly-finance";
 import { ReportError, parseReportFilters } from "./types";
 
 function unique(): string {
@@ -247,6 +251,10 @@ afterAll(async () => {
         await tx.execute(sql`delete from import_files where zone_id = ${id}`);
         await tx.execute(sql`delete from contributions where zone_id = ${id}`);
         await tx.execute(sql`delete from contribution_batches where zone_id = ${id}`);
+        // service_events.chapter_id is FK ON DELETE RESTRICT, so the
+        // event rows must go before the chapters they reference.
+        // service_event_attendance cascades from service_events.
+        await tx.execute(sql`delete from service_events where zone_id = ${id}`);
         await tx.execute(sql`delete from members where zone_id = ${id}`);
         await tx.execute(sql`delete from chapters where zone_id = ${id}`);
         await tx.execute(sql`delete from zones where id = ${id}`);
@@ -2676,6 +2684,236 @@ describe("audit-log report", () => {
       }
     }
     expect(foundEscaped).toBe(true);
+  });
+});
+
+describe("weekly-finance report", () => {
+  async function seedServiceTypeAndEvent(
+    zone: SeededZone,
+    chapterId: string,
+    serviceDate: string,
+  ): Promise<{ serviceEventId: string; serviceTypeId: string }> {
+    const [serviceType] = await db
+      .select({ id: serviceTypes.id })
+      .from(serviceTypes)
+      .where(sql`${serviceTypes.zoneId} = ${zone.id} and ${serviceTypes.shortCode} = 'SUN'`)
+      .limit(1);
+    const [event] = await db
+      .insert(serviceEvents)
+      .values({
+        zoneId: zone.id,
+        chapterId,
+        serviceTypeId: serviceType.id,
+        serviceDate,
+      })
+      .returning({ id: serviceEvents.id });
+    return { serviceEventId: event.id, serviceTypeId: serviceType.id };
+  }
+
+  async function setAttendance(
+    zoneId: string,
+    serviceEventId: string,
+    counts: { men: number; women: number; teens: number; children: number; firstTimers: number; newConverts: number },
+  ): Promise<void> {
+    await db.insert(serviceEventAttendance).values({
+      zoneId,
+      serviceEventId,
+      ...counts,
+    });
+  }
+
+  it("ties out per-event headcount + line totals for a curated dataset", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    const { serviceEventId } = await seedServiceTypeAndEvent(zone, zone.chapterId, TODAY);
+    await setAttendance(zone.id, serviceEventId, {
+      men: 10,
+      women: 15,
+      teens: 4,
+      children: 5,
+      firstTimers: 1,
+      newConverts: 0,
+    });
+
+    // Two posted contributions on this service event, plus one that
+    // gets reversed (must net to zero in the line total).
+    const a = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[0],
+      serviceEventId,
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: zone.givingTypeId, amount: "100.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, a.contribution.id);
+    const b = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[1],
+      serviceEventId,
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: zone.givingTypeId, amount: "50.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, b.contribution.id);
+    const reversible = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[0],
+      serviceEventId,
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: zone.givingTypeId, amount: "25.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, reversible.contribution.id);
+    await reverseContribution(db, { zoneId: zone.id, userId: zone.userId }, reversible.contribution.id, { reason: "test" });
+
+    const filters = { dateFrom: shiftDays(TODAY, -1), dateTo: shiftDays(TODAY, 1) };
+    const result = await weeklyFinanceReport.fetch(db, ctx, filters);
+
+    expect(result.rows).toHaveLength(1);
+    const [row] = result.rows;
+    expect(row.serviceEventId).toBe(serviceEventId);
+    expect(row.men).toBe(10);
+    expect(row.women).toBe(15);
+    expect(row.teens).toBe(4);
+    expect(row.children).toBe(5);
+    expect(row.firstTimers).toBe(1);
+    expect(row.newConverts).toBe(0);
+    expect(row.totalAttendance).toBe(35);
+    expect(row.lineTotal).toBe("150.0000"); // 100 + 50; reversed pair nets to zero
+    expect(row.currencyCode).toBe("GBP");
+    expect(result.subtotals).toEqual([{ currencyCode: "GBP", total: "150.0000" }]);
+
+    const branding = await loadReportBranding(db, zone.id);
+    const bytes = await weeklyFinanceReport.excel(result.rows, result.subtotals, filters, branding);
+    expect(bytes.byteLength).toBeGreaterThan(500);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(toArrayBuffer(bytes));
+    const sheet = wb.getWorksheet("Weekly finance");
+    expect(sheet).toBeTruthy();
+    expect(sheet!.getCell("A1").value).toBe(branding.zoneName);
+  });
+
+  it("emits a zero-attendance row for a service event with no attendance recorded", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    const { serviceEventId } = await seedServiceTypeAndEvent(zone, zone.chapterId, TODAY);
+    const a = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[0],
+      serviceEventId,
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: zone.givingTypeId, amount: "20.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, a.contribution.id);
+
+    const result = await weeklyFinanceReport.fetch(db, ctx, {
+      dateFrom: shiftDays(TODAY, -1),
+      dateTo: shiftDays(TODAY, 1),
+    });
+    expect(result.rows).toHaveLength(1);
+    const [row] = result.rows;
+    expect(row.men).toBe(0);
+    expect(row.women).toBe(0);
+    expect(row.totalAttendance).toBe(0);
+    expect(row.lineTotal).toBe("20.0000");
+  });
+
+  it("clamps chapter-scoped readers to their bound chapters", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+
+    // Seed an in-scope and an out-of-scope event on the same date.
+    // The out-of-scope event is the canary: the chapter-clamp must
+    // drop it from the chapter-scoped caller's result.
+    const inScope = await seedServiceTypeAndEvent(zone, zone.chapterId, TODAY);
+    const outOfScope = await seedServiceTypeAndEvent(zone, zone.otherChapterId, TODAY);
+
+    const chapterScopedCtx: AuthorizedContext = {
+      userId: zone.userId,
+      zoneId: zone.id,
+      regionId: null,
+      roleCodes: ["chapter_treasurer"],
+      chapterIds: [zone.chapterId],
+      isPlatformAdmin: false,
+    };
+
+    // accessCheck allows the request; the fetch only returns events
+    // in bound chapters.
+    expect(
+      weeklyFinanceReport.accessCheck?.(chapterScopedCtx, {
+        dateFrom: shiftDays(TODAY, -1),
+        dateTo: shiftDays(TODAY, 1),
+      }),
+    ).toBeNull();
+    const result = await weeklyFinanceReport.fetch(db, chapterScopedCtx, {
+      dateFrom: shiftDays(TODAY, -1),
+      dateTo: shiftDays(TODAY, 1),
+    });
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].serviceEventId).toBe(inScope.serviceEventId);
+    // The chapter-B event must NOT leak into the chapter-A caller's
+    // result — explicit canary assertion to lock the invariant in.
+    expect(
+      result.rows.some((r) => r.serviceEventId === outOfScope.serviceEventId),
+    ).toBe(false);
+
+    // Out-of-scope chapterId filter is denied.
+    expect(
+      weeklyFinanceReport.accessCheck?.(chapterScopedCtx, {
+        dateFrom: shiftDays(TODAY, -1),
+        dateTo: shiftDays(TODAY, 1),
+        chapterId: zone.otherChapterId,
+      }),
+    ).toBe("forbidden");
+  });
+
+  it("escapes formula-injection prefixes in service type name", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    // Poison the SUN service type's name.
+    await db
+      .update(serviceTypes)
+      .set({ name: '=HYPERLINK("http://attacker/x","click")' })
+      .where(sql`${serviceTypes.zoneId} = ${zone.id} and ${serviceTypes.shortCode} = 'SUN'`);
+
+    const { serviceEventId } = await seedServiceTypeAndEvent(zone, zone.chapterId, TODAY);
+    const a = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[0],
+      serviceEventId,
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: zone.givingTypeId, amount: "10.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, a.contribution.id);
+
+    const filters = { dateFrom: shiftDays(TODAY, -1), dateTo: shiftDays(TODAY, 1) };
+    const result = await weeklyFinanceReport.fetch(db, ctx, filters);
+    const branding = await loadReportBranding(db, zone.id);
+    const bytes = await weeklyFinanceReport.excel(result.rows, result.subtotals, filters, branding);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(toArrayBuffer(bytes));
+    const sheet = wb.getWorksheet("Weekly finance")!;
+    const headerRow = sheet.getRow(6);
+    let typeCol = 0;
+    headerRow.eachCell((cell, col) => {
+      if (cell.value === "Service type") typeCol = col;
+    });
+    expect(typeCol).toBeGreaterThan(0);
+    const v = sheet.getRow(7).getCell(typeCol).value;
+    expect(typeof v === "string" && v.startsWith("=")).toBe(false);
   });
 });
 

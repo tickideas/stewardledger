@@ -3,6 +3,7 @@
 
 import { zValidator } from "@hono/zod-validator";
 import {
+  serviceEventAttendanceUpsertSchema,
   serviceEventCreateSchema,
   serviceEventListQuerySchema,
   serviceEventUpdateSchema,
@@ -10,7 +11,12 @@ import {
 } from "@stewardledger/shared";
 import { and, asc, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
 import { Hono } from "hono";
-import { chapters, serviceEvents, serviceTypes } from "@stewardledger/db/schema";
+import {
+  chapters,
+  serviceEventAttendance,
+  serviceEvents,
+  serviceTypes,
+} from "@stewardledger/db/schema";
 import { db } from "../db";
 import { hasAnyRole } from "../middleware/auth";
 import { writeAudit } from "../services/audit";
@@ -210,5 +216,123 @@ tenantGivingEventsRouter.patch(
       after: input,
     });
     return c.json({ serviceEvent: row });
+  },
+);
+
+/**
+ * Read the attendance row for a service event. Returns 404 when no
+ * attendance has been recorded yet — callers should treat that as
+ * "zero so far" rather than an error. Single round-trip via a LEFT
+ * JOIN: the event lookup is the authorization check, the attendance
+ * lookup tags along; absence yields a null attendance id which we
+ * map to the recorded-not-yet 404 path.
+ */
+tenantGivingEventsRouter.get(
+  "/giving/service-events/:id/attendance",
+  async (c) => {
+    const ctx = c.get("auth") as AuthorizedContext;
+    if (!hasZoneEventRead(ctx) && !hasChapterEventRead(ctx)) return forbidden(c);
+    const id = c.req.param("id");
+    const [row] = await db
+      .select({
+        eventChapterId: serviceEvents.chapterId,
+        attendance: serviceEventAttendance,
+      })
+      .from(serviceEvents)
+      .leftJoin(
+        serviceEventAttendance,
+        and(
+          eq(serviceEventAttendance.zoneId, serviceEvents.zoneId),
+          eq(serviceEventAttendance.serviceEventId, serviceEvents.id),
+        ),
+      )
+      .where(and(eq(serviceEvents.id, id), eq(serviceEvents.zoneId, ctx.zoneId)))
+      .limit(1);
+    // Fold "event not in zone" and "event in zone but caller can't
+    // see it" into the same 404 to avoid an existence oracle for
+    // chapter-scoped callers.
+    if (!row || !canReadEvent(ctx, row.eventChapterId)) {
+      return c.json({ error: { code: "not_found", message: "Service event not found" } }, 404);
+    }
+    if (!row.attendance) {
+      return c.json(
+        { error: { code: "not_found", message: "Attendance not recorded" } },
+        404,
+      );
+    }
+    return c.json({ attendance: row.attendance });
+  },
+);
+
+/**
+ * Upsert attendance for a service event. Idempotent: a repeat PUT
+ * replaces the prior counts in place; the row identity (primary
+ * key + `created_at`) stays stable across replays. Each upsert is
+ * audited even when the counts are unchanged — the audit log
+ * therefore records "intent to set" rather than "diff against
+ * previous". Treasurers who hit PUT twice with the same body will
+ * see two audit rows; acceptable noise for v1 since the operation
+ * is operator-driven, not automated.
+ */
+tenantGivingEventsRouter.put(
+  "/giving/service-events/:id/attendance",
+  zValidator("json", serviceEventAttendanceUpsertSchema),
+  async (c) => {
+    const ctx = c.get("auth") as AuthorizedContext;
+    if (!hasZoneEventWrite(ctx) && !hasChapterEventWrite(ctx)) return forbidden(c);
+    const id = c.req.param("id");
+    const input = c.req.valid("json");
+
+    const [event] = await db
+      .select({ id: serviceEvents.id, chapterId: serviceEvents.chapterId })
+      .from(serviceEvents)
+      .where(and(eq(serviceEvents.id, id), eq(serviceEvents.zoneId, ctx.zoneId)))
+      .limit(1);
+    if (!event) {
+      return c.json({ error: { code: "not_found", message: "Service event not found" } }, 404);
+    }
+    if (!canWriteEvent(ctx, event.chapterId)) return forbidden(c);
+
+    // Upsert against the (zone_id, service_event_id) unique index.
+    // ON CONFLICT DO UPDATE keeps the existing primary key + created_at
+    // so the row identity is stable across replays.
+    const [row] = await db
+      .insert(serviceEventAttendance)
+      .values({
+        zoneId: ctx.zoneId,
+        serviceEventId: id,
+        men: input.men,
+        women: input.women,
+        teens: input.teens,
+        children: input.children,
+        firstTimers: input.firstTimers,
+        newConverts: input.newConverts,
+        notes: input.notes ?? null,
+        recordedByUserId: ctx.userId,
+      })
+      .onConflictDoUpdate({
+        target: [serviceEventAttendance.zoneId, serviceEventAttendance.serviceEventId],
+        set: {
+          men: input.men,
+          women: input.women,
+          teens: input.teens,
+          children: input.children,
+          firstTimers: input.firstTimers,
+          newConverts: input.newConverts,
+          notes: input.notes ?? null,
+          recordedByUserId: ctx.userId,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    await writeAudit(db, {
+      zoneId: ctx.zoneId,
+      actorUserId: ctx.userId,
+      action: "giving.service_event.attendance.upsert",
+      entityType: "service_event_attendance",
+      entityId: row.id,
+      after: row,
+    });
+    return c.json({ attendance: row });
   },
 );

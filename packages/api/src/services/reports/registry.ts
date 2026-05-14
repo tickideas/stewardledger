@@ -4,6 +4,7 @@
 
 import { auditLogReport } from "./audit-log";
 import { envelopeLedgerReport } from "./envelope-ledger";
+import { weeklyFinanceReport } from "./weekly-finance";
 import { generalLedgerReport } from "./general-ledger";
 import { givingByChapterReport } from "./giving-by-chapter";
 import { importReconciliationReport } from "./import-reconciliation";
@@ -33,6 +34,7 @@ const REGISTRY: Array<ReportSpec<unknown, unknown>> = [
   importReconciliationReport as unknown as ReportSpec<unknown, unknown>,
   memberListReport as unknown as ReportSpec<unknown, unknown>,
   auditLogReport as unknown as ReportSpec<unknown, unknown>,
+  weeklyFinanceReport as unknown as ReportSpec<unknown, unknown>,
 ];
 
 const REGISTRY_BY_ID = new Map<string, ReportSpec<unknown, unknown>>(

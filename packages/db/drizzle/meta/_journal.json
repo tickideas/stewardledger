@@ -15,6 +15,20 @@
       "when": 1778615477357,
       "tag": "0001_jazzy_nico_minoru",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778761120938,
+      "tag": "0002_hesitant_human_robot",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1778763944133,
+      "tag": "0003_cloudy_harry_osborn",
+      "breakpoints": true
     }
   ]
 }

@@ -465,6 +465,24 @@ export type ServiceEventCreateInput = z.infer<typeof serviceEventCreateSchema>;
 export const serviceEventUpdateSchema = serviceEventCreateSchema.partial();
 export type ServiceEventUpdateInput = z.infer<typeof serviceEventUpdateSchema>;
 
+/**
+ * Upsert payload for per-event attendance. Every count is non-
+ * negative; treat as the canonical headcount for that occurrence.
+ * Replaces any prior attendance row (PUT, not PATCH).
+ */
+export const serviceEventAttendanceUpsertSchema = z.object({
+  men: z.coerce.number().int().min(0).default(0),
+  women: z.coerce.number().int().min(0).default(0),
+  teens: z.coerce.number().int().min(0).default(0),
+  children: z.coerce.number().int().min(0).default(0),
+  firstTimers: z.coerce.number().int().min(0).default(0),
+  newConverts: z.coerce.number().int().min(0).default(0),
+  notes: z.string().max(2000).nullish(),
+});
+export type ServiceEventAttendanceUpsertInput = z.infer<
+  typeof serviceEventAttendanceUpsertSchema
+>;
+
 // ─── Contributions (Phase 5) ─────────────────────────────────────────
 
 /**

@@ -388,4 +388,105 @@ describe("tenant giving setup routes", () => {
     expect(body.items.some((item) => item.chapterId === chapterA)).toBe(true);
     expect(body.items.some((item) => item.chapterId === otherChapter.id)).toBe(false);
   });
+
+  it("creates and reads back service event attendance, idempotent on PUT", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "giving-a@example.com"));
+    const [serviceType] = await db
+      .select({ id: serviceTypes.id })
+      .from(serviceTypes)
+      .where(sql`${serviceTypes.zoneId} = ${zoneA.id}`)
+      .limit(1);
+    const serviceDate = `${new Date().getUTCFullYear()}-03-15`;
+    const create = await call(zoneA.slug, "/api/tenant/giving/service-events", {
+      method: "POST",
+      body: { chapterId: chapterA, serviceTypeId: serviceType.id, serviceDate },
+    });
+    expect(create.status).toBe(201);
+    const { serviceEvent } = (await create.json()) as { serviceEvent: { id: string } };
+
+    // 404 before any attendance is recorded.
+    const beforeRead = await call(
+      zoneA.slug,
+      `/api/tenant/giving/service-events/${serviceEvent.id}/attendance`,
+    );
+    expect(beforeRead.status).toBe(404);
+
+    // First PUT creates the row.
+    const firstPut = await call(
+      zoneA.slug,
+      `/api/tenant/giving/service-events/${serviceEvent.id}/attendance`,
+      {
+        method: "PUT",
+        body: { men: 12, women: 18, teens: 4, children: 6, firstTimers: 2, newConverts: 1 },
+      },
+    );
+    expect(firstPut.status).toBe(200);
+    const firstBody = (await firstPut.json()) as {
+      attendance: { id: string; men: number; women: number };
+    };
+    expect(firstBody.attendance.men).toBe(12);
+    expect(firstBody.attendance.women).toBe(18);
+    const firstId = firstBody.attendance.id;
+
+    // Repeat PUT updates in place — same row id, new counts.
+    const secondPut = await call(
+      zoneA.slug,
+      `/api/tenant/giving/service-events/${serviceEvent.id}/attendance`,
+      {
+        method: "PUT",
+        body: { men: 14, women: 20, teens: 5, children: 7, firstTimers: 3, newConverts: 2 },
+      },
+    );
+    expect(secondPut.status).toBe(200);
+    const secondBody = (await secondPut.json()) as {
+      attendance: { id: string; men: number; women: number };
+    };
+    expect(secondBody.attendance.id).toBe(firstId);
+    expect(secondBody.attendance.men).toBe(14);
+    expect(secondBody.attendance.women).toBe(20);
+
+    // GET reflects the latest state.
+    const read = await call(
+      zoneA.slug,
+      `/api/tenant/giving/service-events/${serviceEvent.id}/attendance`,
+    );
+    expect(read.status).toBe(200);
+    const readBody = (await read.json()) as { attendance: { men: number; teens: number } };
+    expect(readBody.attendance.men).toBe(14);
+    expect(readBody.attendance.teens).toBe(5);
+  });
+
+  it("chapter treasurer cannot upsert attendance for another chapter's event", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "giving-a@example.com"));
+    const [serviceType] = await db
+      .select({ id: serviceTypes.id })
+      .from(serviceTypes)
+      .where(sql`${serviceTypes.zoneId} = ${zoneA.id}`)
+      .limit(1);
+    // Seed an out-of-scope chapter and an event on it. Reuses the
+    // shared `seedChapter` helper so future tests don't need to
+    // duplicate the chapter-insert boilerplate.
+    const outOfScopeId = await seedChapter(zoneA.id, `Out of scope ${unique()}`);
+    const serviceDate = `${new Date().getUTCFullYear()}-04-01`;
+    const create = await call(zoneA.slug, "/api/tenant/giving/service-events", {
+      method: "POST",
+      body: { chapterId: outOfScopeId, serviceTypeId: serviceType.id, serviceDate },
+    });
+    expect(create.status).toBe(201);
+    const { serviceEvent } = (await create.json()) as { serviceEvent: { id: string } };
+
+    // Chapter treasurer is bound to chapterA only.
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(
+      fakeSession(chapterUserA, "giving-chapter-a@example.com"),
+    );
+    const denied = await call(
+      zoneA.slug,
+      `/api/tenant/giving/service-events/${serviceEvent.id}/attendance`,
+      {
+        method: "PUT",
+        body: { men: 1, women: 1, teens: 0, children: 0, firstTimers: 0, newConverts: 0 },
+      },
+    );
+    expect(denied.status).toBe(403);
+  });
 });
