@@ -244,14 +244,14 @@
   let downloadError = $state<string | null>(null);
 
   /**
-   * Fetch the Excel artefact and trigger a download via a blob URL.
-   * We can't use `window.open` because the tenant middleware reads the
-   * zone from the `x-stewardledger-zone-slug` header on the dev box
-   * (and from the Host header in production); browser navigation
-   * can't set custom headers. Fetching + saving keeps both dev and
-   * prod paths on the same code.
+   * Fetch a report artefact (Excel or PDF) and trigger a download
+   * via a blob URL. We can't use `window.open` because the tenant
+   * middleware reads the zone from the `x-stewardledger-zone-slug`
+   * header on the dev box (and from the Host header in production);
+   * browser navigation can't set custom headers. Fetching + saving
+   * keeps both dev and prod paths on the same code.
    */
-  async function downloadXlsx() {
+  async function downloadArtefact(format: "xlsx" | "pdf") {
     downloadController?.abort();
     const controller = new AbortController();
     downloadController = controller;
@@ -263,7 +263,7 @@
       const slug = localStorage.getItem("stewardledger.activeZoneSlug");
       if (slug) headers.set("x-stewardledger-zone-slug", slug);
       const res = await fetch(
-        `${PUBLIC_API_URL}/api/tenant/reports/${reportId}/export.xlsx?${params.toString()}`,
+        `${PUBLIC_API_URL}/api/tenant/reports/${reportId}/export.${format}?${params.toString()}`,
         { method: "GET", credentials: "include", headers, signal: controller.signal },
       );
       if (!res.ok) {
@@ -274,7 +274,8 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = parseFilename(res.headers.get("content-disposition")) ?? `${reportId}.xlsx`;
+      a.download =
+        parseFilename(res.headers.get("content-disposition")) ?? `${reportId}.${format}`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -287,6 +288,8 @@
       if (!controller.signal.aborted) downloading = false;
     }
   }
+  const downloadXlsx = () => downloadArtefact("xlsx");
+  const downloadPdf = () => downloadArtefact("pdf");
 
   function parseFilename(disposition: string | null): string | null {
     if (!disposition) return null;
@@ -611,6 +614,14 @@
           class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:border-slate-400 disabled:opacity-50"
         >
           {downloading ? "Downloading…" : "Download Excel"}
+        </button>
+        <button
+          type="button"
+          onclick={downloadPdf}
+          disabled={downloading}
+          class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:border-slate-400 disabled:opacity-50"
+        >
+          {downloading ? "Downloading…" : "Download PDF"}
         </button>
       {/if}
     </div>
