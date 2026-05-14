@@ -74,7 +74,9 @@ beforeAll(async () => {
   // Books:
   // - Chapter A, codes 0001..0100, open from 2025-01-01 onwards.
   // - Chapter A, codes 1000..1050, closed 2024-12-31.
-  // - Chapter B, codes 0001..0100, open from 2025-01-01.
+  // - Chapter B, codes 5000..5100, open from 2025-01-01. Disjoint
+  //   from chapter A on purpose so a cross-chapter rejection test
+  //   has a code that exists in one chapter but not the other.
   await db.insert(payingInBooks).values([
     {
       zoneId: zone.id,
@@ -95,8 +97,8 @@ beforeAll(async () => {
     {
       zoneId: zone.id,
       chapterId: chB.id,
-      referenceCodeStart: "0001",
-      referenceCodeEnd: "0100",
+      referenceCodeStart: "5000",
+      referenceCodeEnd: "5100",
       dateFrom: "2025-01-01",
       dateTo: null,
     },
@@ -164,22 +166,24 @@ describe("assertReferenceCodeInRange", () => {
   });
 
   it("rejects a code belonging to another chapter", async () => {
-    // Chapter B's code 0050 is not visible to a chapter-A query
-    // even though both chapters have a 0001..0100 book.
+    // Chapter B's book covers 5000..5100; chapter A's covers
+    // 0001..0100. Querying chapter A with a chapter-B-only code
+    // (5050) must reject. The mirror query (chapter B, 5050)
+    // must accept — same code, but only when scoped to its
+    // owning chapter.
     await expect(
       assertReferenceCodeInRange(db, {
         zoneId: fx.zoneId,
         chapterId: fx.chapterAId,
-        referenceCode: "0050",
+        referenceCode: "5050",
         onDate: "2025-06-01",
       }),
-    ).resolves.toBeUndefined();
-    // Confirm the other-chapter book is still scoped correctly.
+    ).rejects.toBeInstanceOf(PayingInBookError);
     await expect(
       assertReferenceCodeInRange(db, {
         zoneId: fx.zoneId,
         chapterId: fx.chapterBId,
-        referenceCode: "0050",
+        referenceCode: "5050",
         onDate: "2025-06-01",
       }),
     ).resolves.toBeUndefined();
