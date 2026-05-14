@@ -68,6 +68,10 @@
   let sourceType = $state<"" | "envelope" | "online" | "bank_import" | "oblation" | "manual">("");
   let topN = $state(20);
   let partnershipOnly = $state(false);
+  let actorUserId = $state("");
+  let entityType = $state("");
+  let entityId = $state("");
+  let action = $state("");
 
   let chapters = $state<Chapter[]>([]);
   let givingTypes = $state<GivingType[]>([]);
@@ -134,6 +138,14 @@
       "topN",
       "partnershipOnly",
     ],
+    "audit-log": [
+      "dateFrom",
+      "dateTo",
+      "actorUserId",
+      "entityType",
+      "entityId",
+      "action",
+    ],
   };
   // Reports that hard-restrict source-type to a subset of the full
   // enum surface only their valid options. Server-side schemas
@@ -197,6 +209,10 @@
     if (visible.includes("topN")) params.set("topN", String(topN));
     if (visible.includes("partnershipOnly"))
       params.set("partnershipOnly", String(partnershipOnly));
+    if (visible.includes("actorUserId") && actorUserId) params.set("actorUserId", actorUserId);
+    if (visible.includes("entityType") && entityType) params.set("entityType", entityType);
+    if (visible.includes("entityId") && entityId) params.set("entityId", entityId);
+    if (visible.includes("action") && action) params.set("action", action);
     return params;
   }
 
@@ -511,6 +527,50 @@
               <option value="manual">Manual</option>
             {/if}
           </select>
+        </label>
+      {/if}
+      {#if visible.includes("actorUserId")}
+        <label class="text-sm sm:col-span-2">
+          <span class="block text-slate-600">Actor user ID</span>
+          <input
+            type="text"
+            bind:value={actorUserId}
+            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+            placeholder="user id (optional)"
+          />
+        </label>
+      {/if}
+      {#if visible.includes("entityType")}
+        <label class="text-sm">
+          <span class="block text-slate-600">Entity type</span>
+          <input
+            type="text"
+            bind:value={entityType}
+            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+            placeholder="e.g. member, contribution"
+          />
+        </label>
+      {/if}
+      {#if visible.includes("entityId")}
+        <label class="text-sm">
+          <span class="block text-slate-600">Entity ID</span>
+          <input
+            type="text"
+            bind:value={entityId}
+            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+            placeholder="optional"
+          />
+        </label>
+      {/if}
+      {#if visible.includes("action")}
+        <label class="text-sm">
+          <span class="block text-slate-600">Action</span>
+          <input
+            type="text"
+            bind:value={action}
+            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+            placeholder="e.g. member.update"
+          />
         </label>
       {/if}
       {#if visible.includes("importStatus")}

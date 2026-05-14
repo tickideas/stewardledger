@@ -18,15 +18,14 @@ import {
   paymentMethods,
 } from "@stewardledger/db/schema";
 import {
-  CHAPTER_ROLES,
   uuidSchema,
-  type AuthorizedContext,
 } from "@stewardledger/shared";
 import {
   addBrandedSheet,
   escapeExcelText,
   moneyFormatForCurrency,
 } from "./branding";
+import { hasAnyZoneRole } from "./access";
 import type {
   CurrencySubtotal,
   ReportColumn,
@@ -98,7 +97,7 @@ export const generalLedgerReport: ReportSpec<
   filtersSchema: generalLedgerFiltersSchema,
   columns: () => COLUMNS,
   accessCheck: (ctx, filters) => {
-    if (isZoneRead(ctx)) return null;
+    if (hasAnyZoneRole(ctx)) return null;
     if (ctx.chapterIds.length === 0) return "forbidden";
     if (filters.chapterId && !ctx.chapterIds.includes(filters.chapterId)) {
       return "forbidden";
@@ -118,7 +117,7 @@ export const generalLedgerReport: ReportSpec<
     ];
     if (filters.chapterId) {
       conditions.push(eq(contributions.chapterId, filters.chapterId));
-    } else if (!isZoneRead(ctx)) {
+    } else if (!hasAnyZoneRole(ctx)) {
       conditions.push(inArray(contributions.chapterId, ctx.chapterIds));
     }
     if (filters.givingTypeId) {
@@ -343,9 +342,4 @@ export const generalLedgerReport: ReportSpec<
 function setWidthByKey(sheet: ExcelJS.Worksheet, key: string, width: number): void {
   const idx = COLUMNS.findIndex((c) => c.key === key) + 1;
   if (idx > 0) sheet.getColumn(idx).width = width;
-}
-
-function isZoneRead(ctx: AuthorizedContext): boolean {
-  const chapterCodes: readonly string[] = Object.values(CHAPTER_ROLES);
-  return ctx.roleCodes.some((c) => !chapterCodes.includes(c));
 }

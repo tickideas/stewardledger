@@ -40,6 +40,8 @@ import { seedZoneGivingSetup } from "../giving-setup-seed";
 import { seedZonePeriods } from "../period-seed";
 import { InMemoryStorage, setStorageForTesting } from "../storage";
 import { createContribution, postContribution, reverseContribution } from "../contributions";
+import { writeAudit } from "../audit";
+import { auditLogReport } from "./audit-log";
 import { envelopeLedgerReport } from "./envelope-ledger";
 import { generalLedgerReport } from "./general-ledger";
 import { givingByChapterReport } from "./giving-by-chapter";
@@ -2400,6 +2402,280 @@ describe("top-chapters report", () => {
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0].chapterReferenceCode).toBe(zone.chapterRef);
     expect(result.rows[0].total).toBe("15.0000");
+  });
+});
+
+describe("audit-log report", () => {
+  const wideFilters = () => ({
+    dateFrom: shiftDays(TODAY, -1),
+    dateTo: shiftDays(TODAY, 1),
+  });
+
+  it("lists zone-scoped events newest-first and renders Excel", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    await writeAudit(db, {
+      zoneId: zone.id,
+      actorUserId: zone.userId,
+      actorRoleCode: ZONE_ROLES.ZONE_FINANCE_ADMIN,
+      action: "member.update",
+      entityType: "member",
+      entityId: zone.memberIds[0],
+      after: { firstName: "Updated" },
+      reason: "manual correction",
+    });
+    await writeAudit(db, {
+      zoneId: zone.id,
+      actorUserId: zone.userId,
+      action: "chapter.create",
+      entityType: "chapter",
+      entityId: zone.chapterId,
+      after: { name: "New chapter" },
+    });
+    await writeAudit(db, {
+      zoneId: zone.id,
+      actorUserId: zone.userId,
+      action: "import.commit",
+      entityType: "import_job",
+      entityId: "job-xyz",
+    });
+
+    const result = await auditLogReport.fetch(db, ctx, wideFilters());
+    // The zone is freshly seeded and no contributions are posted in
+    // this test, so only the three audits we wrote land in the
+    // window. Three sequential writeAudit calls can share `now()`
+    // microsecond on a fast box, so assert membership rather than
+    // exact ordering (the spec orders by occurredAt then id desc; the
+    // newest-first invariant is exercised in the next assertion).
+    expect(new Set(result.rows.map((r) => r.action))).toEqual(
+      new Set(["member.update", "chapter.create", "import.commit"]),
+    );
+    expect(result.meta).toMatchObject({ eventCount: 3 });
+    // Newest-first check: pull the timestamps and confirm monotonic
+    // descending without assuming the chronological ordering of
+    // three fast-back-to-back inserts.
+    const stamps = result.rows.map((r) => r.occurredAt);
+    expect([...stamps].sort().reverse()).toEqual(stamps);
+
+    const branding = await loadReportBranding(db, zone.id);
+    const bytes = await auditLogReport.excel(
+      result.rows,
+      undefined,
+      wideFilters(),
+      branding,
+    );
+    expect(bytes.byteLength).toBeGreaterThan(500);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(toArrayBuffer(bytes));
+    const sheet = wb.getWorksheet("Audit log");
+    expect(sheet).toBeTruthy();
+    expect(sheet!.getCell("A1").value).toBe(branding.zoneName);
+    expect(sheet!.getCell("A6").value).toBe("When");
+  });
+
+  it("filters by entityType and action", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    await writeAudit(db, {
+      zoneId: zone.id,
+      actorUserId: zone.userId,
+      action: "member.update",
+      entityType: "member",
+      entityId: zone.memberIds[0],
+    });
+    await writeAudit(db, {
+      zoneId: zone.id,
+      actorUserId: zone.userId,
+      action: "chapter.create",
+      entityType: "chapter",
+      entityId: zone.chapterId,
+    });
+
+    const byEntity = await auditLogReport.fetch(db, ctx, {
+      ...wideFilters(),
+      entityType: "member",
+    });
+    expect(byEntity.rows.every((r) => r.entityType === "member")).toBe(true);
+    expect(byEntity.rows.some((r) => r.action === "member.update")).toBe(true);
+
+    const byAction = await auditLogReport.fetch(db, ctx, {
+      ...wideFilters(),
+      action: "chapter.create",
+    });
+    expect(byAction.rows.every((r) => r.action === "chapter.create")).toBe(true);
+  });
+
+  it("excludes events outside the date window", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    await writeAudit(db, {
+      zoneId: zone.id,
+      actorUserId: zone.userId,
+      action: "member.update",
+      entityType: "member",
+      entityId: zone.memberIds[0],
+    });
+
+    // A window in the distant past — no events should fall in it.
+    const result = await auditLogReport.fetch(db, ctx, {
+      dateFrom: "2000-01-01",
+      dateTo: "2000-01-02",
+    });
+    expect(result.rows).toHaveLength(0);
+  });
+
+  it("denies non-admin callers via accessCheck (chapter + viewer roles)", () => {
+    const baseCtx: Omit<AuthorizedContext, "roleCodes"> = {
+      userId: "u-stub",
+      zoneId: "z-stub",
+      regionId: null,
+      chapterIds: ["c-stub"],
+      isPlatformAdmin: false,
+    };
+    // Chapter-scoped role — no zone view at all.
+    expect(
+      auditLogReport.accessCheck?.(
+        { ...baseCtx, roleCodes: ["chapter_treasurer"] } satisfies AuthorizedContext,
+        wideFilters(),
+      ),
+    ).toBe("forbidden");
+    // Zone viewer tiers are also denied: REPORTS.md §2.13 marks this
+    // report admin-facing, and the trail itself is sensitive even
+    // read-only (it exposes who edited what / when across the zone).
+    expect(
+      auditLogReport.accessCheck?.(
+        {
+          ...baseCtx,
+          roleCodes: [ZONE_ROLES.ZONE_AUDITOR],
+          chapterIds: [],
+        } satisfies AuthorizedContext,
+        wideFilters(),
+      ),
+    ).toBe("forbidden");
+    expect(
+      auditLogReport.accessCheck?.(
+        {
+          ...baseCtx,
+          roleCodes: [ZONE_ROLES.ZONE_PASTOR_VIEWER],
+          chapterIds: [],
+        } satisfies AuthorizedContext,
+        wideFilters(),
+      ),
+    ).toBe("forbidden");
+    // Admin tiers pass.
+    for (const code of [
+      ZONE_ROLES.ZONE_OWNER,
+      ZONE_ROLES.ZONE_ADMIN,
+      ZONE_ROLES.ZONE_FINANCE_ADMIN,
+    ]) {
+      expect(
+        auditLogReport.accessCheck?.(
+          {
+            ...baseCtx,
+            roleCodes: [code],
+            chapterIds: [],
+          } satisfies AuthorizedContext,
+          wideFilters(),
+        ),
+      ).toBeNull();
+    }
+  });
+
+  it("isolates events across zones", async () => {
+    const zoneA = await seedZone();
+    seededZones.push(zoneA.id);
+    const zoneB = await seedZone();
+    seededZones.push(zoneB.id);
+
+    await writeAudit(db, {
+      zoneId: zoneB.id,
+      actorUserId: zoneB.userId,
+      action: "member.update",
+      entityType: "member",
+      entityId: zoneB.memberIds[0],
+      reason: "zone-B-only",
+    });
+
+    const result = await auditLogReport.fetch(db, zoneCtx(zoneA), wideFilters());
+    expect(result.rows.some((r) => r.reason === "zone-B-only")).toBe(false);
+  });
+
+  it("soft-truncates oversized before/after JSON to the Excel cell limit", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    // 40k chars exceeds Excel's 32,767 cell limit; the JSON wrapper
+    // ("...") adds two more chars so the raw stringify lands well
+    // above the threshold.
+    const huge = "x".repeat(40_000);
+    await writeAudit(db, {
+      zoneId: zone.id,
+      actorUserId: zone.userId,
+      action: "member.update",
+      entityType: "member",
+      entityId: zone.memberIds[0],
+      after: { blob: huge },
+    });
+
+    const result = await auditLogReport.fetch(db, ctx, wideFilters());
+    const target = result.rows.find((r) => r.action === "member.update");
+    expect(target).toBeTruthy();
+    // The cell stays under the Excel limit and carries the truncation
+    // marker so a reader can tell the row was clipped.
+    expect(target!.after).not.toBeNull();
+    expect(target!.after!.length).toBeLessThan(33_000);
+    expect(target!.after).toMatch(/…\(truncated\)$/);
+  });
+
+  it("escapes formula-injection prefixes in reason", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    await writeAudit(db, {
+      zoneId: zone.id,
+      actorUserId: zone.userId,
+      action: "member.update",
+      entityType: "member",
+      entityId: zone.memberIds[0],
+      reason: '=HYPERLINK("http://attacker/x","click")',
+    });
+
+    const result = await auditLogReport.fetch(db, ctx, wideFilters());
+    const branding = await loadReportBranding(db, zone.id);
+    const bytes = await auditLogReport.excel(
+      result.rows,
+      undefined,
+      wideFilters(),
+      branding,
+    );
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(toArrayBuffer(bytes));
+    const sheet = wb.getWorksheet("Audit log")!;
+    const headerRow = sheet.getRow(6);
+    let reasonCol = 0;
+    headerRow.eachCell((cell, col) => {
+      if (cell.value === "Reason") reasonCol = col;
+    });
+    expect(reasonCol).toBeGreaterThan(0);
+    // Find the row whose reason starts with '=HYPERLINK after the
+    // leading-apostrophe escape; assert no row exposes a raw `=` prefix.
+    let foundEscaped = false;
+    for (let r = 7; r <= sheet.rowCount; r++) {
+      const v = sheet.getRow(r).getCell(reasonCol).value;
+      if (typeof v === "string") {
+        expect(v.startsWith("=")).toBe(false);
+        if (v.startsWith("'=HYPERLINK")) foundEscaped = true;
+      }
+    }
+    expect(foundEscaped).toBe(true);
   });
 });
 

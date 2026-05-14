@@ -25,15 +25,14 @@ import {
   serviceEvents,
 } from "@stewardledger/db/schema";
 import {
-  CHAPTER_ROLES,
   uuidSchema,
-  type AuthorizedContext,
 } from "@stewardledger/shared";
 import {
   addBrandedSheet,
   escapeExcelText,
   moneyFormatForCurrency,
 } from "./branding";
+import { hasAnyZoneRole } from "./access";
 import {
   ReportError,
   type CurrencySubtotal,
@@ -116,7 +115,7 @@ export const memberStatementReport: ReportSpec<
     // readers must own at least one chapter binding (the per-member
     // home-chapter check happens in `fetch`, where we have a DB
     // handle). Without bindings there is no scope to evaluate.
-    if (isZoneRead(ctx)) return null;
+    if (hasAnyZoneRole(ctx)) return null;
     if (ctx.chapterIds.length === 0) return "forbidden";
     return null;
   },
@@ -146,7 +145,7 @@ export const memberStatementReport: ReportSpec<
     // ReportError("forbidden"). Zone-wide readers fall through to the
     // "not found" empty response — they can see every chapter, so the
     // empty result is the honest answer.
-    if (!isZoneRead(ctx)) {
+    if (!hasAnyZoneRole(ctx)) {
       if (!member?.chapterId || !ctx.chapterIds.includes(member.chapterId)) {
         throw new ReportError("forbidden", "Member is not in your chapter scope.");
       }
@@ -343,13 +342,6 @@ export const memberStatementReport: ReportSpec<
   },
 };
 
-function isZoneRead(ctx: AuthorizedContext): boolean {
-  // Anything not chapter-scoped is zone-wide for read purposes; access.ts
-  // owns the canonical role list. We re-derive here to avoid a cycle.
-  const chapterCodes: readonly string[] = Object.values(CHAPTER_ROLES);
-  // If the user holds ANY non-chapter role, they're zone-wide.
-  return ctx.roleCodes.some((c) => !chapterCodes.includes(c));
-}
 
 /**
  * Aggregate signed amounts per currency. Reversals carry negative
