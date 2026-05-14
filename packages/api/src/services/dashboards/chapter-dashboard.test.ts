@@ -21,6 +21,7 @@ import { db } from "../../db";
 import { createContribution, postContribution, reverseContribution } from "../contributions";
 import { seedZoneGivingSetup } from "../giving-setup-seed";
 import { seedZonePeriods } from "../period-seed";
+import { weekBoundsInZone } from "./calendar";
 import {
   buildChapterDashboard,
   ChapterDashboardError,
@@ -305,11 +306,65 @@ describe("chapter dashboard service", () => {
     // posted contributions only).
     expect(payload.recentContributions).toHaveLength(3);
     expect(payload.recentContributions.every((c) => c.currencyCode === "GBP")).toBe(true);
+    // Every recent contribution must resolve to a chapter-A member;
+    // chapter B's m2 must never appear here. The previous version
+    // of this assertion was a no-op (`some((ref) => true)`).
+    const chapterAMemberNames = ["First0 Last0", "First1 Last1"];
     expect(
-      payload.recentContributions.every((c) =>
-        [zone.memberRefs[0], zone.memberRefs[1]].some((ref) => true) // any chapter-A member
+      payload.recentContributions.every(
+        (c) => c.memberName !== null && chapterAMemberNames.includes(c.memberName),
       ),
     ).toBe(true);
+    // Cross-chapter isolation invariant, made explicit: chapter B's
+    // m2 must not appear in chapter A's topPartners either.
+    expect(
+      payload.topPartners.some((p) => p.referenceCode === zone.memberRefs[2]),
+    ).toBe(false);
+  });
+
+  it("isolates weekly window: pre-week contributions land in YTD but not 'this week'", async () => {
+    // Seed a contribution dated the day BEFORE the current ISO
+    // week's Monday. It must land in YTD but NOT in 'this week'.
+    // Derive the date from `weekBoundsInZone` itself so the test
+    // doesn't drift around year boundaries.
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+
+    const { start: weekStart } = weekBoundsInZone(new Date(), "Europe/London");
+    // One day before week start, evaluated as a pure date shift.
+    const beforeWeek = (() => {
+      const [y, m, d] = weekStart.split("-").map(Number);
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      dt.setUTCDate(dt.getUTCDate() - 1);
+      return dt.toISOString().slice(0, 10);
+    })();
+    // Guard: if the prior-week day happens to fall in the previous
+    // civil year (Jan 1 ± a few days), skip the YTD assertion since
+    // YTD won't include the date by design. Other assertions still
+    // run.
+    const inSameYear = beforeWeek.slice(0, 4) === weekStart.slice(0, 4);
+
+    const c = await createContribution(
+      db,
+      { zoneId: zone.id, userId: zone.userId },
+      {
+        chapterId: zone.chapterAId,
+        memberId: zone.memberIds[0],
+        sourceType: "manual",
+        paymentMethodId: zone.cashPaymentMethodId,
+        contributionDate: beforeWeek,
+        lines: [{ givingTypeId: zone.titheGivingTypeId, amount: "42.00" }],
+      },
+    );
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, c.contribution.id);
+
+    const payload = await buildChapterDashboard(db, zone.id, zone.chapterAId);
+    expect(payload.weeklyGiving.perCurrency).toEqual([]);
+    if (inSameYear) {
+      expect(payload.yearToDateGiving.perCurrency).toEqual([
+        { currencyCode: "GBP", total: "42.0000" },
+      ]);
+    }
   });
 
   it("totals pending batch cash + cheque per currency and excludes posted / voided", async () => {
