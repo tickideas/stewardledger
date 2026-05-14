@@ -230,6 +230,7 @@ describe("tenant reports routes", () => {
       "member-list",
       "member-statement",
       "online-giving-ledger",
+      "partnership-progress",
       "top-chapters",
       "top-partners",
       "weekly-finance",

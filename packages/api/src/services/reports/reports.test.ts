@@ -20,8 +20,10 @@ import {
   accounts,
   applyContributionTriggers,
   chapters,
+  financialTargets,
   givingTypes,
   members,
+  ministryYears,
   paymentMethods,
   serviceEventAttendance,
   serviceEvents,
@@ -54,6 +56,7 @@ import { memberFinanceSummaryReport } from "./member-finance-summary";
 import { memberListReport } from "./member-list";
 import { memberStatementReport } from "./member-statement";
 import { onlineGivingLedgerReport } from "./online-giving-ledger";
+import { partnershipProgressReport } from "./partnership-progress";
 import { topChaptersReport } from "./top-chapters";
 import { topPartnersReport } from "./top-partners";
 import { weeklyFinanceReport } from "./weekly-finance";
@@ -255,6 +258,9 @@ afterAll(async () => {
         // event rows must go before the chapters they reference.
         // service_event_attendance cascades from service_events.
         await tx.execute(sql`delete from service_events where zone_id = ${id}`);
+        // financial_targets.chapter_id is FK ON DELETE RESTRICT too;
+        // chapter-scoped target rows must go before chapters.
+        await tx.execute(sql`delete from financial_targets where zone_id = ${id}`);
         await tx.execute(sql`delete from members where zone_id = ${id}`);
         await tx.execute(sql`delete from chapters where zone_id = ${id}`);
         await tx.execute(sql`delete from zones where id = ${id}`);
@@ -2910,6 +2916,295 @@ describe("weekly-finance report", () => {
     let typeCol = 0;
     headerRow.eachCell((cell, col) => {
       if (cell.value === "Service type") typeCol = col;
+    });
+    expect(typeCol).toBeGreaterThan(0);
+    const v = sheet.getRow(7).getCell(typeCol).value;
+    expect(typeof v === "string" && v.startsWith("=")).toBe(false);
+  });
+});
+
+describe("partnership-progress report", () => {
+  async function seedTargetingContext(
+    zone: SeededZone,
+  ): Promise<{
+    partnerGivingTypeId: string;
+    ministryYearId: string;
+    ministryYearStart: string;
+    ministryYearEnd: string;
+  }> {
+    const [partner] = await db
+      .select({ id: givingTypes.id })
+      .from(givingTypes)
+      .where(sql`${givingTypes.zoneId} = ${zone.id} and ${givingTypes.shortCode} = 'PARTNER'`)
+      .limit(1);
+    // Pick the ministry year that covers TODAY so the achieved-side
+    // contributions on TODAY actually fall inside the window.
+    const [my] = await db
+      .select({
+        id: ministryYears.id,
+        startDate: ministryYears.startDate,
+        endDate: ministryYears.endDate,
+      })
+      .from(ministryYears)
+      .where(
+        sql`${ministryYears.zoneId} = ${zone.id}
+            and ${ministryYears.startDate} <= ${TODAY}::date
+            and ${ministryYears.endDate} >= ${TODAY}::date`,
+      )
+      .limit(1);
+    if (!my) throw new Error("No ministry year covers TODAY for the test seed.");
+    return {
+      partnerGivingTypeId: partner.id,
+      ministryYearId: my.id,
+      ministryYearStart: my.startDate,
+      ministryYearEnd: my.endDate,
+    };
+  }
+
+  it("ties out target vs achieved for a chapter-scoped partnership target", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+    const { partnerGivingTypeId, ministryYearId } = await seedTargetingContext(zone);
+
+    // 12k target, 1k monthly; achieved so far = 250 (one
+    // contribution).
+    await db.insert(financialTargets).values({
+      zoneId: zone.id,
+      chapterId: zone.chapterId,
+      givingTypeId: partnerGivingTypeId,
+      ministryYearId,
+      fullTarget: "12000.0000",
+      monthlyTarget: "1000.0000",
+      weeklyBreakdown: "250.0000",
+      currencyCode: "GBP",
+    });
+    const c = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[0],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: partnerGivingTypeId, amount: "250.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, c.contribution.id);
+
+    const result = await partnershipProgressReport.fetch(db, ctx, {
+      ministryYearId,
+    });
+
+    expect(result.rows).toHaveLength(1);
+    const [row] = result.rows;
+    expect(row.fullTarget).toBe("12000.0000");
+    expect(row.achieved).toBe("250.0000");
+    // 250 / 12000 = 2.0833...%; rounded to 1dp.
+    expect(row.percentProgress).toBe("2.1%");
+    expect(row.currencyCode).toBe("GBP");
+    expect(result.subtotals).toEqual([{ currencyCode: "GBP", total: "250.0000" }]);
+
+    const branding = await loadReportBranding(db, zone.id);
+    const bytes = await partnershipProgressReport.excel(
+      result.rows,
+      result.subtotals,
+      { ministryYearId },
+      branding,
+    );
+    expect(bytes.byteLength).toBeGreaterThan(500);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(toArrayBuffer(bytes));
+    expect(wb.getWorksheet("Partnership progress")).toBeTruthy();
+  });
+
+  it("excludes giving types whose has_partnership_target is false", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+    const { ministryYearId } = await seedTargetingContext(zone);
+
+    // Seed a target on OFFERING (which has_partnership_target=false
+    // per the giving setup seed) and confirm it does not appear.
+    await db.insert(financialTargets).values({
+      zoneId: zone.id,
+      chapterId: zone.chapterId,
+      givingTypeId: zone.offeringGivingTypeId,
+      ministryYearId,
+      fullTarget: "5000.0000",
+      currencyCode: "GBP",
+    });
+    const result = await partnershipProgressReport.fetch(db, ctx, { ministryYearId });
+    expect(result.rows).toHaveLength(0);
+  });
+
+  it("zone-wide target aggregates across all chapters; chapter-scoped target stays scoped", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+    const { partnerGivingTypeId, ministryYearId } = await seedTargetingContext(zone);
+
+    // Zone-wide partnership target: 50k.
+    await db.insert(financialTargets).values({
+      zoneId: zone.id,
+      chapterId: null,
+      givingTypeId: partnerGivingTypeId,
+      ministryYearId,
+      fullTarget: "50000.0000",
+      currencyCode: "GBP",
+    });
+    // Two contributions: 100 in chapter A, 60 in chapter B.
+    const a = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[0],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: partnerGivingTypeId, amount: "100.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, a.contribution.id);
+    const b = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.otherChapterId,
+      memberId: zone.memberIds[2],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: partnerGivingTypeId, amount: "60.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, b.contribution.id);
+
+    const result = await partnershipProgressReport.fetch(db, ctx, { ministryYearId });
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].chapterName).toBe("All chapters");
+    // Zone-wide aggregates: 100 + 60 = 160.
+    expect(result.rows[0].achieved).toBe("160.0000");
+  });
+
+  it("reversed contributions net to zero in the achieved column", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+    const { partnerGivingTypeId, ministryYearId } = await seedTargetingContext(zone);
+
+    await db.insert(financialTargets).values({
+      zoneId: zone.id,
+      chapterId: zone.chapterId,
+      givingTypeId: partnerGivingTypeId,
+      ministryYearId,
+      fullTarget: "10000.0000",
+      currencyCode: "GBP",
+    });
+    const c = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[0],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: partnerGivingTypeId, amount: "500.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, c.contribution.id);
+    await reverseContribution(db, { zoneId: zone.id, userId: zone.userId }, c.contribution.id, {
+      reason: "test",
+    });
+
+    const result = await partnershipProgressReport.fetch(db, ctx, { ministryYearId });
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].achieved).toBe("0.0000");
+  });
+
+  it("clamps chapter-scoped readers to their bound chapters but keeps zone-wide rows visible", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const { partnerGivingTypeId, ministryYearId } = await seedTargetingContext(zone);
+
+    // Seed three targets: chapter A, chapter B, zone-wide.
+    await db.insert(financialTargets).values([
+      {
+        zoneId: zone.id,
+        chapterId: zone.chapterId,
+        givingTypeId: partnerGivingTypeId,
+        ministryYearId,
+        fullTarget: "1000.0000",
+        currencyCode: "GBP",
+      },
+      {
+        zoneId: zone.id,
+        chapterId: zone.otherChapterId,
+        givingTypeId: partnerGivingTypeId,
+        ministryYearId,
+        fullTarget: "2000.0000",
+        currencyCode: "GBP",
+      },
+      {
+        zoneId: zone.id,
+        chapterId: null,
+        givingTypeId: partnerGivingTypeId,
+        ministryYearId,
+        fullTarget: "3000.0000",
+        currencyCode: "GBP",
+      },
+    ]);
+
+    const chapterScopedCtx: AuthorizedContext = {
+      userId: zone.userId,
+      zoneId: zone.id,
+      regionId: null,
+      roleCodes: ["chapter_treasurer"],
+      chapterIds: [zone.chapterId],
+      isPlatformAdmin: false,
+    };
+
+    // Out-of-scope chapter filter is denied.
+    expect(
+      partnershipProgressReport.accessCheck?.(chapterScopedCtx, {
+        ministryYearId,
+        chapterId: zone.otherChapterId,
+      }),
+    ).toBe("forbidden");
+
+    const result = await partnershipProgressReport.fetch(db, chapterScopedCtx, {
+      ministryYearId,
+    });
+    // Chapter A target + zone-wide target; chapter B's target is hidden.
+    expect(result.rows).toHaveLength(2);
+    expect(
+      result.rows.some((r) => r.chapterReferenceCode === zone.chapterRef),
+    ).toBe(true);
+    expect(result.rows.some((r) => r.chapterName === "All chapters")).toBe(true);
+  });
+
+  it("escapes formula-injection prefixes in giving type name", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+    const { partnerGivingTypeId, ministryYearId } = await seedTargetingContext(zone);
+
+    await db
+      .update(givingTypes)
+      .set({ name: '=HYPERLINK("http://attacker/x","click")' })
+      .where(sql`${givingTypes.zoneId} = ${zone.id} and ${givingTypes.id} = ${partnerGivingTypeId}`);
+
+    await db.insert(financialTargets).values({
+      zoneId: zone.id,
+      chapterId: zone.chapterId,
+      givingTypeId: partnerGivingTypeId,
+      ministryYearId,
+      fullTarget: "100.0000",
+      currencyCode: "GBP",
+    });
+    const filters = { ministryYearId };
+    const result = await partnershipProgressReport.fetch(db, ctx, filters);
+    const branding = await loadReportBranding(db, zone.id);
+    const bytes = await partnershipProgressReport.excel(
+      result.rows,
+      result.subtotals,
+      filters,
+      branding,
+    );
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(toArrayBuffer(bytes));
+    const sheet = wb.getWorksheet("Partnership progress")!;
+    const headerRow = sheet.getRow(6);
+    let typeCol = 0;
+    headerRow.eachCell((cell, col) => {
+      if (cell.value === "Giving type") typeCol = col;
     });
     expect(typeCol).toBeGreaterThan(0);
     const v = sheet.getRow(7).getCell(typeCol).value;
