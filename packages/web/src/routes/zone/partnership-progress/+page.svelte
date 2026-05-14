@@ -145,8 +145,10 @@
 
   // Group rows by chapter for the card layout. Zone-wide targets
   // (chapter_reference_code = null) collect under a synthetic
-  // "Zone-wide" group rendered first.
-  type Group = { label: string; subLabel: string; rows: Row[] };
+  // "Zone-wide" group rendered first. The group key is the chapter
+  // reference code (unique per zone) — not the display name, which
+  // can collide when two chapters happen to share a name.
+  type Group = { key: string; label: string; subLabel: string; rows: Row[] };
   const grouped = $derived<Group[]>((() => {
     const byKey = new Map<string, Group>();
     for (const row of rows) {
@@ -154,7 +156,7 @@
       const key = isZoneWide ? "__zone__" : row.chapterReferenceCode!;
       const label = isZoneWide ? "Zone-wide targets" : row.chapterName;
       const subLabel = isZoneWide ? "Applies to every chapter" : row.chapterReferenceCode!;
-      const bucket = byKey.get(key) ?? { label, subLabel, rows: [] };
+      const bucket = byKey.get(key) ?? { key, label, subLabel, rows: [] };
       bucket.rows.push(row);
       byKey.set(key, bucket);
     }
@@ -331,7 +333,7 @@
 
     <!-- One card per group; one row per target inside. -->
     <div class="sl-reveal sl-reveal-4 mt-4 space-y-6">
-      {#each grouped as group (group.label)}
+      {#each grouped as group (group.key)}
         <section class="sl-card rounded-xl border bg-white p-5 shadow-sm">
           <header class="flex items-baseline justify-between gap-3 border-b pb-3">
             <div>
@@ -356,9 +358,13 @@
                 <div
                   class="mt-2 h-2 w-full overflow-hidden rounded-full bg-[var(--paper-soft)]"
                   role="progressbar"
-                  aria-valuenow={percentNumeric(row.percentProgress)}
+                  aria-valuenow={Math.max(
+                    0,
+                    Math.min(100, percentNumeric(row.percentProgress)),
+                  )}
                   aria-valuemin="0"
                   aria-valuemax="100"
+                  aria-valuetext={row.percentProgress}
                   aria-label="{givingTypeLabel(row)} progress"
                 >
                   <div
