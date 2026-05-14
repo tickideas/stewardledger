@@ -1,18 +1,21 @@
 // packages/api/src/routes/tenant-dashboard.ts
 // Phase 7 — dashboard endpoints. Mounted onto tenantRouter.
 //
-// GET /api/tenant/dashboard/zone — zone-wide stats payload for the
-// /zone/dashboard surface (REPORTS.md §2.15).
+// GET /api/tenant/dashboard/zone               — REPORTS.md §2.15
+// GET /api/tenant/dashboard/chapter/:chapterId — REPORTS.md §2.14
 //
-// Access mirrors the reports gate: any zone reader can hit this
-// endpoint. Chapter-only callers are denied — the dashboard is
-// zone-wide by intent; chapter-scoped users have the chapter
-// dashboard (queued separately).
+// Zone dashboard: any zone reader; chapter-only callers denied.
+// Chapter dashboard: zone reader can drill into any chapter; chapter
+// reader can read their bound chapters only.
 
 import { Hono } from "hono";
 import type { AuthorizedContext } from "@stewardledger/shared";
 import { db } from "../db";
 import { hasAnyZoneRole } from "../services/reports/access";
+import {
+  buildChapterDashboard,
+  ChapterDashboardError,
+} from "../services/dashboards/chapter-dashboard";
 import { buildZoneDashboard } from "../services/dashboards/zone-dashboard";
 
 export const tenantDashboardRouter = new Hono();
@@ -35,4 +38,27 @@ tenantDashboardRouter.get("/dashboard/zone", async (c) => {
   // purposes and never store in shared caches / bfcache.
   c.header("cache-control", "no-store");
   return c.json(payload);
+});
+
+tenantDashboardRouter.get("/dashboard/chapter/:chapterId", async (c) => {
+  const ctx = c.get("auth") as AuthorizedContext;
+  const chapterId = c.req.param("chapterId");
+  // Zone-wide readers can drill into any chapter; chapter-only
+  // readers must own the chapter via their bindings. Folding the
+  // "unknown chapter" case into the same 403 prevents an
+  // existence-oracle for chapter-only callers (mirrors the pattern
+  // used by member-statement.ts).
+  if (!hasAnyZoneRole(ctx) && !ctx.chapterIds.includes(chapterId)) {
+    return forbidden(c);
+  }
+  try {
+    const payload = await buildChapterDashboard(db, ctx.zoneId, chapterId);
+    c.header("cache-control", "no-store");
+    return c.json(payload);
+  } catch (err) {
+    if (err instanceof ChapterDashboardError && err.code === "chapter_not_found") {
+      return c.json({ error: { code: "not_found", message: err.message } }, 404);
+    }
+    throw err;
+  }
 });
