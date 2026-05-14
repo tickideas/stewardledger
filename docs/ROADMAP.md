@@ -266,7 +266,7 @@ Audited implementation status (2026-05-13):
 
 Exit checklist:
 
-- [ ] Each v1 report ties out against a hand-curated test dataset. *(member-statement, member-finance-summary, import-reconciliation, member-list covered in `reports.test.ts`; remaining reports queued.)*
+- [ ] Each v1 report ties out against a hand-curated test dataset. *(member-statement, member-finance-summary, import-reconciliation, member-list, giving-by-chapter, general-ledger, envelope-ledger, online-giving-ledger, top-partners, top-chapters all covered in `reports.test.ts`; weekly finance, audit log, dashboards, partnership progress remain queued.)*
 - [ ] All exports work in Excel and PDF. *(PR-1: Excel verified end-to-end; PDF deferred to a follow-up PR that adds the Playwright/Chromium infra per ARCHITECTURE.md §2.)*
 - [ ] Reports of >100k rows stream/paginate, never time out. *(queued; the registry shape supports paginated `fetch` already.)*
 - [x] Multi-currency reports show per-currency subtotals (no silent FX). *(`CurrencySubtotal[]` returned by every spec; reports never call `addMoney` across currencies.)*
