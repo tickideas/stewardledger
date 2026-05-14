@@ -63,7 +63,13 @@ interface WeeklyFinanceRow {
   cashTotal: string;
   chequeTotal: string;
   lineTotal: string;
-  currencyCode: string;
+  /**
+   * Null when the event has no batches and no contributions — the
+   * row still surfaces so a treasurer scanning by date sees that
+   * the event happened, but money columns are zero and there's no
+   * meaningful currency to attribute them to.
+   */
+  currencyCode: string | null;
 }
 
 const COLUMNS: ReportColumn[] = [
@@ -90,6 +96,11 @@ const COLUMNS: ReportColumn[] = [
  * report's grouping. Counts strictly by day-of-month, not by ISO
  * week — a service on the 1st is always "week 1" regardless of the
  * weekday alignment.
+ *
+ * Intentionally timezone-naive: `service_events.service_date` is a
+ * Postgres `date` column with no TZ, and the report's date-range
+ * filter is also TZ-naive. The civil-month grouping is preserved
+ * because the source date never crosses a TZ boundary.
  */
 function weekInMonth(isoDate: string): number {
   const day = Number(isoDate.slice(8, 10));
@@ -184,6 +195,11 @@ export const weeklyFinanceReport: ReportSpec<
     // Batch totals attributed to each event: sum cash + cheque per
     // (event, currency). The (zone_id, service_event_id) join scopes
     // to in-window events; status filter excludes voided batches.
+    // `coalesce(sum, 0)` handles NULL cash/cheque columns (treasurer
+    // didn't enter physical-cash totals yet); Postgres returns the
+    // result as a `numeric`-shaped string — `"0"`, `"0.00"`, or
+    // `"123.4500"` depending on the row — all of which `new Decimal()`
+    // accepts without loss.
     const batchTotals = await database
       .select({
         serviceEventId: contributionBatches.serviceEventId,
@@ -243,59 +259,68 @@ export const weeklyFinanceReport: ReportSpec<
         contributionLines.currencyCode,
       );
 
-    // Build (eventId, currency) → totals map. We emit one row per
-    // (event, currency) so a single event with mixed-currency batches
-    // (rare but legal) yields multiple rows.
+    // Build event → currency → bucket nested map. Nested-Map (rather
+    // than the flat `${eventId}|${currency}` string-keyed shape) lets
+    // the row-build loop look up each event's buckets in O(1)
+    // instead of scanning every key per event (O(N²K) at scale).
     interface Bucket {
       cashTotal: Decimal;
       chequeTotal: Decimal;
       lineTotal: Decimal;
     }
-    const byKey = new Map<string, Bucket>();
-    const key = (eventId: string, currencyCode: string) => `${eventId}|${currencyCode}`;
+    const bucketsByEvent = new Map<string, Map<string, Bucket>>();
+    function ensureBucket(eventId: string, currencyCode: string): Bucket {
+      let byCurrency = bucketsByEvent.get(eventId);
+      if (!byCurrency) {
+        byCurrency = new Map();
+        bucketsByEvent.set(eventId, byCurrency);
+      }
+      let bucket = byCurrency.get(currencyCode);
+      if (!bucket) {
+        bucket = {
+          cashTotal: new Decimal(0),
+          chequeTotal: new Decimal(0),
+          lineTotal: new Decimal(0),
+        };
+        byCurrency.set(currencyCode, bucket);
+      }
+      return bucket;
+    }
     for (const t of batchTotals) {
       if (!t.serviceEventId) continue;
-      const k = key(t.serviceEventId, t.currencyCode);
-      const b = byKey.get(k) ?? {
-        cashTotal: new Decimal(0),
-        chequeTotal: new Decimal(0),
-        lineTotal: new Decimal(0),
-      };
-      b.cashTotal = b.cashTotal.plus(new Decimal(t.cashTotal));
-      b.chequeTotal = b.chequeTotal.plus(new Decimal(t.chequeTotal));
-      byKey.set(k, b);
+      const bucket = ensureBucket(t.serviceEventId, t.currencyCode);
+      bucket.cashTotal = bucket.cashTotal.plus(new Decimal(t.cashTotal));
+      bucket.chequeTotal = bucket.chequeTotal.plus(new Decimal(t.chequeTotal));
     }
     for (const l of lineRows) {
       // Effective event id: contribution-level wins, batch is the
       // fallback. Mirrors the legacy report's allocation rule.
       const effective = l.contributionEventId ?? l.batchEventId;
       if (!effective) continue;
-      const k = key(effective, l.currencyCode);
-      const b = byKey.get(k) ?? {
-        cashTotal: new Decimal(0),
-        chequeTotal: new Decimal(0),
-        lineTotal: new Decimal(0),
-      };
-      b.lineTotal = b.lineTotal.plus(new Decimal(l.total));
-      byKey.set(k, b);
+      const bucket = ensureBucket(effective, l.currencyCode);
+      bucket.lineTotal = bucket.lineTotal.plus(new Decimal(l.total));
     }
 
     const rows: WeeklyFinanceRow[] = [];
     const grand = new Map<string, Decimal>();
     for (const e of eventRows) {
+      // Attendance is left-joined; null columns mean "no row
+      // recorded". The `?? 0` here is the canonical "missing
+      // attendance = zero" rule (REPORTS.md §2.3).
       const men = e.men ?? 0;
       const women = e.women ?? 0;
       const teens = e.teens ?? 0;
       const children = e.children ?? 0;
       const firstTimers = e.firstTimers ?? 0;
       const newConverts = e.newConverts ?? 0;
-      // Find every (event, currency) bucket for this event. If none
-      // exist (event with no batch + no contributions), emit a single
-      // row in the zone's behaviour-irrelevant placeholder currency
-      // so the headcount still surfaces. Cleaner: skip the row;
-      // simpler for ops: leave it visible with zeros.
-      const bucketKeys = Array.from(byKey.keys()).filter((k) => k.startsWith(`${e.id}|`));
-      if (bucketKeys.length === 0) {
+      const totalAttendance = men + women + teens + children + firstTimers + newConverts;
+
+      const byCurrency = bucketsByEvent.get(e.id);
+      if (!byCurrency || byCurrency.size === 0) {
+        // No batches and no contributions for this event. We still
+        // emit a row so the headcount surfaces; `currencyCode` is
+        // null because there's no money to attribute. The Excel
+        // renderer skips the money number-format on null currency.
         rows.push({
           serviceEventId: e.id,
           serviceDate: e.serviceDate,
@@ -309,17 +334,15 @@ export const weeklyFinanceReport: ReportSpec<
           children,
           firstTimers,
           newConverts,
-          totalAttendance: men + women + teens + children + firstTimers + newConverts,
+          totalAttendance,
           cashTotal: "0.0000",
           chequeTotal: "0.0000",
           lineTotal: "0.0000",
-          currencyCode: "",
+          currencyCode: null,
         });
         continue;
       }
-      for (const k of bucketKeys) {
-        const currencyCode = k.split("|")[1];
-        const b = byKey.get(k)!;
+      for (const [currencyCode, bucket] of byCurrency) {
         rows.push({
           serviceEventId: e.id,
           serviceDate: e.serviceDate,
@@ -333,17 +356,19 @@ export const weeklyFinanceReport: ReportSpec<
           children,
           firstTimers,
           newConverts,
-          totalAttendance: men + women + teens + children + firstTimers + newConverts,
-          cashTotal: b.cashTotal.toFixed(4),
-          chequeTotal: b.chequeTotal.toFixed(4),
-          lineTotal: b.lineTotal.toFixed(4),
+          totalAttendance,
+          cashTotal: bucket.cashTotal.toFixed(4),
+          chequeTotal: bucket.chequeTotal.toFixed(4),
+          lineTotal: bucket.lineTotal.toFixed(4),
           currencyCode,
         });
         // Per-currency grand total uses the line total (the
-        // contribution-line truth) rather than cash+cheque, mirroring
-        // the legacy report.
+        // contribution-line truth from the immutable ledger) rather
+        // than the treasurer-counted cash + cheque. Reversal lines
+        // already net to zero in the line total, while cash + cheque
+        // remain the at-the-time-of-count physical figures.
         const cur = grand.get(currencyCode) ?? new Decimal(0);
-        grand.set(currencyCode, cur.plus(b.lineTotal));
+        grand.set(currencyCode, cur.plus(bucket.lineTotal));
       }
     }
 
@@ -383,7 +408,9 @@ export const weeklyFinanceReport: ReportSpec<
 
     // Every text column (service type, chapter name) is user-
     // controlled; route through `escapeExcelText` to neutralise
-    // formula-injection prefixes.
+    // formula-injection prefixes. The `currencyCode` column ships as
+    // a literal `null` for events with no money attached — the cell
+    // value falls through to null and renders as blank.
     let r = 7;
     for (const row of rows) {
       const dataRow = sheet.getRow(r);
