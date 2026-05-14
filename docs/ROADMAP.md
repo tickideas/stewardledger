@@ -231,7 +231,7 @@ Deliverables (full list in [`REPORTS.md`](REPORTS.md)):
 - Envelope ledger. *(Excel landed; one row per posted envelope contribution with rolled-up line breakdown.)*
 - Online giving ledger. *(Excel landed; preset on `source_type in ('online','bank_import')` with transaction-id column.)*
 - Top partners, top chapters. *(Excel landed; per-currency ranking with `topN` (default 20) and `partnershipOnly` toggle.)*
-- Audit log report. *(Excel landed; reads `audit_events`; admin-tier zone read/export gating.)*
+- Audit log report. *(Excel landed; reads `audit_events`; admin-only access — owner / admin / finance_admin only, viewer roles denied.)*
 - Partnership progress. *(queued; depends on Phase 8 targets)*
 - Weekly finance report. *(queued)*
 - Statement import reconciliation report. *(PR-1: Excel landed.)*

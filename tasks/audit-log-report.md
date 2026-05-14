@@ -54,16 +54,16 @@ raw JSON is the audit invariant most auditors actually want.
 
 ### Access
 
-- READ: any zone reader (owner / admin / finance_admin / auditor /
-  pastor_viewer). The route layer's existing `canReadReports`
-  gate covers this, but a spec-level `accessCheck` denies any
-  chapter-only caller (`ctx.chapterIds` non-empty AND no zone
-  role) — the report has no chapter dimension, so chapter
-  treasurers cannot see it at all.
+- READ: admin tier only (owner / admin / finance_admin). The
+  report surfaces every actor's edits across the zone, which is
+  sensitive even read-only — viewer roles (zone_auditor /
+  zone_pastor_viewer) and any chapter-scoped role are denied via
+  a spec-level `accessCheck`. This matches REPORTS.md §2.13
+  ("admin-facing").
 - EXPORT: existing `canExportReports` gate — owner / admin /
-  finance_admin.
+  finance_admin. Equivalent to READ here.
 - **No row-level chapter clamp.** The events stream is zone-wide
-  by design; an auditor needs to see everything.
+  by design.
 
 ### Excel
 
