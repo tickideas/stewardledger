@@ -69,6 +69,9 @@
     if (!here) {
       data = null;
       loading = false;
+      // Clear any stale error from a previous chapter so switching
+      // to "no chapter" doesn't leave an out-of-context banner.
+      loadError = null;
       return;
     }
     const my = ++refreshToken;
@@ -104,7 +107,9 @@
   /**
    * Format a UTC ISO date / datetime in the zone's timezone with a
    * stable `YYYY-MM-DD HH:mm` shape. See zone dashboard for the
-   * rationale (SSR-stable + locale-insensitive).
+   * rationale (SSR-stable + locale-insensitive). Duplicated from
+   * `routes/zone/dashboard/+page.svelte`; once a third caller lands
+   * this is a candidate for `packages/web/src/lib/format.ts`.
    */
   function fmtDateTime(iso: string, timeZone: string): string {
     const d = new Date(iso);
