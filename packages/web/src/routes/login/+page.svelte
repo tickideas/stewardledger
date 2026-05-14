@@ -40,11 +40,26 @@
    * password sign-in path and the TOTP verify path because both end
    * with "a fresh session cookie is set; figure out where to send
    * the user".
+   *
+   * Order is important: we call /session-zones FIRST so a missing
+   * session cookie (third-party-cookie blocking, cookie-domain
+   * misconfiguration) surfaces as a 401 here, rather than persisting
+   * a zone slug to localStorage that the next request can't act on.
+   * Only after a 2xx response do we commit the slug + force-reload
+   * the session store.
    */
   async function landAfterSignIn(): Promise<void> {
     const zonesRes = await fetch(`${PUBLIC_API_URL}/api/public/session-zones`, {
       credentials: "include",
     });
+    if (zonesRes.status === 401) {
+      // The Better Auth endpoint accepted the credentials but the
+      // session cookie didn't make it back. Almost always a cookie
+      // scope / SameSite issue on a split-host deployment.
+      throw new Error(
+        "Sign-in succeeded but the session cookie was not set. Check that the API and web origins can share cookies.",
+      );
+    }
     if (!zonesRes.ok) throw new Error("Could not load your zones.");
     const zonesBody = (await zonesRes.json()) as {
       items: Array<{
@@ -61,6 +76,10 @@
     if (!zoneSlug && !isSuperAdminFlag) {
       throw new Error("Your account is not linked to a zone.");
     }
+    // Persist + refresh only once we know the session actually
+    // landed. A stale slug from a prior session is preserved
+    // untouched on failure paths above so the next attempt isn't
+    // poisoned.
     if (zoneSlug) {
       localStorage.setItem(ACTIVE_ZONE_KEY, zoneSlug);
     }
@@ -279,7 +298,7 @@
               onclick={cancelMfa}
               disabled={submitting}
               class="text-[13px] text-[var(--ink-mute)] hover:text-[var(--ink)]"
-            >Start over</button>
+            >Cancel</button>
           </div>
         </form>
       {/if}
