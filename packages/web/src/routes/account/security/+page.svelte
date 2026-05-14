@@ -438,11 +438,13 @@
               <input
                 type="text"
                 inputmode="numeric"
-                pattern="[0-9]*"
+                pattern="[0-9]{6}"
                 autocomplete="one-time-code"
                 bind:value={verifyCode}
                 required
+                minlength={6}
                 maxlength={6}
+                title="Enter the 6-digit code from your authenticator app"
                 class="sl-input mt-2 sl-mono"
               />
             </label>

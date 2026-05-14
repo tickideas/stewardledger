@@ -268,11 +268,13 @@
             <input
               type="text"
               inputmode="numeric"
-              pattern="[0-9]*"
+              pattern="[0-9]{6}"
               autocomplete="one-time-code"
               required
+              minlength={6}
               maxlength={6}
               bind:value={totpCode}
+              title="Enter the 6-digit code from your authenticator app"
               class="sl-input sl-mono mt-2"
               placeholder="123456"
             />
