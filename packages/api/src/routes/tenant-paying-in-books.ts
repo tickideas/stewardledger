@@ -183,16 +183,47 @@ tenantPayingInBooksRouter.patch(
       );
     }
     // Service-level cross-validation: the resolved (after-patch)
-    // start/end pair must still satisfy `start <= end`. The DB
-    // CHECK is the canonical guard, but failing fast here gives a\n    // cleaner error envelope than a raw 500 on the constraint.
+    // start/end pair must still satisfy `start <= end`, and the
+    // resolved date window must still satisfy `dateTo >= dateFrom`
+    // (when dateTo is non-null). The DB CHECKs are the canonical
+    // guards, but failing fast here gives a cleaner error envelope
+    // than a raw 500 on the constraint.
     const nextStart = input.referenceCodeStart ?? existing.referenceCodeStart;
     const nextEnd = input.referenceCodeEnd ?? existing.referenceCodeEnd;
+    if (nextStart.length !== nextEnd.length) {
+      return c.json(
+        {
+          error: {
+            code: "invalid_range",
+            message:
+              "referenceCodeStart and referenceCodeEnd must be the same length after the patch.",
+          },
+        },
+        400,
+      );
+    }
     if (nextStart > nextEnd) {
       return c.json(
         {
           error: {
             code: "invalid_range",
             message: "referenceCodeStart must be <= referenceCodeEnd after the patch.",
+          },
+        },
+        400,
+      );
+    }
+    const nextDateFrom = input.dateFrom ?? existing.dateFrom;
+    // `dateTo` is nullable: an explicit `null` in the patch clears
+    // the close-out, an omitted key keeps the existing value.
+    const nextDateTo =
+      "dateTo" in input ? (input.dateTo ?? null) : existing.dateTo;
+    if (nextDateTo !== null && nextDateTo < nextDateFrom) {
+      return c.json(
+        {
+          error: {
+            code: "invalid_date_window",
+            message: "dateTo must be on or after dateFrom after the patch.",
           },
         },
         400,

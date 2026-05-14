@@ -206,6 +206,20 @@ describe("tenant paying-in-books routes", () => {
     expect(body.error.code).toBe("chapter_not_found");
   });
 
+  it("rejects mismatched-width start/end via the Zod schema (400)", async () => {
+    asUser(ownerA, "owner@example.com");
+    const res = await call(zoneA.slug, "/api/tenant/paying-in-books", {
+      method: "POST",
+      body: {
+        chapterId: chapterA1,
+        referenceCodeStart: "0001",
+        referenceCodeEnd: "100",
+        dateFrom: "2025-01-01",
+      },
+    });
+    expect(res.status).toBe(400);
+  });
+
   it("rejects start > end via the Zod schema (400)", async () => {
     asUser(ownerA, "owner@example.com");
     const res = await call(zoneA.slug, "/api/tenant/paying-in-books", {
@@ -306,6 +320,32 @@ describe("tenant paying-in-books routes", () => {
     };
     expect(patched.payingInBook.referenceCodeEnd).toBe("2200");
     expect(patched.payingInBook.dateTo).toBe("2025-12-31");
+  });
+
+  it("patch rejects a dateTo < existing dateFrom (invalid_date_window)", async () => {
+    asUser(ownerA, "owner@example.com");
+    const create = await call(zoneA.slug, "/api/tenant/paying-in-books", {
+      method: "POST",
+      body: {
+        chapterId: chapterA1,
+        referenceCodeStart: "7000",
+        referenceCodeEnd: "7100",
+        dateFrom: "2025-06-01",
+      },
+    });
+    const { payingInBook } = (await create.json()) as { payingInBook: { id: string } };
+    // Patch sends only dateTo — the merged window is
+    // dateFrom=2025-06-01 (existing) + dateTo=2025-01-01 (patch),
+    // which violates the date check. Without the after-merge guard
+    // this would surface as a 500 from the DB constraint.
+    const patch = await call(
+      zoneA.slug,
+      `/api/tenant/paying-in-books/${payingInBook.id}`,
+      { method: "PATCH", body: { dateTo: "2025-01-01" } },
+    );
+    expect(patch.status).toBe(400);
+    const body = (await patch.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("invalid_date_window");
   });
 
   it("patch rejects an end < existing-start (invalid_range)", async () => {
