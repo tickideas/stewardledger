@@ -3,7 +3,7 @@
 // Aggregates zone-wide stats (chapters, members, current-month and YTD
 // giving, top-5 chapters / partners, recent imports) into one payload
 // for the /zone/dashboard landing surface.
-// RELEVANT FILES: packages/api/src/routes/tenant-dashboard.ts, packages/api/src/services/reports/top-chapters.ts, packages/api/src/services/reports/import-reconciliation.ts, docs/REPORTS.md
+// RELEVANT FILES: packages/api/src/routes/tenant-dashboard.ts, packages/api/src/services/dashboards/calendar.ts, packages/api/src/services/dashboards/ranking.ts, packages/api/src/services/reports/import-reconciliation.ts
 
 import Decimal from "decimal.js";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
@@ -15,9 +15,25 @@ import {
   importJobs,
   importRows,
   members,
+  zones,
 } from "@stewardledger/db/schema";
 import type { Database } from "@stewardledger/db";
 import type { AuthorizedContext } from "@stewardledger/shared";
+import { monthBoundsInZone, yearBoundsInZone, type DateBounds } from "./calendar";
+import { rankByCurrency } from "./ranking";
+
+/** Subset of the `import_jobs.status` check constraint enum. */
+export type ImportJobStatus =
+  | "received"
+  | "parsing"
+  | "parsed"
+  | "matching"
+  | "matched"
+  | "scheduled"
+  | "committing"
+  | "committed"
+  | "failed"
+  | "rolled_back";
 
 export interface CurrencyTotal {
   currencyCode: string;
@@ -50,14 +66,27 @@ export interface DashboardTopPartner {
 export interface DashboardRecentImport {
   id: string;
   fileName: string;
-  status: string;
+  status: ImportJobStatus;
   createdAt: string; // ISO datetime
   postedCount: number;
   perCurrency: CurrencyTotal[];
 }
 
+/**
+ * Placeholder card for partnership progress (REPORTS.md §2.10). The
+ * card depends on Phase 8 financial targets; until those land, the
+ * dashboard ships the slot but flags it as unavailable. Keeping the
+ * shape stable now means the chapter-dashboard PR (and the eventual
+ * Phase 8 cut-over) don't have to evolve the response envelope.
+ */
+export interface DashboardPartnershipProgress {
+  available: false;
+  reason: string;
+}
+
 export interface ZoneDashboardPayload {
   asOf: string; // ISO datetime
+  timeZone: string;
   chapters: { total: number; active: number };
   members: { total: number; active: number; inactive: number };
   monthlyGiving: DashboardPeriodTotals;
@@ -65,6 +94,7 @@ export interface ZoneDashboardPayload {
   topChapters: DashboardTopChapter[];
   topPartners: DashboardTopPartner[];
   recentImports: DashboardRecentImport[];
+  partnershipProgress: DashboardPartnershipProgress;
 }
 
 const TOP_N = 5;
@@ -73,27 +103,34 @@ const RECENT_IMPORTS_N = 5;
 /**
  * Build the zone dashboard payload. The caller must be a zone-wide
  * reader; the route handler does the gate. Money is always grouped by
- * currency — DOMAIN-MODEL §6 forbids silent FX conversion.
+ * currency — DOMAIN-MODEL §6 forbids silent FX conversion. Calendar
+ * windows ("this month", "year to date") are evaluated in the zone's
+ * `default_time_zone` so a tenant 12h off UTC sees their own civil
+ * month rather than UTC's.
  */
 export async function buildZoneDashboard(
   database: Database,
   ctx: AuthorizedContext,
 ): Promise<ZoneDashboardPayload> {
+  // Resolve the zone's timezone first. Every subsequent query / bound
+  // computation depends on it, so doing this one round-trip ahead of
+  // the parallel fan-out is the right cost.
+  const timeZone = await loadZoneTimeZone(database, ctx.zoneId);
   const now = new Date();
-  const monthStart = isoDate(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)));
-  const monthEndExclusive = isoDate(
-    new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)),
-  );
-  const yearStart = isoDate(new Date(Date.UTC(now.getUTCFullYear(), 0, 1)));
-  const yearEndExclusive = isoDate(new Date(Date.UTC(now.getUTCFullYear() + 1, 0, 1)));
-  const monthEnd = isoDate(
-    new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)),
-  );
-  const yearEnd = `${now.getUTCFullYear()}-12-31`;
+  const month = monthBoundsInZone(now, timeZone);
+  const year = yearBoundsInZone(now, timeZone);
 
-  // All six aggregates are independent and zone-scoped; run them in
-  // parallel so the worst-case latency is a single round-trip across
-  // the pool rather than a sequential chain.
+  // Six remaining aggregates are independent and zone-scoped; run
+  // them in parallel so the worst-case latency is a single round-trip
+  // across the pool rather than a sequential chain.
+  //
+  // NOTE on top-chapters / top-partners: ranking and N-truncation
+  // happen in app code via `rankByCurrency`, not in SQL. Both surfaces
+  // are bounded by chapter/member counts (typically <10k rows) and
+  // the existing `top-chapters.ts` / `top-partners.ts` reports use
+  // the same pattern. Pushing into a SQL window function would be
+  // worth doing once but as a single sweep across all four call
+  // sites — tracked as a follow-up rather than in this PR.
   const [
     chapterCounts,
     memberCounts,
@@ -105,31 +142,51 @@ export async function buildZoneDashboard(
   ] = await Promise.all([
     countChapters(database, ctx.zoneId),
     countMembers(database, ctx.zoneId),
-    sumPostedByCurrency(database, ctx.zoneId, monthStart, monthEndExclusive),
-    sumPostedByCurrency(database, ctx.zoneId, yearStart, yearEndExclusive),
-    fetchTopChapters(database, ctx.zoneId, monthStart, monthEndExclusive),
-    fetchTopPartners(database, ctx.zoneId, monthStart, monthEndExclusive),
+    sumPostedByCurrency(database, ctx.zoneId, month),
+    sumPostedByCurrency(database, ctx.zoneId, year),
+    fetchTopChapters(database, ctx.zoneId, month),
+    fetchTopPartners(database, ctx.zoneId, month),
     fetchRecentImports(database, ctx.zoneId),
   ]);
 
   return {
     asOf: now.toISOString(),
+    timeZone,
     chapters: chapterCounts,
     members: memberCounts,
     monthlyGiving: {
-      periodStart: monthStart,
-      periodEnd: monthEnd,
+      periodStart: month.start,
+      periodEnd: month.end,
       perCurrency: monthlyPerCurrency,
     },
     yearToDateGiving: {
-      periodStart: yearStart,
-      periodEnd: yearEnd,
+      periodStart: year.start,
+      periodEnd: year.end,
       perCurrency: ytdPerCurrency,
     },
     topChapters: topChaptersList,
     topPartners: topPartnersList,
     recentImports: recentImportsList,
+    partnershipProgress: {
+      available: false,
+      reason: "Pending Phase 8 financial targets.",
+    },
   };
+}
+
+async function loadZoneTimeZone(database: Database, zoneId: string): Promise<string> {
+  const [row] = await database
+    .select({ defaultTimeZone: zones.defaultTimeZone })
+    .from(zones)
+    .where(eq(zones.id, zoneId))
+    .limit(1);
+  if (!row) {
+    // Tenant middleware would have rejected the request before we get
+    // here; surface a developer-visible error rather than render the
+    // payload with an arbitrary fallback timezone.
+    throw new Error(`zone ${zoneId} not found while loading dashboard`);
+  }
+  return row.defaultTimeZone;
 }
 
 async function countChapters(
@@ -165,8 +222,7 @@ async function countMembers(
 async function sumPostedByCurrency(
   database: Database,
   zoneId: string,
-  startInclusive: string,
-  endExclusive: string,
+  bounds: DateBounds,
 ): Promise<CurrencyTotal[]> {
   // Sum every line on a posted/reversed contribution in the window.
   // Reversal lines carry negative amounts (canonical invariant from
@@ -188,8 +244,8 @@ async function sumPostedByCurrency(
     .where(
       and(
         eq(contributions.zoneId, zoneId),
-        sql`${contributions.contributionDate} >= ${startInclusive}::date`,
-        sql`${contributions.contributionDate} < ${endExclusive}::date`,
+        sql`${contributions.contributionDate} >= ${bounds.start}::date`,
+        sql`${contributions.contributionDate} < ${bounds.endExclusive}::date`,
         sql`${contributions.status} in ('posted', 'reversed')`,
       ),
     )
@@ -203,8 +259,7 @@ async function sumPostedByCurrency(
 async function fetchTopChapters(
   database: Database,
   zoneId: string,
-  startInclusive: string,
-  endExclusive: string,
+  bounds: DateBounds,
 ): Promise<DashboardTopChapter[]> {
   const rows = await database
     .select({
@@ -229,45 +284,28 @@ async function fetchTopChapters(
     .where(
       and(
         eq(contributions.zoneId, zoneId),
-        sql`${contributions.contributionDate} >= ${startInclusive}::date`,
-        sql`${contributions.contributionDate} < ${endExclusive}::date`,
+        sql`${contributions.contributionDate} >= ${bounds.start}::date`,
+        sql`${contributions.contributionDate} < ${bounds.endExclusive}::date`,
         sql`${contributions.status} in ('posted', 'reversed')`,
       ),
     )
     .groupBy(chapters.id, chapters.referenceCode, chapters.name, contributionLines.currencyCode);
-
-  // Rank per currency, take top N per currency. A multi-currency zone
-  // therefore sees parallel lists; the UI renders them in currency-
-  // sorted order so the layout is deterministic.
-  const byCurrency = new Map<string, DashboardTopChapter[]>();
-  for (const r of rows) {
-    const total = new Decimal(r.total);
-    if (total.isZero()) continue;
-    const entry: DashboardTopChapter = {
+  return rankByCurrency<DashboardTopChapter>(
+    rows.map((r) => ({
       id: r.id,
       referenceCode: r.referenceCode,
       name: r.name,
       currencyCode: r.currencyCode,
-      total: total.toFixed(4),
-    };
-    const list = byCurrency.get(r.currencyCode) ?? [];
-    list.push(entry);
-    byCurrency.set(r.currencyCode, list);
-  }
-  const out: DashboardTopChapter[] = [];
-  for (const currencyCode of Array.from(byCurrency.keys()).sort()) {
-    const list = byCurrency.get(currencyCode)!;
-    list.sort((a, b) => new Decimal(b.total).comparedTo(new Decimal(a.total)));
-    out.push(...list.slice(0, TOP_N));
-  }
-  return out;
+      total: new Decimal(r.total).toFixed(4),
+    })),
+    TOP_N,
+  );
 }
 
 async function fetchTopPartners(
   database: Database,
   zoneId: string,
-  startInclusive: string,
-  endExclusive: string,
+  bounds: DateBounds,
 ): Promise<DashboardTopPartner[]> {
   const rows = await database
     .select({
@@ -300,8 +338,8 @@ async function fetchTopPartners(
       and(
         eq(contributions.zoneId, zoneId),
         isNull(members.deletedAt),
-        sql`${contributions.contributionDate} >= ${startInclusive}::date`,
-        sql`${contributions.contributionDate} < ${endExclusive}::date`,
+        sql`${contributions.contributionDate} >= ${bounds.start}::date`,
+        sql`${contributions.contributionDate} < ${bounds.endExclusive}::date`,
         sql`${contributions.status} in ('posted', 'reversed')`,
         sql`${contributions.memberId} is not null`,
       ),
@@ -315,35 +353,21 @@ async function fetchTopPartners(
       chapters.referenceCode,
       contributionLines.currencyCode,
     );
-
-  const byCurrency = new Map<string, DashboardTopPartner[]>();
-  for (const r of rows) {
-    const total = new Decimal(r.total);
-    if (total.isZero()) continue;
-    const name =
-      r.fullName ??
-      (r.firstName || r.lastName
-        ? `${r.firstName ?? ""} ${r.lastName ?? ""}`.trim()
-        : r.referenceCode);
-    const entry: DashboardTopPartner = {
+  return rankByCurrency<DashboardTopPartner>(
+    rows.map((r) => ({
       id: r.memberId,
       referenceCode: r.referenceCode,
-      name,
+      name:
+        r.fullName ??
+        (r.firstName || r.lastName
+          ? `${r.firstName ?? ""} ${r.lastName ?? ""}`.trim()
+          : r.referenceCode),
       chapterReferenceCode: r.chapterReferenceCode,
       currencyCode: r.currencyCode,
-      total: total.toFixed(4),
-    };
-    const list = byCurrency.get(r.currencyCode) ?? [];
-    list.push(entry);
-    byCurrency.set(r.currencyCode, list);
-  }
-  const out: DashboardTopPartner[] = [];
-  for (const currencyCode of Array.from(byCurrency.keys()).sort()) {
-    const list = byCurrency.get(currencyCode)!;
-    list.sort((a, b) => new Decimal(b.total).comparedTo(new Decimal(a.total)));
-    out.push(...list.slice(0, TOP_N));
-  }
-  return out;
+      total: new Decimal(r.total).toFixed(4),
+    })),
+    TOP_N,
+  );
 }
 
 async function fetchRecentImports(
@@ -429,14 +453,10 @@ async function fetchRecentImports(
     return {
       id: j.id,
       fileName: j.fileName,
-      status: j.status,
+      status: j.status as ImportJobStatus,
       createdAt: j.createdAt.toISOString(),
       postedCount: postedIdsByJob.get(j.id)?.size ?? 0,
       perCurrency,
     };
   });
-}
-
-function isoDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
 }
