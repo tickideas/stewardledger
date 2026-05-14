@@ -56,8 +56,17 @@ tenantDashboardRouter.get("/dashboard/chapter/:chapterId", async (c) => {
     c.header("cache-control", "no-store");
     return c.json(payload);
   } catch (err) {
-    if (err instanceof ChapterDashboardError && err.code === "chapter_not_found") {
-      return c.json({ error: { code: "not_found", message: err.message } }, 404);
+    if (err instanceof ChapterDashboardError) {
+      // Exhaustive switch so a future error code added to the union
+      // surfaces here as a TS error rather than silently re-thrown.
+      switch (err.code) {
+        case "chapter_not_found":
+          return c.json({ error: { code: "not_found", message: err.message } }, 404);
+        default: {
+          const _exhaustive: never = err.code;
+          void _exhaustive;
+        }
+      }
     }
     throw err;
   }
