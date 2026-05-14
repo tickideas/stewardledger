@@ -35,8 +35,10 @@
     postedCount: number;
     perCurrency: CurrencyTotal[];
   };
+  type PartnershipProgress = { available: false; reason: string };
   type Payload = {
     asOf: string;
+    timeZone: string;
     chapters: { total: number; active: number };
     members: { total: number; active: number; inactive: number };
     monthlyGiving: DashboardPeriod;
@@ -44,13 +46,16 @@
     topChapters: TopChapter[];
     topPartners: TopPartner[];
     recentImports: RecentImport[];
+    partnershipProgress: PartnershipProgress;
   };
 
   let data = $state<Payload | null>(null);
+  let loading = $state(true);
   let loadError = $state<string | null>(null);
 
   $effect(() => {
     const controller = new AbortController();
+    loading = true;
     api
       .get<Payload>("/api/tenant/dashboard/zone", controller.signal)
       .then((res) => {
@@ -59,12 +64,29 @@
       .catch((err) => {
         if (isAbortError(err)) return;
         loadError = err instanceof ApiError ? err.message : "Could not load dashboard.";
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) loading = false;
       });
     return () => controller.abort();
   });
 
   function fmt(t: CurrencyTotal): string {
     return formatMoney(money(t.total, t.currencyCode));
+  }
+
+  /**
+   * Format a UTC ISO datetime as `YYYY-MM-DD HH:mm` without leaning on
+   * `Intl.DateTimeFormat` defaults. Locale-sensitive `toLocaleString`
+   * would diverge across SSR / CSR if this page ever moves to
+   * `+page.server.ts`; sticking to a fixed format keeps both paths
+   * stable and matches the dashboard's other ISO date displays.
+   */
+  function fmtDateTime(iso: string): string {
+    const d = new Date(iso);
+    if (Number.isNaN(d.valueOf())) return iso;
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;
   }
 </script>
 
@@ -84,6 +106,19 @@
 
   {#if loadError}
     <p class="mt-6 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{loadError}</p>
+  {/if}
+
+  {#if loading && !data}
+    <!-- Skeleton placeholder so the first paint isn't an empty body. -->
+    <div class="sl-reveal sl-reveal-2 mt-10 grid grid-cols-2 gap-0 border-y border-[var(--rule)] bg-[var(--card)] md:grid-cols-4" aria-busy="true">
+      {#each Array(4) as _, i (i)}
+        <div class="px-6 py-7 {i < 3 ? 'border-r border-[var(--rule)]' : ''}">
+          <span class="sl-eyebrow">Loading…</span>
+          <div class="mt-3 sl-display sl-num text-[44px] leading-none text-[var(--ink-faint)]">—</div>
+          <p class="mt-2 text-[12px] text-[var(--ink-faint)]">&nbsp;</p>
+        </div>
+      {/each}
+    </div>
   {/if}
 
   {#if data}
@@ -243,7 +278,7 @@
               <tr class="border-t border-[var(--rule)]">
                 <td class="py-2 pr-2 text-[var(--ink)]">{job.fileName}</td>
                 <td class="py-2 pr-2 text-[var(--ink-mute)]">
-                  {new Date(job.createdAt).toLocaleString()}
+                  {fmtDateTime(job.createdAt)}
                 </td>
                 <td class="py-2 pr-2">
                   <span class="sl-badge {job.status === 'committed' ? 'sl-badge-accent' : ''}">
@@ -268,7 +303,7 @@
     </div>
 
     <p class="sl-reveal sl-reveal-5 mt-10 text-[11px] text-[var(--ink-faint)]">
-      Generated {new Date(data.asOf).toLocaleString()}
+      Generated {fmtDateTime(data.asOf)} · zone TZ {data.timeZone}
     </p>
   {/if}
 </div>
