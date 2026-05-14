@@ -307,7 +307,7 @@ Exit checklist:
 
 Deliverables:
 
-- Per-zone audit search.
+- Per-zone audit search. *(UI landed at `/zone/audit`; reuses `/api/tenant/reports/audit-log/data` so search + Excel/PDF export stay aligned. Admin-only — zone owner / admin / finance admin; viewer + chapter roles denied. See `packages/web/src/routes/zone/audit/+page.svelte` and the access predicate at `packages/web/src/lib/audit/access.ts`.)*
 - Per-zone data export bundle (Postgres dump + uploaded files + reports archive).
 - Retention configuration.
 - GDPR data subject request workflow (export and erase).
@@ -315,6 +315,7 @@ Deliverables:
 
 Exit checklist:
 
+- [x] Audit search surface is live at `/zone/audit` for admin-tier roles, with date / actor / action / entity filters and inline before/after JSON expansion.
 - [ ] An exported bundle contains every record for that zone and is independently restorable.
 - [ ] An "erase" request can be applied with full audit and reversibility window.
 - [ ] MFA can be enforced at the role level.
