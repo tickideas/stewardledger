@@ -15,6 +15,7 @@
 - Soft-delete: `deleted_at timestamptz null` on entities that allow it (members soft-delete; contributions are NOT soft-deleted — they are voided/reversed).
 - Audit columns (where applicable): `created_at`, `created_by_user_id`, `updated_at`, `updated_by_user_id`.
 - Multi-tenancy: every domain table has `zone_id uuid not null references zones(id)`. The **zone is the tenant**.
+- Composite cross-tenant FK pattern: every domain table also carries a `UNIQUE(zone_id, id)` constraint. The constraint is technically redundant against the primary key on `id` alone, but it's the **referenced** end of the composite `FOREIGN KEY (zone_id, child_id) REFERENCES (zone_id, id)` pattern that prevents cross-tenant references at the database level. Without it, Postgres rejects the composite FK because the referenced columns aren't a unique key as a pair. Don't drop these.
 - Chapter scoping: every chapter-bound table has `chapter_id uuid not null references chapters(id)`.
 - Region denormalization: most domain tables also carry `region_id uuid null references regions(id)` for fast region-aware reports. A region change at zone level fans out via a maintenance job.
 - Naming: `snake_case`, plural table names.
