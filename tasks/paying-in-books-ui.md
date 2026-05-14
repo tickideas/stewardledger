@@ -42,11 +42,15 @@ pads).
 - `packages/web/src/routes/zone/paying-in-books/+page.svelte` —
   new page.
 - `packages/web/src/lib/nav.ts` — sidebar entry under "Giving".
-- `packages/web/src/routes/zone/paying-in-books/page.test.ts`
-  — happy-path component test (form submit, list refresh,
-  edit flow, delete confirm). Optional — defer if the existing
-  Phase-7 reports surface doesn't have analogous component
-  tests.
+- `packages/web/src/lib/paying-in-books/access.ts` +
+  `access.test.ts` — extracts the role-aware write predicate
+  (zone-write roles, chapter-admin scope, treasurer = false)
+  into a lib module with happy + rejection-path coverage.
+  Component-level tests for the Svelte page itself are deferred
+  until the web package picks up a Svelte component testing
+  pattern; the lib unit tests satisfy AGENTS.md's
+  happy-+-rejection-path requirement for the new feature's
+  testable logic.
 
 ## Acceptance
 
