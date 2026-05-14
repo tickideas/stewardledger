@@ -228,10 +228,10 @@ Deliverables (full list in [`REPORTS.md`](REPORTS.md)):
 - Member finance summary (range; pivot by giving type). *(Excel landed.)*
 - Giving by chapter / zone / period / category / giving type (PIVOT in app code). *(Excel landed; pivots by giving type, category, or month with optional ministry / partnership year clamps.)*
 - General ledger (giving). *(Excel landed; flat line-level ledger with chapter / account / giving type / payment method / source filters.)*
+- Envelope ledger. *(Excel landed; one row per posted envelope contribution with rolled-up line breakdown.)*
 - Top partners, top chapters. *(queued)*
 - Partnership progress. *(queued; depends on Phase 8 targets)*
 - Weekly finance report. *(queued)*
-- Envelope ledger. *(queued)*
 - Online giving ledger. *(queued)*
 - Statement import reconciliation report. *(PR-1: Excel landed.)*
 - Member list (active, by chapter, by status). *(PR-1: Excel landed.)*
@@ -256,7 +256,8 @@ Audited implementation status (2026-05-13):
 - [x] Member list data + Excel export are implemented and tested (`member-list.ts`, `reports.test.ts`).
 - [x] Giving by chapter (PIVOT by giving type / category / month) data + Excel export are implemented and tested (`giving-by-chapter.ts`, `reports.test.ts`).
 - [x] General ledger (giving) data + Excel export are implemented and tested (`general-ledger.ts`, `reports.test.ts`).
-- [ ] Weekly finance report, envelope ledger, online giving ledger, top partners, top chapters, audit log report, dashboards is the next unimplemented batch.
+- [x] Envelope ledger data + Excel export are implemented and tested (`envelope-ledger.ts`, `reports.test.ts`).
+- [ ] Weekly finance report, online giving ledger, top partners, top chapters, audit log report, dashboards is the next unimplemented batch.
 - [ ] PDF export infrastructure and per-report PDF renderers.
 - [ ] Saved filters.
 - [ ] Background `report.generate` worker + object-storage retention for large exports.

@@ -104,6 +104,12 @@
       "paymentMethodId",
       "sourceType",
     ],
+    "envelope-ledger": [
+      "dateFrom",
+      "dateTo",
+      "chapterId",
+      "memberId",
+    ],
   };
   const visible = $derived(SHAPES[reportId] ?? []);
 
