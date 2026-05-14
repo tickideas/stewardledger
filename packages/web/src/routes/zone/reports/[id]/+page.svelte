@@ -151,6 +151,11 @@
       "dateTo",
       "chapterId",
     ],
+    "partnership-progress": [
+      "ministryYearId",
+      "chapterId",
+      "givingTypeId",
+    ],
   };
   // Reports that hard-restrict source-type to a subset of the full
   // enum surface only their valid options. Server-side schemas

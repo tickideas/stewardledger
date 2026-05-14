@@ -129,13 +129,13 @@
 
 ### 2.10 Partnership progress
 
-**Status**: Queued. Depends on Phase 8 financial targets.
+**Status**: Done. `packages/api/src/services/reports/partnership-progress.ts`. Consumes `financial_targets` joined with the partnership-tagged giving types.
 
-- **Filters**: zone, chapter, ministry year, giving type with `has_partnership_target = true`.
-- **Columns**: target, achieved, % progress, weekly / monthly breakdown vs actual, projected end-of-year.
-- **Export**: Excel, PDF.
-- **Legacy mapping**: `Givings_All_PartnershipByCategory`, `Givings_All_PartnershipByChurchGroup`, `Givings_All_MemberPartnershipBreakdownByMonth_PIVOT`.
-- **Acceptance**: matches legacy values; chart shows weekly progression.
+- **Filters**: ministry year (required), chapter (optional), giving type (optional, partnership-tagged types only).
+- **Columns**: chapter, giving type, ministry year, currency, target, monthly target, weekly target, achieved (posted+reversed lines in the ministry-year window), % progress, weekly average actual, monthly average actual, projected end-of-year, target copies, number of partners.
+- **Export**: Excel + PDF.
+- **Legacy mapping**: `Givings_All_PartnershipByCategory`, `Givings_All_PartnershipByChurchGroup`. (`MemberPartnershipBreakdownByMonth_PIVOT` is a separate member-level pivot deferred to a follow-up.)
+- **Acceptance**: hand-curated dataset in `reports.test.ts` covers target vs achieved math, zone-wide vs chapter-scoped aggregation, reversal-nets-to-zero invariant, partnership-type-only filter, and chapter clamp.
 
 ### 2.11 Statement import reconciliation
 

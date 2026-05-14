@@ -270,7 +270,7 @@ Audited implementation status (2026-05-13):
 
 Exit checklist:
 
-- [ ] Each v1 report ties out against a hand-curated test dataset. *(member-statement, member-finance-summary, import-reconciliation, member-list, giving-by-chapter, general-ledger, envelope-ledger, online-giving-ledger, top-partners, top-chapters, audit-log, weekly-finance all covered in `reports.test.ts`; partnership progress remains queued on Phase 8 targets.)*
+- [x] Each v1 report ties out against a hand-curated test dataset. *(All 14 v1 reports — member-statement, member-finance-summary, import-reconciliation, member-list, giving-by-chapter, general-ledger, envelope-ledger, online-giving-ledger, top-partners, top-chapters, audit-log, weekly-finance, partnership-progress — covered in `reports.test.ts`.)*
 - [x] All exports work in Excel and PDF. *(Generic `pdfkit`-based renderer at `services/reports/pdf/branded-table.ts` backs every shipped report; bespoke letter-style layouts are tracked separately on the Playwright follow-up.)*
 - [ ] Reports of >100k rows stream/paginate, never time out. *(queued; the registry shape supports paginated `fetch` already.)*
 - [x] Multi-currency reports show per-currency subtotals (no silent FX). *(`CurrencySubtotal[]` returned by every spec; reports never call `addMoney` across currencies.)*
@@ -291,7 +291,7 @@ Audited implementation status:
 
 - [x] `financial_targets` schema + Drizzle migration (`0004_little_mad_thinker.sql`) with partial unique indexes for chapter-scoped vs zone-wide rows + non-negative money / count CHECKs.
 - [x] Tenant API `/api/tenant/targets` with role-aware read/write (zone finance admin or chapter admin only writes; treasurers read but cannot write).
-- [ ] Partnership-progress report (REPORTS.md §2.10) — next PR.
+- [x] Partnership-progress report (REPORTS.md §2.10, `services/reports/partnership-progress.ts`) — consumes `financial_targets` joined with partnership-tagged giving types; Excel + PDF auto-render via the established renderers.
 - [ ] Paying-in books schema + reference-code range validation at contribution-entry time.
 - [ ] UI: target setup screen, partnership-progress dashboard.
 
