@@ -85,6 +85,14 @@ export interface ReportSpec<F, R, S extends ZodTypeAny = ZodTypeAny> {
   ): Promise<ReportFetchResult<R>>;
   /** Columns. May depend on filters (e.g. PIVOT reports). */
   columns(filters: F): ReportColumn[];
+  /**
+   * Human-readable one-line summary of the active filters, stamped
+   * onto Excel + PDF headers. Optional — the route layer falls back
+   * to a generic key-value join when omitted. Spec authors override
+   * for friendlier output (e.g. "Period 2025-01-01 → 2025-12-31
+   * • Chapter Trinity" instead of "dateFrom: 2025-01-01 • …").
+   */
+  filterSummary?(filters: F): string;
   /** Render to Excel. */
   excel(
     rows: R[],
@@ -99,12 +107,16 @@ export interface ReportSpec<F, R, S extends ZodTypeAny = ZodTypeAny> {
    * which produces a respectable letter-format PDF for any tabular
    * report. Override only when the report needs a bespoke layout
    * (e.g. a letter-style member statement once that ships).
+   *
+   * Receives the resolved column projection so a bespoke renderer
+   * doesn't have to re-derive it from `filters`.
    */
   pdf?(
     rows: R[],
     subtotals: CurrencySubtotal[] | undefined,
     filters: F,
     branding: ReportBranding,
+    columns: ReportColumn[],
     extras?: ReportFetchResult<R>["meta"],
   ): Promise<Uint8Array>;
   /**
