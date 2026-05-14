@@ -2,6 +2,7 @@
 // Phase 7 — central registry of reports. Adding a new report means
 // implementing a `ReportSpec` and pushing it here.
 
+import { auditLogReport } from "./audit-log";
 import { envelopeLedgerReport } from "./envelope-ledger";
 import { generalLedgerReport } from "./general-ledger";
 import { givingByChapterReport } from "./giving-by-chapter";
@@ -31,6 +32,7 @@ const REGISTRY: Array<ReportSpec<unknown, unknown>> = [
   topChaptersReport as unknown as ReportSpec<unknown, unknown>,
   importReconciliationReport as unknown as ReportSpec<unknown, unknown>,
   memberListReport as unknown as ReportSpec<unknown, unknown>,
+  auditLogReport as unknown as ReportSpec<unknown, unknown>,
 ];
 
 const REGISTRY_BY_ID = new Map<string, ReportSpec<unknown, unknown>>(
