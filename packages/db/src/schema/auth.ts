@@ -4,7 +4,7 @@
 // `twoFactor`).
 // We add a thin StewardLedger-specific layer in roles.ts (user_role_bindings).
 
-import { boolean, index, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 // ─── User ─────────────────────────────────────────────
 // Global user identity. A user can belong to many zones via user_role_bindings.
@@ -103,7 +103,15 @@ export const twoFactor = pgTable(
      */
     verified: boolean("verified").notNull().default(false),
   },
-  (table) => [index("two_factor_user_id_idx").on(table.userId)],
+  /**
+   * One row per user. The plugin's `enable` flow does `deleteMany`
+   * then `create` keyed on `userId`, and `findOne` lookups are
+   * non-deterministic if duplicates exist (e.g. a retried `create`
+   * after a transient network blip). Unique enforces the invariant
+   * at the DB level so a malformed direct insert or a future plugin
+   * regression cannot poison the read path.
+   */
+  (table) => [uniqueIndex("two_factor_user_id_unique_idx").on(table.userId)],
 );
 
 export type User = typeof user.$inferSelect;
