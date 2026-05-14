@@ -100,6 +100,31 @@ export function yearBoundsInZone(at: Date, timeZone: string): DateBounds {
   return { start, end, endExclusive };
 }
 
+/**
+ * Half-open ISO-week bounds (Monday → Sunday) for the week containing
+ * `at` in `timeZone`. The chapter dashboard's "this week" card uses
+ * this so a Sunday-evening UTC check from Auckland doesn't roll into
+ * "next week" because of the timezone shift.
+ *
+ * Week numbering follows ISO-8601: weeks start on Monday. Sunday
+ * evenings therefore land on the day before the next week begins
+ * (correct for the legacy reports too, which key off ISO weeks).
+ */
+export function weekBoundsInZone(at: Date, timeZone: string): DateBounds {
+  const { year, month, day } = partsInZone(at, timeZone);
+  // Compute the JS weekday (0=Sun..6=Sat) for the civil date by
+  // anchoring to a UTC instant at noon on that date — noon is far
+  // enough from any TZ shift to be safe across DST transitions.
+  const anchor = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+  const jsDow = anchor.getUTCDay(); // 0=Sun..6=Sat
+  // ISO weekday: 1=Mon..7=Sun. Days to subtract to reach Monday.
+  const isoDow = jsDow === 0 ? 7 : jsDow;
+  const start = shiftIsoDateByDays(isoDate(year, month, day), -(isoDow - 1));
+  const endExclusive = shiftIsoDateByDays(start, 7);
+  const end = shiftIsoDateByDays(endExclusive, -1);
+  return { start, end, endExclusive };
+}
+
 function isoDate(year: number, month: number, day: number): string {
   const m = String(month).padStart(2, "0");
   const d = String(day).padStart(2, "0");

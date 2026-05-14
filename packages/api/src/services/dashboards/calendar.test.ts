@@ -7,7 +7,7 @@
 // RELEVANT FILES: packages/api/src/services/dashboards/calendar.ts, packages/api/src/services/dashboards/zone-dashboard.ts
 
 import { describe, expect, it } from "vitest";
-import { monthBoundsInZone, yearBoundsInZone } from "./calendar";
+import { monthBoundsInZone, weekBoundsInZone, yearBoundsInZone } from "./calendar";
 
 describe("monthBoundsInZone", () => {
   it("returns the civil month containing `at` in the given timezone", () => {
@@ -79,6 +79,39 @@ describe("monthBoundsInZone error paths", () => {
 
   it("throws RangeError for an empty timezone string", () => {
     expect(() => monthBoundsInZone(new Date("2025-05-15T12:00:00Z"), "")).toThrow(RangeError);
+  });
+});
+
+describe("weekBoundsInZone", () => {
+  it("returns Monday→Sunday for a midweek instant", () => {
+    // Wednesday 2025-05-14.
+    const at = new Date("2025-05-14T12:00:00Z");
+    expect(weekBoundsInZone(at, "Europe/London")).toEqual({
+      start: "2025-05-12",
+      end: "2025-05-18",
+      endExclusive: "2025-05-19",
+    });
+  });
+
+  it("keeps Sunday in the previous Monday's week", () => {
+    // Sunday 2025-05-18 — still part of the week starting 2025-05-12.
+    const at = new Date("2025-05-18T12:00:00Z");
+    expect(weekBoundsInZone(at, "Europe/London")).toEqual({
+      start: "2025-05-12",
+      end: "2025-05-18",
+      endExclusive: "2025-05-19",
+    });
+  });
+
+  it("rolls forward when Monday begins in the tenant TZ", () => {
+    // 2025-05-18 23:30 UTC is Monday 2025-05-19 11:30 in Auckland
+    // (UTC+12 in winter). The Auckland week starts on the 19th.
+    const at = new Date("2025-05-18T23:30:00Z");
+    expect(weekBoundsInZone(at, "Pacific/Auckland")).toEqual({
+      start: "2025-05-19",
+      end: "2025-05-25",
+      endExclusive: "2025-05-26",
+    });
   });
 });
 
