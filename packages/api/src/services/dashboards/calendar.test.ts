@@ -70,6 +70,18 @@ describe("monthBoundsInZone", () => {
   });
 });
 
+describe("monthBoundsInZone error paths", () => {
+  it("throws RangeError for an invalid IANA timezone", () => {
+    expect(() => monthBoundsInZone(new Date("2025-05-15T12:00:00Z"), "Not/AZone")).toThrow(
+      RangeError,
+    );
+  });
+
+  it("throws RangeError for an empty timezone string", () => {
+    expect(() => monthBoundsInZone(new Date("2025-05-15T12:00:00Z"), "")).toThrow(RangeError);
+  });
+});
+
 describe("yearBoundsInZone", () => {
   it("returns the civil year containing `at` in the given timezone", () => {
     const at = new Date("2025-07-04T12:00:00Z");

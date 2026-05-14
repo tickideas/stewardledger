@@ -5,6 +5,12 @@
 // in the tenant's own civil calendar. UTC math would silently slide
 // the window for a tenant 12h off UTC (Auckland, Honolulu), so we
 // resolve "now" in the zone's IANA TZ before extracting month / year.
+//
+// Scope note: this module computes *calendar boundaries* (month / year
+// edges) only. It is NOT a general date-arithmetic helper. "Past 7
+// days in tenant TZ" or "end of fiscal quarter" need DST-aware
+// interval arithmetic and should grow alongside the report that asks
+// for them rather than getting bolted on here.
 // RELEVANT FILES: packages/api/src/services/dashboards/zone-dashboard.ts, packages/db/src/schema/zones.ts
 
 /** Inclusive-start, exclusive-end half-open date range. */
@@ -20,20 +26,32 @@ export interface DateBounds {
 /**
  * Resolve the calendar parts (year / month / day) of `at` in the given
  * IANA timezone. Uses `Intl.DateTimeFormat` (Node-builtin, no
- * dependency). Throws if the timezone identifier is unknown — caller
- * is expected to pass `zones.defaultTimeZone`, which the zone schema
- * already constrains.
+ * dependency).
+ *
+ * `Intl.DateTimeFormat` is inconsistent about invalid IANA ids across
+ * Node versions: some throw at construction, some throw on
+ * `formatToParts`, and some silently fall back to UTC. To avoid a
+ * silent `0000-00-00` window in the latter case, we validate that
+ * every required part actually came back populated. The caller is
+ * expected to pass `zones.defaultTimeZone`, which onboarding
+ * constrains, but a stale or hand-edited value would surface here
+ * loudly instead of producing a phantom window.
  */
 function partsInZone(
   at: Date,
   timeZone: string,
 ): { year: number; month: number; day: number } {
-  const fmt = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
+  let fmt: Intl.DateTimeFormat;
+  try {
+    fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+  } catch (cause) {
+    throw new RangeError(`Invalid IANA timezone: ${timeZone}`, { cause });
+  }
   const parts = fmt.formatToParts(at);
   let year = 0;
   let month = 0;
@@ -42,6 +60,11 @@ function partsInZone(
     if (p.type === "year") year = Number(p.value);
     else if (p.type === "month") month = Number(p.value);
     else if (p.type === "day") day = Number(p.value);
+  }
+  if (!year || !month || !day) {
+    throw new RangeError(
+      `Could not resolve year/month/day in timezone ${timeZone}`,
+    );
   }
   return { year, month, day };
 }
