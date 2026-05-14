@@ -141,8 +141,10 @@ export async function createBatch(
     // the chapter on the batch's date. "Batch date" is the
     // attached service event's date when present, otherwise today
     // UTC — the same calendar a treasurer would use to look up
-    // an active pad.
-    if (input.referenceCode) {
+    // an active pad. We treat null and empty-string the same
+    // ("no code attached"); without the empty-string guard, a
+    // "" code would silently bypass the validator and persist.
+    if (input.referenceCode != null && input.referenceCode !== "") {
       const onDate = await resolveBatchValidationDate(
         tx,
         ctx.zoneId,
@@ -251,16 +253,19 @@ export async function updateDraftBatch(
       throw new ContributionError("payment_method_not_found", "Payment method not in this zone.");
     }
     // Re-validate the paying-in-book reference code on update. We
-    // only fire when the patch SETS a non-null code; clearing the
-    // code (\`null\`) is always allowed. The lookup date follows
-    // the patch's service event when set, otherwise the existing
-    // batch's service event, otherwise today.
-    if (patch.referenceCode) {
-      const onDate = await resolveBatchValidationDate(
-        tx,
-        ctx.zoneId,
-        patch.serviceEventId ?? existing.serviceEventId,
-      );
+    // only fire when the patch SETS a non-empty code; clearing the
+    // code (explicit `null` or an empty string) is always allowed.
+    // The lookup date follows the patch's service event when the
+    // key is supplied (including an explicit `null`, which clears
+    // the link); otherwise the existing batch's service event;
+    // otherwise today. Using "key supplied" semantics here matters
+    // because `?? existing.serviceEventId` would silently ignore
+    // an explicit `serviceEventId: null` and validate against the
+    // wrong date.
+    if (patch.referenceCode != null && patch.referenceCode !== "") {
+      const eventForDate =
+        "serviceEventId" in patch ? patch.serviceEventId ?? null : existing.serviceEventId;
+      const onDate = await resolveBatchValidationDate(tx, ctx.zoneId, eventForDate);
       try {
         await assertReferenceCodeInRange(tx, {
           zoneId: ctx.zoneId,
