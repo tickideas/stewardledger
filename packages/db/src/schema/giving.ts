@@ -17,6 +17,7 @@ import {
   unique,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { user } from "./auth";
 import { chapters } from "./chapters";
 import { givingPeriods } from "./periods";
 import { zones } from "./zones";
@@ -253,6 +254,60 @@ export const serviceEvents = pgTable(
   ],
 );
 
+/**
+ * Per-service-event attendance. Sibling 1:1 of `service_events`
+ * because attendance is per-occurrence and optional (a chapter that
+ * doesn't record attendance still has perfectly valid service
+ * events). The composite FK on `(zone_id, service_event_id)`
+ * preserves the cross-tenant boundary established elsewhere.
+ */
+export const serviceEventAttendance = pgTable(
+  "service_event_attendance",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    zoneId: text("zone_id")
+      .notNull()
+      .references(() => zones.id, { onDelete: "cascade" }),
+    serviceEventId: text("service_event_id").notNull(),
+    men: integer("men").notNull().default(0),
+    women: integer("women").notNull().default(0),
+    teens: integer("teens").notNull().default(0),
+    children: integer("children").notNull().default(0),
+    firstTimers: integer("first_timers").notNull().default(0),
+    newConverts: integer("new_converts").notNull().default(0),
+    notes: text("notes"),
+    recordedByUserId: text("recorded_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("service_event_attendance_zone_id_unique").on(table.zoneId, table.id),
+    // 1:1 with service_events at the (zone, event) grain.
+    uniqueIndex("service_event_attendance_event_unique").on(
+      table.zoneId,
+      table.serviceEventId,
+    ),
+    foreignKey({
+      name: "service_event_attendance_event_zone_fk",
+      columns: [table.zoneId, table.serviceEventId],
+      foreignColumns: [serviceEvents.zoneId, serviceEvents.id],
+    }).onDelete("cascade"),
+    check(
+      "service_event_attendance_nonneg",
+      sql`${table.men} >= 0
+          and ${table.women} >= 0
+          and ${table.teens} >= 0
+          and ${table.children} >= 0
+          and ${table.firstTimers} >= 0
+          and ${table.newConverts} >= 0`,
+    ),
+  ],
+);
+
 export type GivingCategory = typeof givingCategories.$inferSelect;
 export type Account = typeof accounts.$inferSelect;
 export type GivingType = typeof givingTypes.$inferSelect;
@@ -260,3 +315,5 @@ export type PaymentMethod = typeof paymentMethods.$inferSelect;
 export type GivingTypeAccount = typeof givingTypeAccounts.$inferSelect;
 export type ServiceType = typeof serviceTypes.$inferSelect;
 export type ServiceEvent = typeof serviceEvents.$inferSelect;
+export type ServiceEventAttendance = typeof serviceEventAttendance.$inferSelect;
+export type NewServiceEventAttendance = typeof serviceEventAttendance.$inferInsert;
