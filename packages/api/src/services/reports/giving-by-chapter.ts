@@ -5,7 +5,7 @@
 // RELEVANT FILES: packages/api/src/services/reports/member-finance-summary.ts, packages/api/src/services/reports/registry.ts, packages/api/src/services/reports/reports.test.ts, docs/REPORTS.md
 
 import Decimal from "decimal.js";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import ExcelJS from "exceljs";
 import type { Database } from "@stewardledger/db";
@@ -122,16 +122,19 @@ export const givingByChapterReport: ReportSpec<
     if (filters.partnershipYearId && !partnershipWindow) {
       throw new ReportError("not_found", "Partnership year not found.");
     }
-    const dateFrom = maxDate([filters.dateFrom, ministryWindow?.startDate, partnershipWindow?.startDate]);
-    const dateTo = minDate([filters.dateTo, ministryWindow?.endDate, partnershipWindow?.endDate]);
+    const dateFrom = maxDate(filters.dateFrom, ministryWindow?.startDate, partnershipWindow?.startDate);
+    const dateTo = minDate(filters.dateTo, ministryWindow?.endDate, partnershipWindow?.endDate);
     if (dateFrom > dateTo) {
       // The intersection is empty — return an empty result rather
       // than an error; this is a legitimate "no rows in window" case.
+      // `windowMismatch: true` lets the UI distinguish "no data in
+      // a valid window" from "your year filter doesn't overlap your
+      // date range" without changing the response shape.
       return {
         rows: [],
         columns: [...BASE_COLUMNS, { key: "total", label: "Total", kind: "money" }],
         subtotals: [],
-        meta: { pivotColumns: [] },
+        meta: { pivotColumns: [], windowMismatch: true },
       };
     }
 
@@ -186,17 +189,13 @@ export const givingByChapterReport: ReportSpec<
         members,
         and(eq(members.zoneId, contributions.zoneId), eq(members.id, contributions.memberId)),
       )
-      .where(
-        and(
-          ...conditions,
-          // Drop rows whose member was soft-deleted; preserves the
-          // "deleted members don't appear in reports" rule from
-          // ROADMAP.md Phase 3. The disjunction must be parenthesised
-          // so its `or` doesn't escape the surrounding AND-chain;
-          // wrap the raw sql in explicit parens.
-          sql`(${members.id} is null or ${members.deletedAt} is null)`,
-        ),
-      );
+      // Drop rows whose member was soft-deleted; preserves the
+      // "deleted members don't appear in reports" rule from
+      // ROADMAP.md Phase 3. A left-joined miss leaves `deletedAt`
+      // NULL too, so `isNull(deletedAt)` keeps both unjoined rows
+      // (anonymous contributions) and live members, while filtering
+      // out soft-deleted members. Avoids the raw-`sql` parens trap.
+      .where(and(...conditions, isNull(members.deletedAt)));
 
     // Resolve chapter labels in scope.
     const chapterIds = unique(lineRows.map((r) => r.chapterId));
@@ -231,9 +230,11 @@ export const givingByChapterReport: ReportSpec<
     const pivotKeyById = new Map(pivotCols.map((p) => [p.id, p.key] as const));
 
     // Aggregate into `(chapterId, currency)` rows × pivot columns.
+    // The map key already encodes the chapterId for any future use,
+    // so the row payload itself doesn't carry it.
     const rowKey = (chapterId: string, currencyCode: string) =>
       `${chapterId}|${currencyCode}`;
-    const rows = new Map<string, GivingByChapterRow & { _chapterId: string }>();
+    const rows = new Map<string, GivingByChapterRow>();
     const grand = new Map<string, Decimal>();
 
     for (const line of lineRows) {
@@ -250,18 +251,19 @@ export const givingByChapterReport: ReportSpec<
       if (!row) {
         const labels = chapterMap.get(line.chapterId) ?? { ref: null, name: null };
         row = {
-          _chapterId: line.chapterId,
           chapterReferenceCode: labels.ref,
           chapterName: labels.name,
           currencyCode: line.currencyCode,
           total: "0.0000",
         };
+        // Every pivot cell is initialised to 0.0000 here so the
+        // accumulator below can rely on the field being present.
         for (const col of pivotCols) row[col.key] = "0.0000";
         rows.set(key, row);
       }
 
       const amount = new Decimal(line.amount);
-      row[pivotKey] = new Decimal(row[pivotKey] ?? "0").plus(amount).toFixed(4);
+      row[pivotKey] = new Decimal(row[pivotKey] as string).plus(amount).toFixed(4);
       row.total = new Decimal(row.total).plus(amount).toFixed(4);
 
       const cur = grand.get(line.currencyCode) ?? new Decimal(0);
@@ -274,10 +276,6 @@ export const givingByChapterReport: ReportSpec<
       if (refA !== refB) return refA.localeCompare(refB);
       return a.currencyCode.localeCompare(b.currencyCode);
     });
-    // Drop the private chapterId before handing rows out.
-    for (const r of orderedRows) {
-      delete (r as Record<string, unknown>)._chapterId;
-    }
 
     const subtotals: CurrencySubtotal[] = Array.from(grand.entries())
       .sort(([a], [b]) => a.localeCompare(b))
@@ -375,7 +373,10 @@ export const givingByChapterReport: ReportSpec<
       key: col.key,
       width: col.kind === "money" ? 14 : 22,
     }));
-    sheet.getColumn(2).width = 26; // chapter name
+    // Resolve the wider "chapter name" column by key so a future
+    // reorder of BASE_COLUMNS doesn't silently widen the wrong cell.
+    const nameIdx = columns.findIndex((c) => c.key === "chapterName") + 1;
+    if (nameIdx > 0) sheet.getColumn(nameIdx).width = 26;
 
     const buf = await workbook.xlsx.writeBuffer();
     return new Uint8Array(buf as ArrayBuffer);
@@ -517,23 +518,25 @@ async function loadYearWindow(
   return row ?? null;
 }
 
-function maxDate(candidates: Array<string | null | undefined>): string {
-  let m: string | null = null;
-  for (const c of candidates) {
-    if (!c) continue;
-    if (m === null || c > m) m = c;
+// The required `base` argument expresses the invariant in the type
+// system: callers always have at least one date string, so the
+// return type can be `string` without a cast. ISO yyyy-mm-dd strings
+// compare lexicographically the same as chronologically, so plain
+// `>` / `<` is correct.
+function maxDate(base: string, ...optional: Array<string | null | undefined>): string {
+  let m = base;
+  for (const c of optional) {
+    if (c && c > m) m = c;
   }
-  // At least `filters.dateFrom` is always present, so `m` is never null.
-  return m as string;
+  return m;
 }
 
-function minDate(candidates: Array<string | null | undefined>): string {
-  let m: string | null = null;
-  for (const c of candidates) {
-    if (!c) continue;
-    if (m === null || c < m) m = c;
+function minDate(base: string, ...optional: Array<string | null | undefined>): string {
+  let m = base;
+  for (const c of optional) {
+    if (c && c < m) m = c;
   }
-  return m as string;
+  return m;
 }
 
 function unique<T>(items: T[]): T[] {

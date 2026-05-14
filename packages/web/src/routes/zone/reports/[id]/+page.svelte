@@ -43,7 +43,8 @@
   let runController: AbortController | null = null;
   let downloadController: AbortController | null = null;
 
-  // Filter form state — superset across the three PR-1 reports.
+  // Filter form state — superset across the registered reports. New
+  // filters land here as new state vars + a SHAPES entry below.
   // Date defaults are evaluated at module load; that's fine for a
   // session-bound page, but a tab kept open past midnight would carry
   // a stale `today`. The reset happens on the next reload either way,
