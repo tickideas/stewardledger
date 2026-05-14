@@ -232,6 +232,7 @@ describe("tenant reports routes", () => {
       "online-giving-ledger",
       "top-chapters",
       "top-partners",
+      "weekly-finance",
     ]);
   });
 
