@@ -55,9 +55,14 @@
   }
 
   // Auth-flow helper: every Better Auth two-factor endpoint is a POST
-  // under /api/auth/two-factor/. They consume `credentials: include` for
-  // the session cookie. We surface the response's `message` on failure
-  // for inline error rendering.
+  // under /api/auth/two-factor/. They consume `credentials: include`
+  // for the session cookie. We surface the response's `message` on
+  // failure for inline error rendering.
+  //
+  // SECURITY NOTE: the `enable` and `generate-backup-codes` responses
+  // carry one-shot secrets (TOTP URI + plaintext recovery codes). They
+  // are stored encrypted server-side, but the response body crosses
+  // the wire — do NOT log, telemeter, or persist these values.
   async function authFetch<T>(path: string, body: unknown): Promise<T> {
     const res = await fetch(`${PUBLIC_API_URL}/api/auth/two-factor/${path}`, {
       method: "POST",
@@ -155,12 +160,20 @@
     }
   }
 
-  function copyAll() {
-    if (typeof navigator === "undefined" || !navigator.clipboard) return;
-    navigator.clipboard.writeText(backupCodes.join("\n")).catch(() => {
-      // Permission denied — silent; codes are still visible on-screen.
-    });
-    setFlash("Recovery codes copied to clipboard.");
+  async function copyAll() {
+    if (typeof navigator === "undefined" || !navigator.clipboard) {
+      setFlash("Clipboard unavailable — copy the codes manually.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(backupCodes.join("\n"));
+      setFlash("Recovery codes copied to clipboard.");
+    } catch {
+      // Permission denied / iframe / Safari WebView. The codes are
+      // still visible below; surface a clear message instead of
+      // pretending the copy succeeded.
+      setFlash("Could not copy automatically. Select the codes and copy manually.");
+    }
   }
 </script>
 
@@ -238,6 +251,8 @@
               type="button"
               onclick={() => {
                 regenOpen = true;
+                disableOpen = false;
+                disablePassword = "";
                 errorMsg = null;
               }}
               class="sl-btn"
@@ -283,6 +298,8 @@
               type="button"
               onclick={() => {
                 disableOpen = true;
+                regenOpen = false;
+                regenPassword = "";
                 errorMsg = null;
               }}
               class="sl-btn"
@@ -466,7 +483,12 @@
             {flashMsg}
           </p>
         {/if}
-        <div class="mt-4 grid max-w-md grid-cols-2 gap-2 rounded-md border bg-[var(--paper-soft)] p-4">
+        <div
+          class="mt-4 grid max-w-md grid-cols-2 gap-2 rounded-md border bg-[var(--paper-soft)] p-4"
+          role="group"
+          aria-live="polite"
+          aria-label="Recovery codes — save before leaving this page"
+        >
           {#each backupCodes as code}
             <span class="sl-mono text-[13px] text-[var(--ink)]">{code}</span>
           {/each}
@@ -476,7 +498,7 @@
           <button
             type="button"
             onclick={() => {
-              step = enabled ? "idle" : "idle";
+              step = "idle";
               resetEnrollState();
             }}
             class="text-[13px] text-[var(--ink-mute)] hover:text-[var(--ink)]"
