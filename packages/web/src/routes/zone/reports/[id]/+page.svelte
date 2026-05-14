@@ -110,7 +110,21 @@
       "chapterId",
       "memberId",
     ],
+    "online-giving-ledger": [
+      "dateFrom",
+      "dateTo",
+      "chapterId",
+      "paymentMethodId",
+      "givingTypeId",
+      "accountId",
+      "sourceType",
+    ],
   };
+  // Reports that hard-restrict source-type to a subset of the full
+  // enum surface only their valid options. Server-side schemas
+  // still reject mismatched values, but it's nicer UX to not even
+  // show them.
+  const onlineOnlySource = $derived(reportId === "online-giving-ledger");
   const visible = $derived(SHAPES[reportId] ?? []);
 
   $effect(() => {
@@ -446,11 +460,16 @@
             class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
           >
             <option value="">All sources</option>
-            <option value="envelope">Envelope</option>
-            <option value="online">Online</option>
-            <option value="bank_import">Bank import</option>
-            <option value="oblation">Oblation</option>
-            <option value="manual">Manual</option>
+            {#if onlineOnlySource}
+              <option value="online">Online</option>
+              <option value="bank_import">Bank import</option>
+            {:else}
+              <option value="envelope">Envelope</option>
+              <option value="online">Online</option>
+              <option value="bank_import">Bank import</option>
+              <option value="oblation">Oblation</option>
+              <option value="manual">Manual</option>
+            {/if}
           </select>
         </label>
       {/if}

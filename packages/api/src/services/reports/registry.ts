@@ -9,6 +9,7 @@ import { importReconciliationReport } from "./import-reconciliation";
 import { memberFinanceSummaryReport } from "./member-finance-summary";
 import { memberListReport } from "./member-list";
 import { memberStatementReport } from "./member-statement";
+import { onlineGivingLedgerReport } from "./online-giving-ledger";
 import { ReportError, type ReportSpec } from "./types";
 
 /**
@@ -22,6 +23,7 @@ const REGISTRY: Array<ReportSpec<unknown, unknown>> = [
   memberFinanceSummaryReport as unknown as ReportSpec<unknown, unknown>,
   generalLedgerReport as unknown as ReportSpec<unknown, unknown>,
   envelopeLedgerReport as unknown as ReportSpec<unknown, unknown>,
+  onlineGivingLedgerReport as unknown as ReportSpec<unknown, unknown>,
   givingByChapterReport as unknown as ReportSpec<unknown, unknown>,
   importReconciliationReport as unknown as ReportSpec<unknown, unknown>,
   memberListReport as unknown as ReportSpec<unknown, unknown>,

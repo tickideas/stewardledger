@@ -228,6 +228,7 @@ describe("tenant reports routes", () => {
       "member-finance-summary",
       "member-list",
       "member-statement",
+      "online-giving-ledger",
     ]);
   });
 
