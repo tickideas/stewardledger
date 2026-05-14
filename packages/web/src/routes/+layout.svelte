@@ -50,6 +50,27 @@
     }
   });
 
+  /**
+   * Per-zone MFA enforcement. When any zone in the user's session
+   * reports `mfaRequired` (the user holds a role on the zone's
+   * required-role list AND has not enrolled MFA), force them to
+   * `/account/security?required=1` until enrolment completes. The
+   * security page itself is exempt so the user can actually finish.
+   *
+   * Mirrors the existing `no_zone` gate: we don't block sign-in,
+   * we redirect post-auth so the user keeps their session and has
+   * a clear remediation path.
+   */
+  $effect(() => {
+    if (session.current.status !== "authenticated") return;
+    const path = page.url.pathname;
+    if (path === "/account/security") return;
+    const enforced = session.current.zones.some((z) => z.mfaRequired);
+    if (enforced) {
+      goto("/account/security?required=1", { replaceState: true });
+    }
+  });
+
   const isAuthed = $derived(session.current.status === "authenticated");
   const dashboardHref = $derived.by(() => {
     const input = landingInputFor(session.current);
