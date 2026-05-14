@@ -35,11 +35,14 @@ describe("two-factor plugin", () => {
     }
   });
 
-  it("mounts /api/auth/two-factor/enable and rejects unauthenticated callers", async () => {
-    // No session cookie → Better Auth's session middleware rejects
-    // before the plugin handler runs. The route MUST be mounted, so
-    // we expect a 4xx (not a 404). A 404 here would mean the plugin
-    // isn't wired up.
+  it("mounts /api/auth/two-factor/enable and rejects unauthenticated callers with 401", async () => {
+    // The plugin endpoint declares `use: [sessionMiddleware]`, so a
+    // request without a session cookie short-circuits at 401 before
+    // the handler runs. Pinning to the exact status (rather than
+    // "any 4xx") means a future regression — e.g. an adapter
+    // bootstrap crash returning 500, or the route falling through
+    // to a 404 because the plugin failed to register — fails this
+    // test instead of sneaking through.
     const res = await app.fetch(
       new Request(`${URL}/api/auth/two-factor/enable`, {
         method: "POST",
@@ -47,9 +50,7 @@ describe("two-factor plugin", () => {
         body: JSON.stringify({ password: "irrelevant" }),
       }),
     );
-    expect(res.status).not.toBe(404);
-    expect(res.status).toBeGreaterThanOrEqual(400);
-    expect(res.status).toBeLessThan(500);
+    expect(res.status).toBe(401);
   });
 
   it("user.two_factor_enabled column exists and defaults to false", async () => {
