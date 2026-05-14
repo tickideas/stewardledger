@@ -387,4 +387,30 @@ describe("tenant reports routes", () => {
     );
     expect(res.status).toBe(403);
   });
+
+  it("audit-log denies an auditor read (admin-only report)", async () => {
+    // The audit-log report is admin-tier per REPORTS.md §2.13: viewer
+    // roles can read other reports on screen but cannot read this
+    // one at all. The route-level `canReadReports` gate passes (the
+    // auditor holds a zone read role), but the spec-level
+    // `accessCheck` returns "forbidden" because the auditor isn't on
+    // the admin allowlist.
+    asUser(auditorA, "auditor@example.com");
+    const params = new URLSearchParams({ dateFrom: today, dateTo: today });
+    const res = await get(
+      zoneA.slug,
+      `/api/tenant/reports/audit-log/data?${params.toString()}`,
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("audit-log allows an owner read", async () => {
+    asUser(ownerA, "owner@example.com");
+    const params = new URLSearchParams({ dateFrom: today, dateTo: today });
+    const res = await get(
+      zoneA.slug,
+      `/api/tenant/reports/audit-log/data?${params.toString()}`,
+    );
+    expect(res.status).toBe(200);
+  });
 });

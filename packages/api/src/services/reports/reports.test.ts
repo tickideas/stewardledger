@@ -2530,16 +2530,61 @@ describe("audit-log report", () => {
     expect(result.rows).toHaveLength(0);
   });
 
-  it("denies chapter-only callers via accessCheck", () => {
-    const chapterCtx: AuthorizedContext = {
+  it("denies non-admin callers via accessCheck (chapter + viewer roles)", () => {
+    const baseCtx: Omit<AuthorizedContext, "roleCodes"> = {
       userId: "u-stub",
       zoneId: "z-stub",
       regionId: null,
-      roleCodes: ["chapter_treasurer"],
       chapterIds: ["c-stub"],
       isPlatformAdmin: false,
     };
-    expect(auditLogReport.accessCheck?.(chapterCtx, wideFilters())).toBe("forbidden");
+    // Chapter-scoped role — no zone view at all.
+    expect(
+      auditLogReport.accessCheck?.(
+        { ...baseCtx, roleCodes: ["chapter_treasurer"] } satisfies AuthorizedContext,
+        wideFilters(),
+      ),
+    ).toBe("forbidden");
+    // Zone viewer tiers are also denied: REPORTS.md §2.13 marks this
+    // report admin-facing, and the trail itself is sensitive even
+    // read-only (it exposes who edited what / when across the zone).
+    expect(
+      auditLogReport.accessCheck?.(
+        {
+          ...baseCtx,
+          roleCodes: [ZONE_ROLES.ZONE_AUDITOR],
+          chapterIds: [],
+        } satisfies AuthorizedContext,
+        wideFilters(),
+      ),
+    ).toBe("forbidden");
+    expect(
+      auditLogReport.accessCheck?.(
+        {
+          ...baseCtx,
+          roleCodes: [ZONE_ROLES.ZONE_PASTOR_VIEWER],
+          chapterIds: [],
+        } satisfies AuthorizedContext,
+        wideFilters(),
+      ),
+    ).toBe("forbidden");
+    // Admin tiers pass.
+    for (const code of [
+      ZONE_ROLES.ZONE_OWNER,
+      ZONE_ROLES.ZONE_ADMIN,
+      ZONE_ROLES.ZONE_FINANCE_ADMIN,
+    ]) {
+      expect(
+        auditLogReport.accessCheck?.(
+          {
+            ...baseCtx,
+            roleCodes: [code],
+            chapterIds: [],
+          } satisfies AuthorizedContext,
+          wideFilters(),
+        ),
+      ).toBeNull();
+    }
   });
 
   it("isolates events across zones", async () => {
@@ -2559,6 +2604,34 @@ describe("audit-log report", () => {
 
     const result = await auditLogReport.fetch(db, zoneCtx(zoneA), wideFilters());
     expect(result.rows.some((r) => r.reason === "zone-B-only")).toBe(false);
+  });
+
+  it("soft-truncates oversized before/after JSON to the Excel cell limit", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    // 40k chars exceeds Excel's 32,767 cell limit; the JSON wrapper
+    // ("...") adds two more chars so the raw stringify lands well
+    // above the threshold.
+    const huge = "x".repeat(40_000);
+    await writeAudit(db, {
+      zoneId: zone.id,
+      actorUserId: zone.userId,
+      action: "member.update",
+      entityType: "member",
+      entityId: zone.memberIds[0],
+      after: { blob: huge },
+    });
+
+    const result = await auditLogReport.fetch(db, ctx, wideFilters());
+    const target = result.rows.find((r) => r.action === "member.update");
+    expect(target).toBeTruthy();
+    // The cell stays under the Excel limit and carries the truncation
+    // marker so a reader can tell the row was clipped.
+    expect(target!.after).not.toBeNull();
+    expect(target!.after!.length).toBeLessThan(33_000);
+    expect(target!.after).toMatch(/…\(truncated\)$/);
   });
 
   it("escapes formula-injection prefixes in reason", async () => {
