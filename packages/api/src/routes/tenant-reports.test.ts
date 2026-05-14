@@ -315,6 +315,45 @@ describe("tenant reports routes", () => {
     expect(bytes[1]).toBe(0x4b);
   });
 
+  it("allows an owner's pdf export and returns a PDF response", async () => {
+    asUser(ownerA, "owner@example.com");
+    const params = new URLSearchParams({
+      memberId: zoneA.memberId,
+      dateFrom: today,
+      dateTo: today,
+    });
+    const res = await get(
+      zoneA.slug,
+      `/api/tenant/reports/member-statement/export.pdf?${params.toString()}`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/pdf");
+    expect(res.headers.get("content-disposition")).toMatch(/attachment;.*\.pdf/);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    // PDF magic bytes are %PDF-.
+    expect(bytes[0]).toBe(0x25);
+    expect(bytes[1]).toBe(0x50);
+    expect(bytes[2]).toBe(0x44);
+    expect(bytes[3]).toBe(0x46);
+    expect(bytes[4]).toBe(0x2d);
+  });
+
+  it("rejects an auditor's pdf export with forbidden_export", async () => {
+    asUser(auditorA, "auditor@example.com");
+    const params = new URLSearchParams({
+      memberId: zoneA.memberId,
+      dateFrom: today,
+      dateTo: today,
+    });
+    const res = await get(
+      zoneA.slug,
+      `/api/tenant/reports/member-statement/export.pdf?${params.toString()}`,
+    );
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("forbidden_export");
+  });
+
   it("rejects a cross-tenant export attempt", async () => {
     asUser(ownerA, "owner@example.com");
     // Owner of A has no binding in B → 403 at requireTenantAuth.

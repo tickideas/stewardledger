@@ -4,6 +4,7 @@
 // GET  /api/tenant/reports                   list registered reports
 // GET  /api/tenant/reports/:id/data          fetch rows + per-currency subtotals
 // GET  /api/tenant/reports/:id/export.xlsx   download Excel artefact
+// GET  /api/tenant/reports/:id/export.pdf    download PDF artefact
 //
 // Filters arrive as query params (`q.<key>=value`) so a treasurer can
 // bookmark a URL and re-run the same report without re-keying. Per-spec
@@ -17,6 +18,7 @@ import {
   canReadReports,
 } from "../services/reports/access";
 import { loadReportBranding } from "../services/reports/branding";
+import { renderBrandedTablePdf } from "../services/reports/pdf/branded-table";
 import { getReport, listReports } from "../services/reports/registry";
 import {
   parseReportFilters,
@@ -143,7 +145,7 @@ tenantReportsRouter.get("/reports/:id/export.xlsx", async (c) => {
       branding,
       result.meta,
     );
-    const filename = buildExportFilename(id, branding.zoneSlug);
+    const filename = buildExportFilename(id, branding.zoneSlug, "xlsx");
     return new Response(bytes, {
       status: 200,
       headers: {
@@ -158,7 +160,76 @@ tenantReportsRouter.get("/reports/:id/export.xlsx", async (c) => {
   }
 });
 
-function buildExportFilename(reportId: string, zoneSlug: string): string {
+function buildExportFilename(reportId: string, zoneSlug: string, ext: string): string {
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  return `${zoneSlug}-${reportId}-${ts}.xlsx`;
+  return `${zoneSlug}-${reportId}-${ts}.${ext}`;
+}
+
+tenantReportsRouter.get("/reports/:id/export.pdf", async (c) => {
+  const ctx = c.get("auth") as AuthorizedContext;
+  if (!canReadReports(ctx)) return forbidden(c);
+  if (!canExportReports(ctx))
+    return forbidden(c, "forbidden_export", "Export requires a finance role");
+
+  const id = c.req.param("id");
+  let spec: ReportSpec<unknown, unknown>;
+  try {
+    spec = getReport(id);
+  } catch (err) {
+    return handleError(c, err);
+  }
+
+  let filters: unknown;
+  try {
+    filters = parseReportFilters(spec, flatQuery(c));
+  } catch (err) {
+    return handleError(c, err);
+  }
+
+  if (spec.accessCheck) {
+    const denial = spec.accessCheck(ctx, filters);
+    if (denial) return forbidden(c, denial);
+  }
+
+  try {
+    const [branding, result] = await Promise.all([
+      loadReportBranding(db, ctx.zoneId),
+      spec.fetch(db, ctx, filters),
+    ]);
+    // Per-spec `pdf()` override is the bespoke-layout escape hatch.
+    // Everything else uses the generic branded-table renderer — it
+    // matches the Excel renderer's grammar (header, columns, rows,
+    // per-currency subtotals).
+    const bytes = spec.pdf
+      ? await spec.pdf(result.rows, result.subtotals, filters, branding, result.meta)
+      : await renderBrandedTablePdf({
+          reportTitle: spec.title,
+          filterSummary: summariseFilters(filters),
+          columns: result.columns ?? spec.columns(filters),
+          rows: result.rows as Array<Record<string, unknown>>,
+          subtotals: result.subtotals,
+          branding,
+        });
+    const filename = buildExportFilename(id, branding.zoneSlug, "pdf");
+    return new Response(bytes, {
+      status: 200,
+      headers: {
+        "content-type": "application/pdf",
+        "content-disposition": `attachment; filename="${filename}"`,
+        "cache-control": NO_STORE,
+      },
+    });
+  } catch (err) {
+    return handleError(c, err);
+  }
+});
+
+function summariseFilters(filters: unknown): string {
+  if (!filters || typeof filters !== "object") return "";
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(filters as Record<string, unknown>)) {
+    if (value === undefined || value === null || value === "") continue;
+    parts.push(`${key}: ${String(value)}`);
+  }
+  return parts.join("  •  ");
 }
