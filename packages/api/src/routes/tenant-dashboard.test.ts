@@ -31,6 +31,7 @@ interface SeededZone {
   id: string;
   slug: string;
   chapterId: string;
+  otherChapterId: string;
   ownerRoleId: string;
   treasurerRoleId: string;
 }
@@ -54,19 +55,28 @@ async function seedZone(slug: string): Promise<SeededZone> {
     fiscalYearStartMonth: 1,
     ministryYearStartMonth: 3,
   });
-  const [chapter] = await db
+  const [chapter, otherChapter] = await db
     .insert(chapters)
-    .values({
-      zoneId: zone.id,
-      referenceCode: `CD${unique()}`.slice(0, 12),
-      name: `Dashboard Chapter ${unique()}`,
-      dateFrom: "2024-01-01",
-    })
+    .values([
+      {
+        zoneId: zone.id,
+        referenceCode: `CD${unique()}`.slice(0, 12),
+        name: `Dashboard Chapter ${unique()}`,
+        dateFrom: "2024-01-01",
+      },
+      {
+        zoneId: zone.id,
+        referenceCode: `CD${unique()}`.slice(0, 12),
+        name: `Dashboard Other Chapter ${unique()}`,
+        dateFrom: "2024-01-01",
+      },
+    ])
     .returning({ id: chapters.id });
   return {
     id: zone.id,
     slug: zone.slug,
     chapterId: chapter.id,
+    otherChapterId: otherChapter.id,
     ownerRoleId: roleIds.get(ZONE_ROLES.ZONE_OWNER)!,
     treasurerRoleId: roleIds.get("chapter_treasurer")!,
   };
@@ -187,6 +197,59 @@ describe("tenant dashboard routes", () => {
     // before the dashboard handler runs.
     asUser(ownerA, "owner@example.com");
     const res = await get(zoneB.slug, "/api/tenant/dashboard/zone");
+    expect(res.status).toBe(403);
+  });
+
+  it("chapter dashboard: owner can drill into any chapter", async () => {
+    asUser(ownerA, "owner@example.com");
+    const res = await get(
+      zoneA.slug,
+      `/api/tenant/dashboard/chapter/${zoneA.chapterId}`,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect((body.chapter as { id: string }).id).toBe(zoneA.chapterId);
+    expect(body.timeZone).toBe("Europe/London");
+    expect(Array.isArray(body.topGivingTypes)).toBe(true);
+    expect(Array.isArray(body.topPartners)).toBe(true);
+    expect(Array.isArray(body.recentContributions)).toBe(true);
+    expect(body.pendingBatches).toMatchObject({ count: expect.any(Number) });
+    expect(body.partnershipProgress).toMatchObject({ available: false });
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("chapter dashboard: chapter treasurer can read their bound chapter", async () => {
+    asUser(treasurerA, "tre@example.com");
+    const res = await get(
+      zoneA.slug,
+      `/api/tenant/dashboard/chapter/${zoneA.chapterId}`,
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("chapter dashboard: chapter treasurer is denied on a chapter they don't own", async () => {
+    asUser(treasurerA, "tre@example.com");
+    const res = await get(
+      zoneA.slug,
+      `/api/tenant/dashboard/chapter/${zoneA.otherChapterId}`,
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("chapter dashboard: 404 for an unknown chapter id (zone reader)", async () => {
+    asUser(ownerA, "owner@example.com");
+    const phantom = "00000000-0000-4000-8000-000000000000";
+    const res = await get(zoneA.slug, `/api/tenant/dashboard/chapter/${phantom}`);
+    expect(res.status).toBe(404);
+  });
+
+  it("chapter dashboard: cross-tenant attempt is denied", async () => {
+    asUser(ownerA, "owner@example.com");
+    // ownerA has no binding in zoneB; requireTenantAuth blocks first.
+    const res = await get(
+      zoneB.slug,
+      `/api/tenant/dashboard/chapter/${zoneB.chapterId}`,
+    );
     expect(res.status).toBe(403);
   });
 });

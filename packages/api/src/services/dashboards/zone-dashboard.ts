@@ -3,7 +3,7 @@
 // Aggregates zone-wide stats (chapters, members, current-month and YTD
 // giving, top-5 chapters / partners, recent imports) into one payload
 // for the /zone/dashboard landing surface.
-// RELEVANT FILES: packages/api/src/routes/tenant-dashboard.ts, packages/api/src/services/dashboards/calendar.ts, packages/api/src/services/dashboards/ranking.ts, packages/api/src/services/reports/import-reconciliation.ts
+// RELEVANT FILES: packages/api/src/routes/tenant-dashboard.ts, packages/api/src/services/dashboards/calendar.ts, packages/api/src/services/dashboards/queries.ts, packages/api/src/services/dashboards/ranking.ts
 
 import Decimal from "decimal.js";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
@@ -16,12 +16,16 @@ import {
   importRows,
   IMPORT_JOB_STATUSES,
   members,
-  zones,
   type ImportJobStatus,
 } from "@stewardledger/db/schema";
 import type { Database } from "@stewardledger/db";
 import type { AuthorizedContext } from "@stewardledger/shared";
 import { monthBoundsInZone, yearBoundsInZone, type DateBounds } from "./calendar";
+import {
+  countMembers,
+  loadZoneTimeZone,
+  sumPostedByCurrency,
+} from "./queries";
 import { rankByCurrency } from "./ranking";
 
 const IMPORT_JOB_STATUS_SET = new Set<string>(IMPORT_JOB_STATUSES);
@@ -157,6 +161,7 @@ export async function buildZoneDashboard(
     fetchRecentImports(database, ctx.zoneId),
   ]);
 
+
   return {
     asOf: now.toISOString(),
     timeZone,
@@ -182,21 +187,6 @@ export async function buildZoneDashboard(
   };
 }
 
-async function loadZoneTimeZone(database: Database, zoneId: string): Promise<string> {
-  const [row] = await database
-    .select({ defaultTimeZone: zones.defaultTimeZone })
-    .from(zones)
-    .where(eq(zones.id, zoneId))
-    .limit(1);
-  if (!row) {
-    // Tenant middleware would have rejected the request before we get
-    // here; surface a developer-visible error rather than render the
-    // payload with an arbitrary fallback timezone.
-    throw new Error(`zone ${zoneId} not found while loading dashboard`);
-  }
-  return row.defaultTimeZone;
-}
-
 async function countChapters(
   database: Database,
   zoneId: string,
@@ -209,59 +199,6 @@ async function countChapters(
     .from(chapters)
     .where(eq(chapters.zoneId, zoneId));
   return { total: row?.total ?? 0, active: row?.active ?? 0 };
-}
-
-async function countMembers(
-  database: Database,
-  zoneId: string,
-): Promise<{ total: number; active: number; inactive: number }> {
-  const [row] = await database
-    .select({
-      total: sql<number>`count(*)::int`,
-      active: sql<number>`count(*) filter (where ${members.isActive} = true)::int`,
-    })
-    .from(members)
-    .where(and(eq(members.zoneId, zoneId), isNull(members.deletedAt)));
-  const total = row?.total ?? 0;
-  const active = row?.active ?? 0;
-  return { total, active, inactive: total - active };
-}
-
-async function sumPostedByCurrency(
-  database: Database,
-  zoneId: string,
-  bounds: DateBounds,
-): Promise<CurrencyTotal[]> {
-  // Sum every line on a posted/reversed contribution in the window.
-  // Reversal lines carry negative amounts (canonical invariant from
-  // DOMAIN-MODEL §6), so a `posted + reversed` SUM nets to zero for
-  // a fully-reversed pair without any client-side bookkeeping.
-  const rows = await database
-    .select({
-      currencyCode: contributionLines.currencyCode,
-      total: sql<string>`sum(${contributionLines.amount})::text`,
-    })
-    .from(contributionLines)
-    .innerJoin(
-      contributions,
-      and(
-        eq(contributionLines.zoneId, contributions.zoneId),
-        eq(contributionLines.contributionId, contributions.id),
-      ),
-    )
-    .where(
-      and(
-        eq(contributions.zoneId, zoneId),
-        sql`${contributions.contributionDate} >= ${bounds.start}::date`,
-        sql`${contributions.contributionDate} < ${bounds.endExclusive}::date`,
-        sql`${contributions.status} in ('posted', 'reversed')`,
-      ),
-    )
-    .groupBy(contributionLines.currencyCode);
-  return rows
-    .map((r) => ({ currencyCode: r.currencyCode, total: new Decimal(r.total).toFixed(4) }))
-    .filter((r) => !new Decimal(r.total).isZero())
-    .sort((a, b) => a.currencyCode.localeCompare(b.currencyCode));
 }
 
 async function fetchTopChapters(

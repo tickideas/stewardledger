@@ -166,10 +166,10 @@
 
 ### 2.14 Chapter dashboard
 
-**Status**: Queued.
+**Status**: Done. Server-aggregated payload via `GET /api/tenant/dashboard/chapter/:chapterId`; UI at `/church/overview`. Service: `packages/api/src/services/dashboards/chapter-dashboard.ts`.
 
-- Cards: total members, active members, weekly giving, monthly giving, top giving types, target progress.
-- Drilldowns to the reports above.
+- Cards: total / active / inactive members, pending batches (count + per-currency totals), weekly giving, monthly giving, year-to-date giving, top 5 giving types, top 5 partners, 5 most recent posted contributions.
+- Target progress card deferred (depends on Phase 8 financial targets).
 
 ### 2.15 Zone dashboard
 
