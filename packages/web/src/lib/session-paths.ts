@@ -130,6 +130,12 @@ export type ServerSession = {
     name?: string;
     zoneRoles: string[];
     chapterRoles: Array<{ chapterId: string; chapterName?: string; roleCode: string }>;
+    /**
+     * True when this zone enforces MFA for at least one of the
+     * user's role codes. Treated by the UI as "redirect to
+     * /account/security unless already enrolled".
+     */
+    mfaRequired?: boolean;
   }>;
   user?: {
     id: string;

@@ -30,6 +30,14 @@ export type Zone = {
   name: string;
   zoneRoles: string[];
   chapterRoles: ChapterRole[];
+  /**
+   * True when the user holds a role in this zone whose code is on
+   * the zone's `mfa_required_role_codes` list AND the user has not
+   * enabled MFA. The root layout reads `zones.some((z) => z.mfaRequired)`
+   * to redirect to `/account/security?required=1`. Defaults to
+   * `false` against older API builds.
+   */
+  mfaRequired: boolean;
 };
 
 /** Identity surfaced to the UI (sidebar profile menu, etc.). */
@@ -158,6 +166,10 @@ export function hydrateSession(snapshot: ServerSession | null): void {
       chapterName: r.chapterName ?? "",
       roleCode: r.roleCode,
     })),
+    // The API reports `mfaRequired` as the pure role intersection.
+    // "Required" here means "required AND not yet enrolled" because
+    // an enrolled user satisfies the requirement.
+    mfaRequired: z.mfaRequired === true && user.twoFactorEnabled !== true,
   }));
 
   if (items.length === 0) {
@@ -234,6 +246,7 @@ export function loadSession(opts: { force?: boolean } = {}): Promise<void> {
           chapterName?: string;
           roleCode: string;
         }>;
+        mfaRequired?: boolean;
       };
       const body = (await res.json()) as {
         items: WireZone[];
@@ -273,6 +286,7 @@ export function loadSession(opts: { force?: boolean } = {}): Promise<void> {
           chapterName: r.chapterName ?? "",
           roleCode: r.roleCode,
         })),
+        mfaRequired: z.mfaRequired === true && user.twoFactorEnabled !== true,
       }));
 
       if (items.length === 0) {
