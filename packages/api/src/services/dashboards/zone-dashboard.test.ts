@@ -24,6 +24,7 @@ import { db } from "../../db";
 import { createContribution, postContribution, reverseContribution } from "../contributions";
 import { seedZoneGivingSetup } from "../giving-setup-seed";
 import { seedZonePeriods } from "../period-seed";
+import { monthBoundsInZone, yearBoundsInZone } from "./calendar";
 import { buildZoneDashboard } from "./zone-dashboard";
 
 function unique(): string {
@@ -43,7 +44,9 @@ interface SeededZone {
   cashPaymentMethodId: string;
 }
 
-async function seedZone(options: { extraChapters?: number } = {}): Promise<SeededZone> {
+async function seedZone(
+  options: { extraChapters?: number; timeZone?: string } = {},
+): Promise<SeededZone> {
   const slug = `dash-${unique()}`;
   const [zone] = await db
     .insert(zones)
@@ -52,7 +55,7 @@ async function seedZone(options: { extraChapters?: number } = {}): Promise<Seede
       name: `Dashboard Zone ${unique()}`,
       countryCode: "GB",
       defaultCurrencyCode: "GBP",
-      defaultTimeZone: "Europe/London",
+      defaultTimeZone: options.timeZone ?? "Europe/London",
       regionNameUnverified: `Region ${unique()}`,
       status: "active",
     })
@@ -412,6 +415,25 @@ describe("zone dashboard service", () => {
       "GBP",
       "USD",
     ]);
+  });
+
+  it("derives month / YTD windows from the zone's defaultTimeZone", async () => {
+    // Wire-up check: with a zone in Pacific/Auckland, the payload's
+    // window must match what `monthBoundsInZone(now, ...)` would
+    // produce — not the UTC month. Computing the expected bounds the
+    // same way the service does keeps the test invariant of the
+    // current date (it tests the wiring, not specific dates).
+    const zone = await seedZone({ timeZone: "Pacific/Auckland" });
+    seededZones.push(zone.id);
+    const payload = await buildZoneDashboard(db, zoneCtx(zone));
+
+    expect(payload.timeZone).toBe("Pacific/Auckland");
+    const expectedMonth = monthBoundsInZone(new Date(payload.asOf), "Pacific/Auckland");
+    expect(payload.monthlyGiving.periodStart).toBe(expectedMonth.start);
+    expect(payload.monthlyGiving.periodEnd).toBe(expectedMonth.end);
+    const expectedYear = yearBoundsInZone(new Date(payload.asOf), "Pacific/Auckland");
+    expect(payload.yearToDateGiving.periodStart).toBe(expectedYear.start);
+    expect(payload.yearToDateGiving.periodEnd).toBe(expectedYear.end);
   });
 
   it("lists the 5 most recent imports newest-first", async () => {

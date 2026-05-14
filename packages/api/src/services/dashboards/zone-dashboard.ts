@@ -14,26 +14,34 @@ import {
   importFiles,
   importJobs,
   importRows,
+  IMPORT_JOB_STATUSES,
   members,
   zones,
+  type ImportJobStatus,
 } from "@stewardledger/db/schema";
 import type { Database } from "@stewardledger/db";
 import type { AuthorizedContext } from "@stewardledger/shared";
 import { monthBoundsInZone, yearBoundsInZone, type DateBounds } from "./calendar";
 import { rankByCurrency } from "./ranking";
 
-/** Subset of the `import_jobs.status` check constraint enum. */
-export type ImportJobStatus =
-  | "received"
-  | "parsing"
-  | "parsed"
-  | "matching"
-  | "matched"
-  | "scheduled"
-  | "committing"
-  | "committed"
-  | "failed"
-  | "rolled_back";
+const IMPORT_JOB_STATUS_SET = new Set<string>(IMPORT_JOB_STATUSES);
+
+/**
+ * Defensive validator: every value we send to the dashboard must be
+ * on the canonical list. The SQL check constraint guarantees it at
+ * insert time, but a future schema change that adds a status without
+ * updating `IMPORT_JOB_STATUSES` would let an unknown string slip
+ * through this service. Throwing here surfaces the drift loudly
+ * rather than smuggling a wide `string` past the typed payload.
+ */
+function toImportJobStatus(raw: string): ImportJobStatus {
+  if (!IMPORT_JOB_STATUS_SET.has(raw)) {
+    throw new Error(`unexpected import_jobs.status value: ${raw}`);
+  }
+  return raw as ImportJobStatus;
+}
+
+export type { ImportJobStatus };
 
 export interface CurrencyTotal {
   currencyCode: string;
@@ -453,7 +461,7 @@ async function fetchRecentImports(
     return {
       id: j.id,
       fileName: j.fileName,
-      status: j.status as ImportJobStatus,
+      status: toImportJobStatus(j.status),
       createdAt: j.createdAt.toISOString(),
       postedCount: postedIdsByJob.get(j.id)?.size ?? 0,
       perCurrency,
