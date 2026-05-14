@@ -72,6 +72,7 @@ publicRouter.get("/session-zones", async (c) => {
         isSuperAdmin: userTable.isSuperAdmin,
         name: userTable.name,
         email: userTable.email,
+        twoFactorEnabled: userTable.twoFactorEnabled,
       })
       .from(userTable)
       .where(eq(userTable.id, session.user.id))
@@ -160,6 +161,7 @@ publicRouter.get("/session-zones", async (c) => {
       id: session.user.id,
       email: userRow?.email ?? session.user.email,
       name: userRow?.name ?? null,
+      twoFactorEnabled: userRow?.twoFactorEnabled ?? false,
     },
   });
 });

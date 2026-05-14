@@ -33,7 +33,19 @@ export type Zone = {
 };
 
 /** Identity surfaced to the UI (sidebar profile menu, etc.). */
-export type SessionUser = { id: string; email: string; name: string | null };
+export type SessionUser = {
+  id: string;
+  email: string;
+  name: string | null;
+  /**
+   * Mirrors `user.two_factor_enabled` on the API. Used by the
+   * Security page (`/account/security`) to render the correct
+   * enrolled / unenrolled state without re-reading the user row.
+   * Defaults to `false` against older API builds that pre-date
+   * the field — same transitional shim as `name`.
+   */
+  twoFactorEnabled: boolean;
+};
 
 /**
  * Session state machine. Only `authenticated` carries `isSuperAdmin`; all
@@ -128,8 +140,13 @@ export function hydrateSession(snapshot: ServerSession | null): void {
   // Mirror the `loadSession()` shim: render a placeholder identity when the
   // API build pre-dates the `user` field rather than blanking the profile.
   const user: SessionUser = snapshot.user
-    ? { id: snapshot.user.id, email: snapshot.user.email, name: snapshot.user.name }
-    : { id: "", email: "", name: null };
+    ? {
+        id: snapshot.user.id,
+        email: snapshot.user.email,
+        name: snapshot.user.name,
+        twoFactorEnabled: snapshot.user.twoFactorEnabled === true,
+      }
+    : { id: "", email: "", name: null, twoFactorEnabled: false };
 
   const items: Zone[] = snapshot.items.map((z) => ({
     id: z.id ?? "",
@@ -221,7 +238,12 @@ export function loadSession(opts: { force?: boolean } = {}): Promise<void> {
       const body = (await res.json()) as {
         items: WireZone[];
         isSuperAdmin?: boolean;
-        user?: { id: string; email: string; name: string | null };
+        user?: {
+          id: string;
+          email: string;
+          name: string | null;
+          twoFactorEnabled?: boolean;
+        };
       };
       if (epoch !== sessionEpoch) return; // superseded between fetch + parse
       const isSuperAdminFlag = body.isSuperAdmin === true;
@@ -232,8 +254,13 @@ export function loadSession(opts: { force?: boolean } = {}): Promise<void> {
       // menu and let the next session refresh fix it. Remove once every
       // environment runs an API build that ships `user` in the response.
       const user: SessionUser = body.user
-        ? { id: body.user.id, email: body.user.email, name: body.user.name }
-        : { id: "", email: "", name: null };
+        ? {
+            id: body.user.id,
+            email: body.user.email,
+            name: body.user.name,
+            twoFactorEnabled: body.user.twoFactorEnabled === true,
+          }
+        : { id: "", email: "", name: null, twoFactorEnabled: false };
       // Normalise the wire shape into the Zone type — missing role arrays on
       // an older API build degrade to "no bindings known" rather than crashing.
       const items: Zone[] = body.items.map((z) => ({
