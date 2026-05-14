@@ -94,10 +94,14 @@ export const twoFactor = pgTable(
     /** Encrypted, comma-joined recovery codes. Never returned. */
     backupCodes: text("backup_codes").notNull(),
     /**
-     * False between `enable` and the first successful `verify-totp`.
-     * The plugin treats `verified=false` as "setup in progress".
+     * False between `enable` and the first successful `verify-totp`
+     * (the plugin treats `verified=false` as "setup in progress").
+     * Default is `false` so the *meaningful* state on insert matches
+     * the column default; Better Auth always supplies the value
+     * explicitly anyway, so the default is just a safety net for
+     * direct inserts in tests / scripts.
      */
-    verified: boolean("verified").notNull().default(true),
+    verified: boolean("verified").notNull().default(false),
   },
   (table) => [index("two_factor_user_id_idx").on(table.userId)],
 );

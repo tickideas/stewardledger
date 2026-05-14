@@ -229,7 +229,7 @@
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,
-          "default": true
+          "default": false
         }
       },
       "indexes": {

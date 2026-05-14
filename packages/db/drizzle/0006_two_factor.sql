@@ -3,7 +3,7 @@ CREATE TABLE "two_factor" (
 	"user_id" text NOT NULL,
 	"secret" text NOT NULL,
 	"backup_codes" text NOT NULL,
-	"verified" boolean DEFAULT true NOT NULL
+	"verified" boolean DEFAULT false NOT NULL
 );
 --> statement-breakpoint
 ALTER TABLE "user" ADD COLUMN "two_factor_enabled" boolean DEFAULT false NOT NULL;--> statement-breakpoint
