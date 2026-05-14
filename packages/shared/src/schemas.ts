@@ -733,16 +733,21 @@ export const financialTargetUpdateSchema = z.object({
 });
 export type FinancialTargetUpdateInput = z.infer<typeof financialTargetUpdateSchema>;
 
-export const financialTargetListQuerySchema = z.object({
-  chapterId: uuidSchema.optional(),
-  givingTypeId: uuidSchema.optional(),
-  ministryYearId: uuidSchema.optional(),
-  /** When true, include only zone-wide rows (chapter_id is null). */
-  zoneWideOnly: z
-    .union([z.boolean(), z.enum(["true", "false"])])
-    .transform((v) => (typeof v === "boolean" ? v : v === "true"))
-    .optional(),
-  limit: z.coerce.number().int().min(1).max(500).default(200),
-  offset: z.coerce.number().int().min(0).default(0),
-});
+export const financialTargetListQuerySchema = z
+  .object({
+    chapterId: uuidSchema.optional(),
+    givingTypeId: uuidSchema.optional(),
+    ministryYearId: uuidSchema.optional(),
+    /** When true, include only zone-wide rows (chapter_id is null). */
+    zoneWideOnly: z
+      .union([z.boolean(), z.enum(["true", "false"])])
+      .transform((v) => (typeof v === "boolean" ? v : v === "true"))
+      .optional(),
+    limit: z.coerce.number().int().min(1).max(500).default(200),
+    offset: z.coerce.number().int().min(0).default(0),
+  })
+  .refine((v) => !(v.chapterId && v.zoneWideOnly), {
+    message: "chapterId and zoneWideOnly are mutually exclusive",
+    path: ["zoneWideOnly"],
+  });
 export type FinancialTargetListQuery = z.infer<typeof financialTargetListQuerySchema>;

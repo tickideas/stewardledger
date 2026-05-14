@@ -351,6 +351,15 @@ describe("tenant financial-targets routes", () => {
     expect(res.status).toBe(403);
   });
 
+  it("rejects contradictory chapterId + zoneWideOnly with 400", async () => {
+    asUser(ownerA, "owner@example.com");
+    const res = await call(
+      zoneA.slug,
+      `/api/tenant/targets?chapterId=${chapterA1}&zoneWideOnly=true`,
+    );
+    expect(res.status).toBe(400);
+  });
+
   it("treasurer can list their chapter's targets + zone-wide rows", async () => {
     asUser(treasurerA1, "tre@example.com");
     const res = await call(zoneA.slug, "/api/tenant/targets");
