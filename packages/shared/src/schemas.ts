@@ -767,6 +767,15 @@ export const payingInBookCreateSchema = z
     dateFrom: z.string().date(),
     dateTo: z.string().date().nullish(),
   })
+  // Equal-width start/end is the precondition for lexicographic
+  // text ordering to mean what a treasurer expects. Without it,
+  // start="0001" + end="100" would lexicographically accept
+  // "0050" (correct) AND "002" (a 3-digit code that probably
+  // wasn't supposed to fall inside a 4-digit pad).
+  .refine((v) => v.referenceCodeStart.length === v.referenceCodeEnd.length, {
+    message: "referenceCodeStart and referenceCodeEnd must be the same length",
+    path: ["referenceCodeEnd"],
+  })
   .refine((v) => v.referenceCodeStart <= v.referenceCodeEnd, {
     message: "referenceCodeStart must be lexicographically <= referenceCodeEnd",
     path: ["referenceCodeEnd"],

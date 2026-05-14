@@ -24,10 +24,23 @@ import { zones } from "./zones";
  * Reference codes are stored as `text` and compared
  * lexicographically. Treasurer pads use zero-padded sequential
  * codes ("0000001"..."0000200") or alphanumeric prefixes
- * ("PIB-A-001"..."PIB-A-100"); lexicographic ordering covers both
- * shapes provided the widths are consistent **within a single
- * book**. The validator surfaces a clear "not in range" message
- * rather than trying to parse the code into a number.
+ * ("PIB-A-001"..."PIB-A-100"); lexicographic ordering matches the
+ * intuitive ordering **only when start and end have the same
+ * length**. With "0001" .. "100" (different widths) the range
+ * would lexicographically include "002", a 3-digit code that
+ * almost certainly wasn't supposed to fall inside a 4-digit pad.
+ *
+ * The Zod schema and the PATCH after-merge check both enforce
+ * `length(start) === length(end)`. The DB CHECK below enforces
+ * only `start <= end` because Postgres has no easy way to assert
+ * equal-length without a function-based constraint and the
+ * application layer guard is sufficient: nothing in the system
+ * writes a paying-in book without going through the routes.
+ *
+ * The validator surfaces a clear "not in range" message rather
+ * than trying to parse the code into a number, so a malformed
+ * code (wrong width, wrong prefix) gets caught with an actionable
+ * message at write time.
  */
 export const payingInBooks = pgTable(
   "paying_in_books",
