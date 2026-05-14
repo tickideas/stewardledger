@@ -751,3 +751,54 @@ export const financialTargetListQuerySchema = z
     path: ["zoneWideOnly"],
   });
 export type FinancialTargetListQuery = z.infer<typeof financialTargetListQuerySchema>;
+
+// ─── Paying-in books (Phase 8) ──────────────────────────────
+
+/**
+ * Reference codes are stored and compared as text — see the schema
+ * module's comment for the rationale. The validator surfaces a
+ * clear "not in range" message rather than try to parse the code.
+ */
+export const payingInBookCreateSchema = z
+  .object({
+    chapterId: uuidSchema,
+    referenceCodeStart: z.string().trim().min(1).max(64),
+    referenceCodeEnd: z.string().trim().min(1).max(64),
+    dateFrom: z.string().date(),
+    dateTo: z.string().date().nullish(),
+  })
+  .refine((v) => v.referenceCodeStart <= v.referenceCodeEnd, {
+    message: "referenceCodeStart must be lexicographically <= referenceCodeEnd",
+    path: ["referenceCodeEnd"],
+  })
+  .refine((v) => !v.dateTo || v.dateTo >= v.dateFrom, {
+    message: "dateTo must be on or after dateFrom",
+    path: ["dateTo"],
+  });
+export type PayingInBookCreateInput = z.infer<typeof payingInBookCreateSchema>;
+
+export const payingInBookUpdateSchema = z
+  .object({
+    chapterId: uuidSchema.optional(),
+    referenceCodeStart: z.string().trim().min(1).max(64).optional(),
+    referenceCodeEnd: z.string().trim().min(1).max(64).optional(),
+    dateFrom: z.string().date().optional(),
+    dateTo: z.string().date().nullish(),
+  })
+  // We can't cross-validate `start <= end` here without knowing the
+  // existing values; the service layer reads the row and re-checks
+  // before writing. The DB CHECK is the canonical guard.
+  .refine((v) => v.dateTo == null || !v.dateFrom || v.dateTo >= v.dateFrom, {
+    message: "dateTo must be on or after dateFrom",
+    path: ["dateTo"],
+  });
+export type PayingInBookUpdateInput = z.infer<typeof payingInBookUpdateSchema>;
+
+export const payingInBookListQuerySchema = z.object({
+  chapterId: uuidSchema.optional(),
+  /** When set, include only books active (covering) the given date. */
+  activeOn: z.string().date().optional(),
+  limit: z.coerce.number().int().min(1).max(500).default(200),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type PayingInBookListQuery = z.infer<typeof payingInBookListQuerySchema>;
