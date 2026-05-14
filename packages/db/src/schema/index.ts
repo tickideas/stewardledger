@@ -17,4 +17,5 @@ export * from "./giving";
 export * from "./contributions";
 export * from "./batch-templates";
 export * from "./imports";
+export * from "./targets";
 export * from "./audit";
