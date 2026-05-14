@@ -1,11 +1,10 @@
 <script lang="ts">
   import { PUBLIC_API_URL } from "$lib/env";
-  import { isSuperAdmin, loadSession, session } from "$lib/session.svelte";
+  import { loadSession, session } from "$lib/session.svelte";
 
   const user = $derived(
     session.current.status === "authenticated" ? session.current.user : null,
   );
-  const showSecurityLink = $derived(isSuperAdmin(session.current));
 
   // ─── Profile (display name) ────────────────────────────────────────────
   let name = $state("");
@@ -233,29 +232,22 @@
     </form>
   </section>
 
-  {#if showSecurityLink}
-    <!-- ============ Security ============ -->
-    <!--
-      Surfaced only for super-admins in PR 1. Better Auth's two-factor
-      after-hook only challenges /sign-in/email, so the OTP / magic-link
-      paths still bypass MFA — not customer-ready. See tasks/totp-mfa.md.
-    -->
-    <section class="mt-14 border-t border-[var(--rule)] pt-10">
-      <header class="flex items-baseline justify-between gap-4">
-        <h2 class="sl-display text-[22px] tracking-tight text-[var(--ink)]">Security</h2>
-        <span class="sl-eyebrow" style="font-size:10px">Two-factor</span>
-      </header>
-      <p class="mt-3 max-w-xl text-[13px] leading-relaxed text-[var(--ink-mute)]">
-        Bind a TOTP authenticator to your sign-in. Currently available
-        to platform administrators only while we wire the remaining
-        sign-in paths into the challenge flow.
-      </p>
-      <a
-        href="/account/security"
-        class="sl-btn mt-6 inline-flex"
-      >Manage two-factor →</a>
-    </section>
-  {/if}
+  <!-- ============ Security ============ -->
+  <section class="mt-14 border-t border-[var(--rule)] pt-10">
+    <header class="flex items-baseline justify-between gap-4">
+      <h2 class="sl-display text-[22px] tracking-tight text-[var(--ink)]">Security</h2>
+      <span class="sl-eyebrow" style="font-size:10px">Two-factor</span>
+    </header>
+    <p class="mt-3 max-w-xl text-[13px] leading-relaxed text-[var(--ink-mute)]">
+      Bind a TOTP authenticator (Authy, 1Password, Google Authenticator,
+      etc.) to your sign-in. Once enabled, password sign-ins ask for a
+      6-digit code.
+    </p>
+    <a
+      href="/account/security"
+      class="sl-btn mt-6 inline-flex"
+    >Manage two-factor →</a>
+  </section>
 
   <!-- ============ Password ============ -->
   <section class="mt-14 border-t border-[var(--rule)] pt-10">

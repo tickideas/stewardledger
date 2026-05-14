@@ -1,20 +1,26 @@
 <!-- packages/web/src/routes/account/security/+page.svelte -->
-<!-- Phase 9 §5 (PR 1) — TOTP enrollment surface. Super-admin only. -->
+<!-- Phase 9 §5 (PR 2) — TOTP enrollment surface. -->
 <!-- Drives Better Auth's two-factor/enable → verify-totp → -->
-<!-- generate-backup-codes → disable flow. -->
-<!-- RELEVANT FILES: packages/api/src/auth.ts, packages/web/src/lib/qr.ts, tasks/totp-mfa.md -->
+<!-- generate-backup-codes → disable flow. Open to every -->
+<!-- authenticated user; the layout effect redirects users with -->
+<!-- a per-zone enforcement flag here via ?required=1. -->
+<!-- RELEVANT FILES: packages/api/src/auth.ts, packages/api/src/services/mfa-policy.ts, packages/web/src/lib/qr.ts -->
 
 <script lang="ts">
+  import { page } from "$app/state";
   import { PUBLIC_API_URL } from "$lib/env";
   import { renderQrDataUrl } from "$lib/qr";
-  import { isSuperAdmin, loadSession, session } from "$lib/session.svelte";
+  import { loadSession, session } from "$lib/session.svelte";
 
   const user = $derived(
     session.current.status === "authenticated" ? session.current.user : null,
   );
   const sessionState = $derived(session.current);
-  const superAdmin = $derived(isSuperAdmin(sessionState));
   const enabled = $derived(user?.twoFactorEnabled === true);
+  // Set when the layout's enforcement effect redirects an MFA-less
+  // user with a required role here. Drives the banner copy + a
+  // gentle nudge toward the enable flow.
+  const requiredByPolicy = $derived(page.url.searchParams.get("required") === "1");
 
   // ─── Enrollment flow state ───────────────────────────────────────────
   // step: idle → password (collect pw) → verify (show QR + 6-digit input)
@@ -199,28 +205,24 @@
 
   {#if sessionState.status === "loading"}
     <p class="mt-8 text-[13px] text-[var(--ink-mute)]">Loading…</p>
-  {:else if !superAdmin}
-    <!--
-      Super-admin gate. Better Auth's after-hook only challenges the
-      /sign-in/email path, not the OTP / magic-link paths, so an
-      MFA-enrolled user can still bypass the second factor via those
-      routes. PR 2 plugs that gap and lifts this gate. Until then we
-      restrict enrollment to platform staff who understand the
-      limitation and can recover from a lockout.
-    -->
-    <div class="mt-10 rounded-lg border border-[var(--brass)] bg-[var(--paper-soft)] p-6">
-      <h2 class="text-[15px] font-medium text-[var(--ink)]">
-        Two-factor enrollment is in limited preview.
-      </h2>
-      <p class="mt-2 max-w-xl text-[13px] text-[var(--ink-mute)]">
-        We're rolling out TOTP-based two-factor sign-in in stages.
-        Today it's available to platform administrators only while
-        we wire the remaining sign-in paths into the challenge flow.
-        Your zone owner can ask the StewardLedger team to enable it
-        for your account once the wider rollout opens.
-      </p>
-    </div>
   {:else}
+    {#if requiredByPolicy && !enabled}
+      <!--
+        Per-zone enforcement banner. The root layout redirected here
+        because the user holds a role on this zone's required-role
+        list. Stays visible until the user finishes the flow.
+      -->
+      <div class="mt-10 rounded-lg border border-[var(--brass)] bg-[var(--paper-soft)] p-6">
+        <h2 class="text-[15px] font-medium text-[var(--ink)]">
+          Your zone requires two-factor authentication.
+        </h2>
+        <p class="mt-2 max-w-xl text-[13px] text-[var(--ink-mute)]">
+          Your role here requires a second factor. Enrol below to
+          continue — you'll keep your current session, and the rest
+          of the app unlocks as soon as MFA is on.
+        </p>
+      </div>
+    {/if}
     <!-- ============ Already enrolled ============ -->
     {#if enabled && step !== "done"}
       <section class="mt-12 border-t border-[var(--rule)] pt-10">
