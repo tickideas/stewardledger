@@ -37,6 +37,21 @@ function startsWithPdfMagic(bytes: Uint8Array): boolean {
   );
 }
 
+/**
+ * Count `/Type /Page` markers in the raw PDF bytes — each page in
+ * a PDF dictionary carries one. Cheap structural assertion that
+ * doesn't pull in a parser dependency. The negative lookahead
+ * keeps `/Pages` (plural — the catalogue entry) from getting
+ * counted. pdfkit emits `/Type /Page` with a single space.
+ */
+function countPdfPages(bytes: Uint8Array): number {
+  const haystack = Buffer.from(bytes).toString("latin1");
+  const re = /\/Type\s*\/Page(?!s)/g;
+  let count = 0;
+  while (re.exec(haystack) !== null) count += 1;
+  return count;
+}
+
 describe("renderBrandedTablePdf", () => {
   it("produces a valid PDF buffer for a small dataset", async () => {
     const bytes = await renderBrandedTablePdf({
@@ -66,7 +81,7 @@ describe("renderBrandedTablePdf", () => {
     expect(startsWithPdfMagic(bytes)).toBe(true);
   });
 
-  it("paginates with many rows (output grows with row count)", async () => {
+  it("paginates with many rows (page count grows past 1)", async () => {
     const smallRows = Array.from({ length: 5 }, (_, i) => ({
       date: "2025-01-15",
       member: `Member ${i}`,
@@ -95,12 +110,32 @@ describe("renderBrandedTablePdf", () => {
       rows: largeRows,
       branding: BRANDING,
     });
-    // 40x rows produces a meaningfully larger PDF \u2014 not 40x in bytes
-    // because of compression and shared structures, but > 3x is a
-    // safe sanity floor that catches a regression where pagination
-    // silently truncates.
-    expect(large.byteLength).toBeGreaterThan(small.byteLength * 3);
+    // 5 rows fit on a single page; 200 rows force pagination.
+    // The page-count check is the structural contract — byte-length
+    // is dominated by the embedded Unicode font subset, not the
+    // row data, so a byte-size sanity floor isn't meaningful here.
+    expect(countPdfPages(small)).toBe(1);
+    expect(countPdfPages(large)).toBeGreaterThan(1);
     expect(startsWithPdfMagic(large)).toBe(true);
+  });
+
+  it("renders non-Latin diacritics without crashing (Unicode font registered)", async () => {
+    // Sanity that the Roboto subset covers Latin Extended. CJK /
+    // Arabic / Hebrew need additional Noto Sans subsets and are
+    // out of scope for v1; this test guards the range the founding
+    // cohort actually uses.
+    const bytes = await renderBrandedTablePdf({
+      reportTitle: "Unicode",
+      filterSummary: "",
+      columns: COLUMNS,
+      rows: [
+        { date: "2025-01-15", member: "\u00c9lo\u00efse Dubreti\u0107", type: "TITHE", amount: "100.00", currencyCode: "GBP" },
+        { date: "2025-01-15", member: "M\u00fcller-Schmitt", type: "OFFERING", amount: "25.50", currencyCode: "GBP" },
+      ],
+      branding: BRANDING,
+    });
+    expect(startsWithPdfMagic(bytes)).toBe(true);
+    expect(bytes.byteLength).toBeGreaterThan(1000);
   });
 
   it("renders zero-currency money cells without crashing", async () => {
