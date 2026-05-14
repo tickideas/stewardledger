@@ -685,9 +685,19 @@ paying_in_books
   reference_code_start text not null
   reference_code_end text not null
   date_from date not null
-  date_to date null
+  date_to date null                              -- null = open-ended
   created_at, updated_at
 ```
+
+Implemented (Phase 8). Reference codes are stored as `text` and
+compared lexicographically — treasurer pads use either zero-padded
+sequential codes or alphanumeric prefixes, both safe under text
+ordering provided widths stay consistent within a single book.
+The validator at
+`packages/api/src/services/paying-in-books/validate.ts` fires from
+`createBatch` and `updateDraftBatch` whenever a `referenceCode` is
+supplied; a non-matching code yields a `reference_code_not_in_book`
+service error mapped to HTTP 422 by the route layer.
 
 ---
 

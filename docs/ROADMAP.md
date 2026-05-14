@@ -292,13 +292,14 @@ Audited implementation status:
 - [x] `financial_targets` schema + Drizzle migration (`0004_little_mad_thinker.sql`) with partial unique indexes for chapter-scoped vs zone-wide rows + non-negative money / count CHECKs.
 - [x] Tenant API `/api/tenant/targets` with role-aware read/write (zone finance admin or chapter admin only writes; treasurers read but cannot write).
 - [x] Partnership-progress report (REPORTS.md §2.10, `services/reports/partnership-progress.ts`) — consumes `financial_targets` joined with partnership-tagged giving types; Excel + PDF auto-render via the established renderers.
-- [ ] Paying-in books schema + reference-code range validation at contribution-entry time.
-- [ ] UI: target setup screen, partnership-progress dashboard.
+- [x] `paying_in_books` schema + Drizzle migration (`0005_shiny_micromacro.sql`); tenant API `/api/tenant/paying-in-books` with role-aware read/write.
+- [x] Reference-code range validation at contribution-batch create + update (`services/paying-in-books/validate.ts`); rejects with `reference_code_not_in_book` → 422.
+- [ ] UI: target setup screen, partnership-progress dashboard, paying-in-book setup.
 
 Exit checklist:
 
-- [ ] Targets feed into reports and dashboards.
-- [ ] Reference-code ranges validate during contribution entry.
+- [x] Targets feed into reports and dashboards. *(Partnership-progress report consumes `financial_targets`.)*
+- [x] Reference-code ranges validate during contribution entry. *(Validator fires from `createBatch` + `updateDraftBatch` when a `referenceCode` is supplied.)*
 
 ---
 
