@@ -294,7 +294,7 @@ Audited implementation status:
 - [x] Partnership-progress report (REPORTS.md §2.10, `services/reports/partnership-progress.ts`) — consumes `financial_targets` joined with partnership-tagged giving types; Excel + PDF auto-render via the established renderers.
 - [x] `paying_in_books` schema + Drizzle migration (`0005_shiny_micromacro.sql`); tenant API `/api/tenant/paying-in-books` with role-aware read/write.
 - [x] Reference-code range validation at contribution-batch create + update (`services/paying-in-books/validate.ts`); rejects with `reference_code_not_in_book` → 422.
-- [ ] UI: target setup screen, partnership-progress dashboard, paying-in-book setup.
+- [x] UI: paying-in book setup at `/zone/paying-in-books` (list + filter + create + edit + delete with role-aware write gating). Target setup screen + partnership-progress dashboard remain queued.
 
 Exit checklist:
 
