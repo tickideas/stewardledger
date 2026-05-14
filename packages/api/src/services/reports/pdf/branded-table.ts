@@ -156,7 +156,7 @@ export async function renderBrandedTablePdf(
     subParts.push(`Default currency: ${args.branding.defaultCurrencyCode}`);
     doc
       .font("body")
-      .fontSize(9)
+      .fontSize(BODY_FONT_SIZE)
       .fillColor("#555555")
       .text(subParts.join("  •  "), contentLeft, top + 20, { width: contentWidth });
     doc
@@ -172,7 +172,7 @@ export async function renderBrandedTablePdf(
     if (args.filterSummary) {
       doc
         .font("body-italic")
-        .fontSize(9)
+        .fontSize(BODY_FONT_SIZE)
         .fillColor("#666666")
         .text(args.filterSummary, contentLeft, top + 52, { width: contentWidth });
     }
@@ -181,7 +181,7 @@ export async function renderBrandedTablePdf(
 
   function drawColumnHeaderRow(): void {
     let x = contentLeft;
-    doc.font("body-bold").fontSize(9).fillColor("#000000");
+    doc.font("body-bold").fontSize(BODY_FONT_SIZE).fillColor("#000000");
     args.columns.forEach((col, i) => {
       const width = columnWidths[i];
       const align = isNumeric(col) ? "right" : "left";
@@ -203,8 +203,11 @@ export async function renderBrandedTablePdf(
     // Reset the font state to the data-row default so the caller's
     // data-row loop doesn't accidentally inherit Bold after a
     // pagination-triggered newPage(). Without this reset every row
-    // on pages 2+ would render bold.
-    doc.font("body").fontSize(9).fillColor("#000000");
+    // on pages 2+ would render bold. The size must use the same
+    // `BODY_FONT_SIZE` constant the row-height measurement uses —
+    // a literal `9` here would silently desync from the layout
+    // math if the constant ever changed.
+    doc.font("body").fontSize(BODY_FONT_SIZE).fillColor("#000000");
   }
 
   newPage();
@@ -258,11 +261,11 @@ export async function renderBrandedTablePdf(
     for (const sub of args.subtotals) {
       doc
         .font("body-bold")
-        .fontSize(9)
+        .fontSize(BODY_FONT_SIZE)
         .text(sub.currencyCode, contentLeft, currentY, { width: 60, lineBreak: false });
       doc
         .font("body")
-        .fontSize(9)
+        .fontSize(BODY_FONT_SIZE)
         .text(formatMoney(sub.total), contentLeft + 60, currentY, {
           width: 160,
           align: "right",

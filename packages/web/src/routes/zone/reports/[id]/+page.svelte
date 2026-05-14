@@ -330,7 +330,7 @@
         {reportId.replaceAll("-", " ")}
       </h1>
       <p class="mt-1 text-sm text-slate-600">
-        Filter, run, and download as Excel.
+        Filter, run, and download as Excel or PDF.
       </p>
     </div>
     <a href="/zone/reports" class="text-sm text-slate-600 hover:text-slate-900">← All reports</a>

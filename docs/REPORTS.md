@@ -17,7 +17,7 @@
 | Pagination | Default 100, max 1000 per page; large reports stream as a background job. |
 | Aggregations | Sum, count, average per period or per category, **always grouped by currency**. |
 | Pivots | Server fetches normalised rows; client pivots in Svelte (small) or worker pivots (large). |
-| Exports | Excel via `exceljs`; PDF via Playwright + branded HTML template. |
+| Exports | Excel via `exceljs`; PDF via `pdfkit` for the tabular reports (generic branded-table renderer). Bespoke HTML/CSS layouts (member-statement letter, partnership receipts) will switch to Playwright + branded templates in a follow-up. |
 | Branding | Zone logo, name, address, currency on every export. |
 | Saved filters | Per user, per zone. |
 | Scheduling | Optional: weekly/monthly delivery via email. |
