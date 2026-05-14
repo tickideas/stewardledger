@@ -27,8 +27,19 @@ describe("canSearchAudit", () => {
     expect(canSearchAudit(ctx({ roleCodes: ["zone_finance_admin"] }))).toBe(true);
   });
 
-  it("accepts a platform admin even without an explicit role", () => {
-    expect(canSearchAudit(ctx({ isPlatformAdmin: true }))).toBe(true);
+  it("rejects a platform admin who lacks a zone-admin role (mirrors server gate)", () => {
+    // The server-side `hasZoneAdminRole` is role-code-only and does
+    // NOT honour `isPlatformAdmin` — a platform admin without one of
+    // the admin role codes 403s on the audit endpoint. Mirror that
+    // here so the UI doesn't show as authorised then fail every
+    // search.
+    expect(canSearchAudit(ctx({ isPlatformAdmin: true }))).toBe(false);
+  });
+
+  it("accepts a platform admin who also holds a zone-admin role", () => {
+    expect(
+      canSearchAudit(ctx({ isPlatformAdmin: true, roleCodes: ["zone_admin"] })),
+    ).toBe(true);
   });
 
   it("rejects zone_auditor (viewer tier, not admin)", () => {

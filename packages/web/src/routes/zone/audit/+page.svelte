@@ -44,6 +44,11 @@
 
   let auth = $state<AuthorizedContext | null>(null);
   let authLoaded = $state(false);
+  // Distinct from `loadError` so a failure to resolve the caller's
+  // auth context doesn't get masked by the access-denied card. The
+  // card renders only when auth resolved AND the caller lacks the
+  // admin role.
+  let authError = $state<string | null>(null);
   let dateFrom = $state(defaultDateFrom());
   let dateTo = $state(todayIso());
   let actorUserId = $state("");
@@ -82,11 +87,16 @@
         signal,
       );
       auth = me.auth;
+      authError = null;
     } catch (err) {
       if (isAbortError(err)) return;
-      // Not fatal for the page; the access card surfaces the issue.
-      loadError =
+      // Surface auth-resolution failures on a dedicated branch.
+      // Falling back to the access-denied card would mislead the
+      // caller ("you lack the role") when the real cause is a
+      // session / network problem.
+      authError =
         err instanceof ApiError ? err.message : "Could not load session.";
+      auth = null;
     } finally {
       if (!signal.aborted) authLoaded = true;
     }
@@ -160,6 +170,7 @@
     (async () => {
       await loadAuth(controller.signal);
       if (controller.signal.aborted) return;
+      if (authError) return;
       if (canSearchAudit(auth)) {
         await runSearch(controller.signal);
       }
@@ -223,6 +234,19 @@
 
   {#if !authLoaded}
     <p class="sl-reveal sl-reveal-2 mt-8 text-[13px] text-slate-500">Loading…</p>
+  {:else if authError}
+    <div
+      class="sl-reveal sl-reveal-2 mt-8 rounded-xl border border-[var(--bad)] bg-[var(--bad-soft)] p-6"
+    >
+      <h2 class="text-[15px] font-medium text-[var(--bad)]">
+        Could not load your session.
+      </h2>
+      <p class="mt-2 max-w-xl text-[13px] text-[var(--ink-mute)]">{authError}</p>
+      <p class="mt-2 max-w-xl text-[12.5px] text-[var(--ink-mute)]">
+        Try refreshing the page. If the problem persists, sign out and
+        back in.
+      </p>
+    </div>
   {:else if !canSearch}
     <div
       class="sl-reveal sl-reveal-2 mt-8 rounded-xl border border-[var(--bad)] bg-[var(--bad-soft)] p-6"

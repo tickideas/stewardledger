@@ -13,7 +13,15 @@ import type { AuthorizedContext } from "@stewardledger/shared";
  * Admin tier — see REPORTS.md §2.13 ("admin-facing"). The audit
  * trail surfaces every actor's edits across the zone, so viewer
  * roles (zone_auditor / zone_pastor_viewer) and any chapter-scoped
- * role are denied. Platform admins pass through.
+ * role are denied.
+ *
+ * The server-side gate (`hasZoneAdminRole` in
+ * `packages/api/src/services/reports/access.ts`) is a pure role-code
+ * check — it does NOT grant a platform-admin bypass. We mirror that
+ * exactly here: a platform admin without one of these role codes
+ * still has to acquire a binding before the audit endpoint will
+ * answer them. Granting it client-side would surface the UI as
+ * authorised and then 403 every search.
  */
 const AUDIT_SEARCH_ROLES = new Set([
   "zone_owner",
@@ -23,6 +31,5 @@ const AUDIT_SEARCH_ROLES = new Set([
 
 export function canSearchAudit(auth: AuthorizedContext | null): boolean {
   if (!auth) return false;
-  if (auth.isPlatformAdmin) return true;
   return auth.roleCodes.some((r) => AUDIT_SEARCH_ROLES.has(r));
 }
