@@ -3,7 +3,7 @@
 // One-shot aggregation for a single chapter: members, weekly /
 // monthly / YTD giving (per currency), top giving types, top
 // partners, pending batches, and the most recent contributions.
-// RELEVANT FILES: packages/api/src/routes/tenant-dashboard.ts, packages/api/src/services/dashboards/zone-dashboard.ts, packages/api/src/services/dashboards/calendar.ts, packages/api/src/services/dashboards/ranking.ts
+// RELEVANT FILES: packages/api/src/routes/tenant-dashboard.ts, packages/api/src/services/dashboards/zone-dashboard.ts, packages/api/src/services/dashboards/calendar.ts, packages/api/src/services/dashboards/queries.ts, packages/api/src/services/dashboards/ranking.ts
 
 import Decimal from "decimal.js";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
@@ -14,7 +14,6 @@ import {
   contributions,
   givingTypes,
   members,
-  zones,
 } from "@stewardledger/db/schema";
 import type { Database } from "@stewardledger/db";
 import {
@@ -23,6 +22,11 @@ import {
   yearBoundsInZone,
   type DateBounds,
 } from "./calendar";
+import {
+  countMembers,
+  loadZoneTimeZone,
+  sumPostedByCurrency,
+} from "./queries";
 import { rankByCurrency } from "./ranking";
 import type {
   CurrencyTotal,
@@ -118,10 +122,10 @@ export async function buildChapterDashboard(
     topPartnersList,
     recentContributionsList,
   ] = await Promise.all([
-    countMembers(database, zoneId, chapterId),
-    sumPostedByCurrency(database, zoneId, chapterId, week),
-    sumPostedByCurrency(database, zoneId, chapterId, month),
-    sumPostedByCurrency(database, zoneId, chapterId, year),
+    countMembers(database, zoneId, { chapterId }),
+    sumPostedByCurrency(database, zoneId, week, { chapterId }),
+    sumPostedByCurrency(database, zoneId, month, { chapterId }),
+    sumPostedByCurrency(database, zoneId, year, { chapterId }),
     fetchPendingBatches(database, zoneId, chapterId),
     fetchTopGivingTypes(database, zoneId, chapterId, month),
     fetchTopPartners(database, zoneId, chapterId, month),
@@ -183,85 +187,21 @@ async function loadChapter(
   return row;
 }
 
-async function loadZoneTimeZone(database: Database, zoneId: string): Promise<string> {
-  const [row] = await database
-    .select({ defaultTimeZone: zones.defaultTimeZone })
-    .from(zones)
-    .where(eq(zones.id, zoneId))
-    .limit(1);
-  if (!row) {
-    throw new Error(`zone ${zoneId} not found while loading dashboard`);
-  }
-  return row.defaultTimeZone;
-}
-
-async function countMembers(
-  database: Database,
-  zoneId: string,
-  chapterId: string,
-): Promise<{ total: number; active: number; inactive: number }> {
-  const [row] = await database
-    .select({
-      total: sql<number>`count(*)::int`,
-      active: sql<number>`count(*) filter (where ${members.isActive} = true)::int`,
-    })
-    .from(members)
-    .where(
-      and(
-        eq(members.zoneId, zoneId),
-        eq(members.chapterId, chapterId),
-        isNull(members.deletedAt),
-      ),
-    );
-  const total = row?.total ?? 0;
-  const active = row?.active ?? 0;
-  return { total, active, inactive: total - active };
-}
-
-async function sumPostedByCurrency(
-  database: Database,
-  zoneId: string,
-  chapterId: string,
-  bounds: DateBounds,
-): Promise<CurrencyTotal[]> {
-  // Same sign-convention as the zone dashboard: posted + reversed
-  // lines, summed per currency. A fully-reversed pair nets to zero.
-  const rows = await database
-    .select({
-      currencyCode: contributionLines.currencyCode,
-      total: sql<string>`sum(${contributionLines.amount})::text`,
-    })
-    .from(contributionLines)
-    .innerJoin(
-      contributions,
-      and(
-        eq(contributionLines.zoneId, contributions.zoneId),
-        eq(contributionLines.contributionId, contributions.id),
-      ),
-    )
-    .where(
-      and(
-        eq(contributions.zoneId, zoneId),
-        eq(contributions.chapterId, chapterId),
-        sql`${contributions.contributionDate} >= ${bounds.start}::date`,
-        sql`${contributions.contributionDate} < ${bounds.endExclusive}::date`,
-        sql`${contributions.status} in ('posted', 'reversed')`,
-      ),
-    )
-    .groupBy(contributionLines.currencyCode);
-  return rows
-    .map((r) => ({ currencyCode: r.currencyCode, total: new Decimal(r.total).toFixed(4) }))
-    .filter((r) => !new Decimal(r.total).isZero())
-    .sort((a, b) => a.currencyCode.localeCompare(b.currencyCode));
-}
-
 async function fetchPendingBatches(
   database: Database,
   zoneId: string,
   chapterId: string,
 ): Promise<ChapterDashboardPendingBatches> {
-  // Pending = anything pre-posting. Posted/voided are excluded; the
+  // Pending = anything pre-posting. Posted / voided are excluded; the
   // count is what a treasurer needs to clear before close-of-day.
+  //
+  // Contract note: `count` reflects every pending batch row, while
+  // `perCurrency` drops zero-total currency buckets. A chapter with
+  // three pending batches whose cash + cheque totals are all unset /
+  // zero therefore returns `{ count: 3, perCurrency: [] }`. That
+  // matches the legacy UI semantics (treasurer sees "3 to clear", no
+  // money yet entered) — don't "fix" the apparent discrepancy by
+  // counting only non-zero rows.
   const rows = await database
     .select({
       currencyCode: contributionBatches.currencyCode,
@@ -420,6 +360,13 @@ async function fetchRecentContributions(
   // `reversalOfContributionId`) because the dashboard reader wants
   // "what just came in" rather than the audit trail (the general-
   // ledger report surfaces reversals separately).
+  //
+  // Ordering note: the secondary sort on `contributions.id` is
+  // stable but NOT chronological — the id is a random uuid. Two
+  // contributions on the same `contribution_date` therefore render
+  // in arbitrary-but-deterministic order. Acceptable for a glance
+  // feed; a fully chronological sort would need a monotonic
+  // `created_at` column we don't yet expose.
   const rows = await database
     .select({
       id: contributions.id,
