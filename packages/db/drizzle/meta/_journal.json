@@ -43,6 +43,13 @@
       "when": 1778779810570,
       "tag": "0005_shiny_micromacro",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1778799896229,
+      "tag": "0006_two_factor",
+      "breakpoints": true
     }
   ]
 }

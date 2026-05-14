@@ -131,7 +131,12 @@ export type ServerSession = {
     zoneRoles: string[];
     chapterRoles: Array<{ chapterId: string; chapterName?: string; roleCode: string }>;
   }>;
-  user?: { id: string; email: string; name: string | null } | null;
+  user?: {
+    id: string;
+    email: string;
+    name: string | null;
+    twoFactorEnabled?: boolean;
+  } | null;
 };
 
 /**

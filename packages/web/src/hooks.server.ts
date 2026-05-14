@@ -27,7 +27,12 @@ type WireSessionZones = {
     chapterRoles?: Array<{ chapterId: string; chapterName?: string; roleCode: string }>;
   }>;
   isSuperAdmin: boolean;
-  user?: { id: string; email: string; name: string | null } | null;
+  user?: {
+    id: string;
+    email: string;
+    name: string | null;
+    twoFactorEnabled?: boolean;
+  } | null;
 };
 
 // JSON the SSR layout returns to the browser. Identical shape to
