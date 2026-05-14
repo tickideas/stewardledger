@@ -59,14 +59,14 @@
 
 ### 2.3 Weekly finance report
 
-**Status**: Queued. Needs the men/women/teens/children/first-timers/new-converts attendance fields added to `service_events` (or a sibling `service_event_attendance` table) before the report can pivot on them.
+**Status**: Done (Excel). `packages/api/src/services/reports/weekly-finance.ts`. Attendance lives in the new `service_event_attendance` sibling table (1:1 with `service_events`); read / upsert at `GET/PUT /api/tenant/giving/service-events/:id/attendance`.
 
-- **Filters**: zone, chapter (optional), date range or "this week".
-- **Columns**: service date, service type, week-in-month, men/women/teens/children/first-timers/new-converts, cash, cheque, line totals.
-- **Group by**: chapter, week.
+- **Filters**: date range, chapter (optional, clamped to bound chapters for chapter readers).
+- **Columns**: service date, week-in-month, service type, chapter ref + name, men/women/teens/children/first-timers/new-converts + total attendance, cash, cheque, line total, currency.
+- **Group by**: chapter ref, service date, service type.
 - **Export**: Excel.
 - **Legacy mapping**: `ChurchEnvelope_WeeklyFinanceReport_PIVOT`, `ChurchEnvelope_WeeklyFinanceReportView`, `Chapter_WeeklyIncomeAndAttendance`.
-- **Acceptance**: weekly totals tie to legacy weekly report.
+- **Acceptance**: weekly totals tie to a hand-curated dataset in `reports.test.ts`. Reversal-pair contributions net to zero in line totals; missing attendance renders as zero counts.
 
 ### 2.4 Envelope ledger
 
