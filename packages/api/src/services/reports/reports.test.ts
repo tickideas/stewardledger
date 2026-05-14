@@ -2831,9 +2831,11 @@ describe("weekly-finance report", () => {
     const zone = await seedZone();
     seededZones.push(zone.id);
 
+    // Seed an in-scope and an out-of-scope event on the same date.
+    // The out-of-scope event is the canary: the chapter-clamp must
+    // drop it from the chapter-scoped caller's result.
     const inScope = await seedServiceTypeAndEvent(zone, zone.chapterId, TODAY);
     const outOfScope = await seedServiceTypeAndEvent(zone, zone.otherChapterId, TODAY);
-    void outOfScope;
 
     const chapterScopedCtx: AuthorizedContext = {
       userId: zone.userId,
@@ -2858,6 +2860,11 @@ describe("weekly-finance report", () => {
     });
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0].serviceEventId).toBe(inScope.serviceEventId);
+    // The chapter-B event must NOT leak into the chapter-A caller's
+    // result — explicit canary assertion to lock the invariant in.
+    expect(
+      result.rows.some((r) => r.serviceEventId === outOfScope.serviceEventId),
+    ).toBe(false);
 
     // Out-of-scope chapterId filter is denied.
     expect(

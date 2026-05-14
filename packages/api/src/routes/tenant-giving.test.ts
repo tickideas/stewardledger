@@ -463,20 +463,14 @@ describe("tenant giving setup routes", () => {
       .from(serviceTypes)
       .where(sql`${serviceTypes.zoneId} = ${zoneA.id}`)
       .limit(1);
-    // Seed an out-of-scope chapter and an event on it.
-    const [outOfScope] = await db
-      .insert(chapters)
-      .values({
-        zoneId: zoneA.id,
-        referenceCode: `OUT${unique()}`,
-        name: `Out of scope ${unique()}`,
-        dateFrom: "2024-01-01",
-      })
-      .returning({ id: chapters.id });
+    // Seed an out-of-scope chapter and an event on it. Reuses the
+    // shared `seedChapter` helper so future tests don't need to
+    // duplicate the chapter-insert boilerplate.
+    const outOfScopeId = await seedChapter(zoneA.id, `Out of scope ${unique()}`);
     const serviceDate = `${new Date().getUTCFullYear()}-04-01`;
     const create = await call(zoneA.slug, "/api/tenant/giving/service-events", {
       method: "POST",
-      body: { chapterId: outOfScope.id, serviceTypeId: serviceType.id, serviceDate },
+      body: { chapterId: outOfScopeId, serviceTypeId: serviceType.id, serviceDate },
     });
     expect(create.status).toBe(201);
     const { serviceEvent } = (await create.json()) as { serviceEvent: { id: string } };
