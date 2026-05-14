@@ -29,9 +29,8 @@
 
 > **Status legend** (per-report markers below):
 > - **Done** — spec, route, UI, and tests landed; Excel + PDF artefacts verified end-to-end.
-> - **Done (Excel)** — Excel half landed; PDF deferred (legacy marker).
 > - **Queued** — not yet implemented.
-> - Every tabular report is now rendered to PDF via the generic branded-table renderer in `packages/api/src/services/reports/pdf/branded-table.ts`. Bespoke layouts (letter-style member statement, partnership receipts) will switch to Playwright + HTML/CSS in a follow-up PR per ARCHITECTURE.md §2.
+> - Every tabular report is rendered to PDF via the generic branded-table renderer in `packages/api/src/services/reports/pdf/branded-table.ts`. Bespoke layouts (letter-style member statement, partnership receipts) will switch to Playwright + HTML/CSS in a follow-up PR per ARCHITECTURE.md §2.
 
 ### 2.1 Member statement (annual)
 

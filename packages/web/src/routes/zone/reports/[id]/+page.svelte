@@ -240,7 +240,8 @@
     }
   }
 
-  let downloading = $state(false);
+  let downloadingFormat = $state<"xlsx" | "pdf" | null>(null);
+  const downloading = $derived(downloadingFormat !== null);
   let downloadError = $state<string | null>(null);
 
   /**
@@ -255,7 +256,7 @@
     downloadController?.abort();
     const controller = new AbortController();
     downloadController = controller;
-    downloading = true;
+    downloadingFormat = format;
     downloadError = null;
     try {
       const params = currentParams();
@@ -285,7 +286,7 @@
       if (err instanceof DOMException && err.name === "AbortError") return;
       downloadError = err instanceof Error ? err.message : "Download failed.";
     } finally {
-      if (!controller.signal.aborted) downloading = false;
+      if (!controller.signal.aborted) downloadingFormat = null;
     }
   }
   const downloadXlsx = () => downloadArtefact("xlsx");
@@ -613,7 +614,7 @@
           disabled={downloading}
           class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:border-slate-400 disabled:opacity-50"
         >
-          {downloading ? "Downloading…" : "Download Excel"}
+          {downloadingFormat === "xlsx" ? "Downloading…" : "Download Excel"}
         </button>
         <button
           type="button"
@@ -621,7 +622,7 @@
           disabled={downloading}
           class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:border-slate-400 disabled:opacity-50"
         >
-          {downloading ? "Downloading…" : "Download PDF"}
+          {downloadingFormat === "pdf" ? "Downloading…" : "Download PDF"}
         </button>
       {/if}
     </div>
