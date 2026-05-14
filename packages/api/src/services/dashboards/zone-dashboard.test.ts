@@ -224,6 +224,14 @@ describe("zone dashboard service", () => {
     // Period bounds are ISO dates.
     expect(payload.monthlyGiving.periodStart).toMatch(/^\d{4}-\d{2}-01$/);
     expect(payload.yearToDateGiving.periodStart).toMatch(/^\d{4}-01-01$/);
+    // The zone seeds with `defaultTimeZone: "Europe/London"`; the
+    // payload echoes that for the UI's footer.
+    expect(payload.timeZone).toBe("Europe/London");
+    // Phase-8 placeholder remains in the response shape.
+    expect(payload.partnershipProgress).toEqual({
+      available: false,
+      reason: "Pending Phase 8 financial targets.",
+    });
   });
 
   it("aggregates posted giving for the current month, nets reversals, ranks top chapters and partners", async () => {
@@ -390,9 +398,16 @@ describe("zone dashboard service", () => {
     await postContribution(db, { zoneId: zone.id, userId: zone.userId }, usd.contribution.id);
 
     const payload = await buildZoneDashboard(db, ctx);
-    const currencies = new Set(payload.topPartners.map((p) => p.currencyCode));
-    expect(currencies.has("GBP")).toBe(true);
-    expect(currencies.has("USD")).toBe(true);
+    // Each currency must produce its own ranked row attributed to the
+    // correct member. The previous assertion only checked that both
+    // currencies appeared in the list, which would pass even if the
+    // rows were attributed to the wrong members.
+    const gbpRow = payload.topPartners.find((p) => p.currencyCode === "GBP");
+    const usdRow = payload.topPartners.find((p) => p.currencyCode === "USD");
+    expect(gbpRow?.referenceCode).toBe(zone.memberRefs[0]);
+    expect(gbpRow?.total).toBe("100.0000");
+    expect(usdRow?.referenceCode).toBe(zone.memberRefs[1]);
+    expect(usdRow?.total).toBe("75.0000");
     expect(payload.monthlyGiving.perCurrency.map((c) => c.currencyCode).sort()).toEqual([
       "GBP",
       "USD",

@@ -156,6 +156,7 @@ describe("tenant dashboard routes", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(typeof body.asOf).toBe("string");
+    expect(typeof body.timeZone).toBe("string");
     expect(body.chapters).toMatchObject({ total: expect.any(Number), active: expect.any(Number) });
     expect(body.members).toMatchObject({
       total: expect.any(Number),
@@ -168,6 +169,8 @@ describe("tenant dashboard routes", () => {
     expect(Array.isArray(body.topChapters)).toBe(true);
     expect(Array.isArray(body.topPartners)).toBe(true);
     expect(Array.isArray(body.recentImports)).toBe(true);
+    // Phase-8 placeholder lands as `{ available: false, reason }`.
+    expect(body.partnershipProgress).toMatchObject({ available: false });
     // The endpoint must never be cached: payload includes member-level
     // totals that are PII-adjacent.
     expect(res.headers.get("cache-control")).toBe("no-store");
