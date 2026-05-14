@@ -25,6 +25,7 @@ import {
   findInvitationByToken,
   InvitationError,
 } from "../services/invitations";
+import { mfaRequiredInZone } from "../services/mfa-policy";
 
 export const publicRouter = new Hono();
 
@@ -84,6 +85,7 @@ publicRouter.get("/session-zones", async (c) => {
         zoneId: zones.id,
         zoneSlug: zones.slug,
         zoneName: zones.name,
+        zoneMfaRequiredRoleCodes: zones.mfaRequiredRoleCodes,
         chapterId: userRoleBindings.chapterId,
         chapterName: chapters.name,
         roleCode: rolesTable.code,
@@ -123,6 +125,18 @@ publicRouter.get("/session-zones", async (c) => {
     name: string;
     zoneRoles: string[];
     chapterRoles: ChapterRole[];
+    /**
+     * True when at least one of the user's role codes in this zone
+     * is on the zone's `mfa_required_role_codes` list. The web shell
+     * uses this to redirect MFA-less users to /account/security.
+     */
+    mfaRequired: boolean;
+    /**
+     * Internal: the zone's enforcement list. Carried on the
+     * aggregator so we can compute `mfaRequired` after all bindings
+     * have been collected. Dropped before serialising.
+     */
+    _mfaRequiredRoleCodes: string[];
   };
   const byZone = new Map<string, ZoneItem>();
   for (const b of bindingRows) {
@@ -134,6 +148,8 @@ publicRouter.get("/session-zones", async (c) => {
         name: b.zoneName,
         zoneRoles: [],
         chapterRoles: [],
+        mfaRequired: false,
+        _mfaRequiredRoleCodes: b.zoneMfaRequiredRoleCodes ?? [],
       };
       byZone.set(b.zoneId, z);
     }
@@ -152,7 +168,20 @@ publicRouter.get("/session-zones", async (c) => {
       }
     }
   }
-  const items = [...byZone.values()];
+  const items = [...byZone.values()].map((z) => {
+    const userRoleCodes = [
+      ...z.zoneRoles,
+      ...z.chapterRoles.map((r) => r.roleCode),
+    ];
+    const mfaRequired = mfaRequiredInZone(
+      z._mfaRequiredRoleCodes,
+      userRoleCodes,
+    );
+    // Strip the internal helper before serialising.
+    const { _mfaRequiredRoleCodes: _drop, ...rest } = z;
+    void _drop;
+    return { ...rest, mfaRequired };
+  });
 
   return c.json({
     items,
