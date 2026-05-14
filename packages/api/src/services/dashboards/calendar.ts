@@ -112,9 +112,12 @@ export function yearBoundsInZone(at: Date, timeZone: string): DateBounds {
  */
 export function weekBoundsInZone(at: Date, timeZone: string): DateBounds {
   const { year, month, day } = partsInZone(at, timeZone);
-  // Compute the JS weekday (0=Sun..6=Sat) for the civil date by
-  // anchoring to a UTC instant at noon on that date — noon is far
-  // enough from any TZ shift to be safe across DST transitions.
+  // Compute the JS weekday (0=Sun..6=Sat) for the civil date. We
+  // anchor at noon UTC on the resolved (year, month, day) so the
+  // `Date.UTC(...)` round-trip preserves the civil weekday: midnight
+  // would put us on a different calendar day in some timezones, and
+  // noon is the safest interior point that no TZ shift can move
+  // across a day boundary.
   const anchor = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
   const jsDow = anchor.getUTCDay(); // 0=Sun..6=Sat
   // ISO weekday: 1=Mon..7=Sun. Days to subtract to reach Monday.
