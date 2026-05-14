@@ -84,7 +84,13 @@
       const params = new URLSearchParams();
       if (activeOn) params.set("activeOn", activeOn);
       if (chapterFilter) params.set("chapterId", chapterFilter);
-      params.set("limit", String(PAGE_SIZE));
+      // Request one more row than we render. If the API returns
+      // exactly that many, there's a real next page; otherwise we
+      // know we're on the last page. This avoids the
+      // `length === PAGE_SIZE` heuristic, which would surface a
+      // Next button leading to an empty page whenever the total
+      // is an exact multiple of PAGE_SIZE.
+      params.set("limit", String(PAGE_SIZE + 1));
       params.set("offset", String(offset));
       const [me, chapterRes, booksRes] = await Promise.all([
         api.get<{ auth: AuthorizedContext }>("/api/tenant/me", signal),
@@ -97,11 +103,11 @@
       if (my !== refreshToken) return;
       auth = me.auth;
       chapters = chapterRes.items;
-      books = booksRes.items;
-      pageCount = booksRes.items.length;
-      // The API doesn't return a total count; "is there another
-      // page?" is inferred from the page being full at PAGE_SIZE.
-      hasMore = booksRes.items.length === PAGE_SIZE;
+      // Slice the probe row off before rendering; it exists only
+      // to discriminate "page is full" from "another page exists".
+      hasMore = booksRes.items.length > PAGE_SIZE;
+      books = hasMore ? booksRes.items.slice(0, PAGE_SIZE) : booksRes.items;
+      pageCount = books.length;
     } catch (err) {
       if (isAbortError(err)) return;
       if (my !== refreshToken) return;
