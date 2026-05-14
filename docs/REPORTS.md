@@ -158,10 +158,10 @@
 
 ### 2.13 Audit log report
 
-**Status**: Queued. Reads the existing `audit_log` table; no new schema needed.
+**Status**: Done (Excel landed via `packages/api/src/services/reports/audit-log.ts`; reads the existing `audit_events` table). PDF deferred Phase 7-wide.
 
-- **Filters**: zone, actor, entity type, entity id, action, date range.
-- **Columns**: occurred_at, actor, action, entity, before/after diff.
+- **Filters**: actor user id, entity type, entity id, action, date range.
+- **Columns**: occurred_at, actor email, role, action, entity type/id, reason, before/after JSON.
 - **Export**: Excel.
 
 ### 2.14 Chapter dashboard
