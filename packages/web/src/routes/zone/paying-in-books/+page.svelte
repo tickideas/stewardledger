@@ -5,6 +5,11 @@
 
 <script lang="ts">
   import { api, ApiError, isAbortError } from "$lib/api";
+  import {
+    canWritePayingInBook,
+    hasChapterWritePayingInBooks,
+    hasZoneWritePayingInBooks,
+  } from "$lib/paying-in-books/access";
   import type { AuthorizedContext } from "@stewardledger/shared";
 
   type Chapter = {
@@ -23,12 +28,7 @@
     updatedAt: string;
   };
 
-  const writeZoneRoles = new Set([
-    "zone_owner",
-    "zone_admin",
-    "zone_finance_admin",
-  ]);
-  const writeChapterRoles = new Set(["chapter_admin"]);
+
 
   let books = $state<PayingInBook[]>([]);
   let chapters = $state<Chapter[]>([]);
@@ -36,6 +36,16 @@
   let auth = $state<AuthorizedContext | null>(null);
   let loading = $state(true);
   let loadError = $state<string | null>(null);
+  // Pagination. The API caps a page at 500 rows; we keep the
+  // page size well below the cap and surface a "showing N" hint
+  // + paginator instead of silently truncating.
+  const PAGE_SIZE = 100;
+  let offset = $state(0);
+  let pageCount = $state(0);
+  let hasMore = $state(false);
+  // Request token so a stale fetch returning after a newer one
+  // doesn't clobber state. Same pattern as /church/overview.
+  let refreshToken = 0;
 
   let activeOn = $state("");
   let chapterFilter = $state("");
@@ -59,27 +69,23 @@
   let editError = $state<string | null>(null);
   let saving = $state(false);
 
-  const hasZoneWrite = $derived(
-    auth?.isPlatformAdmin === true ||
-      auth?.roleCodes.some((r) => writeZoneRoles.has(r)) === true,
-  );
-  const hasChapterWriteRole = $derived(
-    auth?.roleCodes.some((r) => writeChapterRoles.has(r)) === true,
-  );
+  const hasZoneWrite = $derived(hasZoneWritePayingInBooks(auth));
+  const hasChapterWriteRole = $derived(hasChapterWritePayingInBooks(auth));
 
   function canWriteChapter(chapterId: string): boolean {
-    if (hasZoneWrite) return true;
-    if (!hasChapterWriteRole) return false;
-    return (auth?.chapterIds ?? []).includes(chapterId);
+    return canWritePayingInBook(auth, chapterId);
   }
 
   async function loadAll(signal: AbortSignal) {
+    const my = ++refreshToken;
     loading = true;
     loadError = null;
     try {
       const params = new URLSearchParams();
       if (activeOn) params.set("activeOn", activeOn);
       if (chapterFilter) params.set("chapterId", chapterFilter);
+      params.set("limit", String(PAGE_SIZE));
+      params.set("offset", String(offset));
       const [me, chapterRes, booksRes] = await Promise.all([
         api.get<{ auth: AuthorizedContext }>("/api/tenant/me", signal),
         api.get<{ items: Chapter[] }>("/api/tenant/chapters", signal),
@@ -88,22 +94,47 @@
           signal,
         ),
       ]);
+      if (my !== refreshToken) return;
       auth = me.auth;
       chapters = chapterRes.items;
       books = booksRes.items;
+      pageCount = booksRes.items.length;
+      // The API doesn't return a total count; "is there another
+      // page?" is inferred from the page being full at PAGE_SIZE.
+      hasMore = booksRes.items.length === PAGE_SIZE;
     } catch (err) {
       if (isAbortError(err)) return;
+      if (my !== refreshToken) return;
       loadError = err instanceof ApiError ? err.message : "Could not load paying-in books.";
     } finally {
-      loading = false;
+      // Skip the flip when this fetch was aborted or superseded —
+      // a newer request is in flight and should own the loading
+      // flag.
+      if (!signal.aborted && my === refreshToken) loading = false;
     }
   }
 
+  function nextPage() {
+    if (!hasMore) return;
+    offset += PAGE_SIZE;
+  }
+
+  function prevPage() {
+    offset = Math.max(0, offset - PAGE_SIZE);
+  }
+
+  // Reset offset whenever a filter changes so a user who paged
+  // forward then narrowed the filter doesn't land on a phantom
+  // empty page.
+  let lastFilterKey = "";
   $effect(() => {
+    const key = `${chapterFilter}|${activeOn}`;
+    if (key !== lastFilterKey) {
+      offset = 0;
+      lastFilterKey = key;
+    }
     const controller = new AbortController();
-    // Re-run when the filters change.
-    void activeOn;
-    void chapterFilter;
+    void offset;
     loadAll(controller.signal);
     return () => controller.abort();
   });
@@ -462,4 +493,35 @@
       </tbody>
     </table>
   </div>
+
+  <!-- Paginator + count indicator. The API doesn't return a
+       total count; we show the current page range and offer
+       prev/next buttons whose state is inferred from whether the
+       last page came back full. -->
+  {#if pageCount > 0 || offset > 0}
+    <div class="sl-reveal sl-reveal-5 mt-4 flex items-center justify-between text-[13px] text-slate-600">
+      <span>
+        Showing rows {offset + 1}–{offset + pageCount}
+        {#if hasMore}(more available){/if}
+      </span>
+      <div class="flex items-center gap-2">
+        <button
+          type="button"
+          onclick={prevPage}
+          disabled={offset === 0 || loading}
+          class="rounded border border-slate-300 px-2 py-1 text-xs font-medium hover:border-slate-400 disabled:opacity-50"
+        >
+          Previous
+        </button>
+        <button
+          type="button"
+          onclick={nextPage}
+          disabled={!hasMore || loading}
+          class="rounded border border-slate-300 px-2 py-1 text-xs font-medium hover:border-slate-400 disabled:opacity-50"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  {/if}
 </div>
