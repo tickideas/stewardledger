@@ -37,6 +37,18 @@ export const zones = pgTable(
     /** pending_setup | active | past_due | suspended */
     status: text("status").notNull().default("pending_setup"),
     branding: jsonb("branding").notNull().default({}),
+    /**
+     * Role codes that REQUIRE TOTP MFA for users holding them in
+     * this zone. Empty by default (opt-in per zone). The post-auth
+     * landing path redirects an MFA-less user with a matching role
+     * to `/account/security?required=1` until they enrol. Sign-in
+     * itself is never blocked — the user keeps a session so they
+     * can complete enrolment without an out-of-band recovery flow.
+     */
+    mfaRequiredRoleCodes: text("mfa_required_role_codes")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     activatedAt: timestamp("activated_at", { withTimezone: true }),
     primaryContactUserId: text("primary_contact_user_id").references(() => user.id, {
       onDelete: "set null",

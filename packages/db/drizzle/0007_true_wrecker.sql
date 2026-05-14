@@ -1,0 +1,1 @@
+ALTER TABLE "zones" ADD COLUMN "mfa_required_role_codes" text[] DEFAULT '{}'::text[] NOT NULL;
