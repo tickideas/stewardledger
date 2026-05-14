@@ -228,11 +228,11 @@ Deliverables (full list in [`REPORTS.md`](REPORTS.md)):
 - Member finance summary (range; pivot by giving type). *(Excel landed.)*
 - Giving by chapter / zone / period / category / giving type (PIVOT in app code). *(Excel landed; pivots by giving type, category, or month with optional ministry / partnership year clamps.)*
 - General ledger (giving). *(Excel landed; flat line-level ledger with chapter / account / giving type / payment method / source filters.)*
-- Top partners, top chapters. *(queued)*
+- Envelope ledger. *(Excel landed; one row per posted envelope contribution with rolled-up line breakdown.)*
+- Online giving ledger. *(Excel landed; preset on `source_type in ('online','bank_import')` with transaction-id column.)*
+- Top partners, top chapters. *(Excel landed; per-currency ranking with `topN` (default 20) and `partnershipOnly` toggle.)*
 - Partnership progress. *(queued; depends on Phase 8 targets)*
 - Weekly finance report. *(queued)*
-- Envelope ledger. *(queued)*
-- Online giving ledger. *(queued)*
 - Statement import reconciliation report. *(PR-1: Excel landed.)*
 - Member list (active, by chapter, by status). *(PR-1: Excel landed.)*
 - Saved filters. *(queued)*
@@ -256,14 +256,17 @@ Audited implementation status (2026-05-13):
 - [x] Member list data + Excel export are implemented and tested (`member-list.ts`, `reports.test.ts`).
 - [x] Giving by chapter (PIVOT by giving type / category / month) data + Excel export are implemented and tested (`giving-by-chapter.ts`, `reports.test.ts`).
 - [x] General ledger (giving) data + Excel export are implemented and tested (`general-ledger.ts`, `reports.test.ts`).
-- [ ] Weekly finance report, envelope ledger, online giving ledger, top partners, top chapters, audit log report, dashboards is the next unimplemented batch.
+- [x] Envelope ledger data + Excel export are implemented and tested (`envelope-ledger.ts`, `reports.test.ts`).
+- [x] Online giving ledger data + Excel export are implemented and tested (`online-giving-ledger.ts`, `reports.test.ts`).
+- [x] Top partners + top chapters data + Excel exports are implemented and tested (`top-partners.ts`, `top-chapters.ts`, `reports.test.ts`).
+- [ ] Weekly finance report, audit log report, dashboards is the next unimplemented batch.
 - [ ] PDF export infrastructure and per-report PDF renderers.
 - [ ] Saved filters.
 - [ ] Background `report.generate` worker + object-storage retention for large exports.
 
 Exit checklist:
 
-- [ ] Each v1 report ties out against a hand-curated test dataset. *(member-statement, member-finance-summary, import-reconciliation, member-list covered in `reports.test.ts`; remaining reports queued.)*
+- [ ] Each v1 report ties out against a hand-curated test dataset. *(member-statement, member-finance-summary, import-reconciliation, member-list, giving-by-chapter, general-ledger, envelope-ledger, online-giving-ledger, top-partners, top-chapters all covered in `reports.test.ts`; weekly finance, audit log, dashboards, partnership progress remain queued.)*
 - [ ] All exports work in Excel and PDF. *(PR-1: Excel verified end-to-end; PDF deferred to a follow-up PR that adds the Playwright/Chromium infra per ARCHITECTURE.md §2.)*
 - [ ] Reports of >100k rows stream/paginate, never time out. *(queued; the registry shape supports paginated `fetch` already.)*
 - [x] Multi-currency reports show per-currency subtotals (no silent FX). *(`CurrencySubtotal[]` returned by every spec; reports never call `addMoney` across currencies.)*

@@ -66,6 +66,8 @@
   let partnershipYearId = $state("");
   let accountId = $state("");
   let sourceType = $state<"" | "envelope" | "online" | "bank_import" | "oblation" | "manual">("");
+  let topN = $state(20);
+  let partnershipOnly = $state(false);
 
   let chapters = $state<Chapter[]>([]);
   let givingTypes = $state<GivingType[]>([]);
@@ -104,7 +106,40 @@
       "paymentMethodId",
       "sourceType",
     ],
+    "envelope-ledger": [
+      "dateFrom",
+      "dateTo",
+      "chapterId",
+      "memberId",
+    ],
+    "online-giving-ledger": [
+      "dateFrom",
+      "dateTo",
+      "chapterId",
+      "paymentMethodId",
+      "givingTypeId",
+      "accountId",
+      "sourceType",
+    ],
+    "top-partners": [
+      "dateFrom",
+      "dateTo",
+      "chapterId",
+      "topN",
+      "partnershipOnly",
+    ],
+    "top-chapters": [
+      "dateFrom",
+      "dateTo",
+      "topN",
+      "partnershipOnly",
+    ],
   };
+  // Reports that hard-restrict source-type to a subset of the full
+  // enum surface only their valid options. Server-side schemas
+  // still reject mismatched values, but it's nicer UX to not even
+  // show them.
+  const onlineOnlySource = $derived(reportId === "online-giving-ledger");
   const visible = $derived(SHAPES[reportId] ?? []);
 
   $effect(() => {
@@ -159,6 +194,9 @@
       params.set("partnershipYearId", partnershipYearId);
     if (visible.includes("accountId") && accountId) params.set("accountId", accountId);
     if (visible.includes("sourceType") && sourceType) params.set("sourceType", sourceType);
+    if (visible.includes("topN")) params.set("topN", String(topN));
+    if (visible.includes("partnershipOnly"))
+      params.set("partnershipOnly", String(partnershipOnly));
     return params;
   }
 
@@ -418,6 +456,28 @@
           />
         </label>
       {/if}
+      {#if visible.includes("topN")}
+        <label class="text-sm">
+          <span class="block text-slate-600">Top N</span>
+          <input
+            type="number"
+            min="1"
+            max="200"
+            bind:value={topN}
+            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+          />
+        </label>
+      {/if}
+      {#if visible.includes("partnershipOnly")}
+        <label class="flex items-end text-sm">
+          <input
+            type="checkbox"
+            bind:checked={partnershipOnly}
+            class="mr-2 rounded"
+          />
+          <span>Partnership only</span>
+        </label>
+      {/if}
       {#if visible.includes("accountId")}
         <label class="text-sm">
           <span class="block text-slate-600">Account</span>
@@ -440,11 +500,16 @@
             class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
           >
             <option value="">All sources</option>
-            <option value="envelope">Envelope</option>
-            <option value="online">Online</option>
-            <option value="bank_import">Bank import</option>
-            <option value="oblation">Oblation</option>
-            <option value="manual">Manual</option>
+            {#if onlineOnlySource}
+              <option value="online">Online</option>
+              <option value="bank_import">Bank import</option>
+            {:else}
+              <option value="envelope">Envelope</option>
+              <option value="online">Online</option>
+              <option value="bank_import">Bank import</option>
+              <option value="oblation">Oblation</option>
+              <option value="manual">Manual</option>
+            {/if}
           </select>
         </label>
       {/if}

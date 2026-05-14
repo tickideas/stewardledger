@@ -221,12 +221,16 @@ describe("tenant reports routes", () => {
     const body = (await res.json()) as { items: Array<{ id: string }> };
     const ids = body.items.map((r) => r.id).sort();
     expect(ids).toEqual([
+      "envelope-ledger",
       "general-ledger",
       "giving-by-chapter",
       "import-reconciliation",
       "member-finance-summary",
       "member-list",
       "member-statement",
+      "online-giving-ledger",
+      "top-chapters",
+      "top-partners",
     ]);
   });
 
