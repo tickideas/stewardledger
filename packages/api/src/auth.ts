@@ -4,12 +4,14 @@
 import { BRAND_WORDMARK, OTP_VALIDITY_MINUTES } from "@stewardledger/shared";
 import * as schema from "@stewardledger/db/schema";
 import { betterAuth } from "better-auth";
+import { eq } from "drizzle-orm";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { emailOTP, magicLink, twoFactor } from "better-auth/plugins";
 import { db } from "./db";
 import { env } from "./env";
 import { log } from "./logger";
 import { brandedEmailHtml, escapeHtml, sendEmail } from "./services/email";
+import { recordMfaAudit } from "./services/mfa-audit";
 
 // Cross-subdomain cookie support. Enabled only when AUTH_COOKIE_DOMAIN is
 // set in env — e.g. `.example.com` to share the session cookie between
@@ -76,6 +78,66 @@ export const auth = betterAuth({
       twoFactor: schema.twoFactor,
     },
   }),
+  /**
+   * Database-level hooks fire after Better Auth commits its writes.
+   * The MFA enable / disable flow touches `user.two_factor_enabled`;
+   * this hook fans out a `user.mfa_enable` / `user.mfa_disable`
+   * audit row to every zone the user belongs to. We deliberately
+   * audit on the change — not on every user update — by comparing
+   * the inbound partial against a cached pre-image read in the
+   * `before` hook.
+   *
+   * Audit failure is logged but does not throw: the user write has
+   * already committed and rolling it back from this side-channel
+   * would leave the account half-armed. The Better Auth response is
+   * still successful; ops sees the missing row in monitoring.
+   */
+  databaseHooks: {
+    user: {
+      update: {
+        before: async (data, ctx) => {
+          if (!ctx) return;
+          if (!("twoFactorEnabled" in data)) return;
+          const userId = ctx.context?.session?.user?.id;
+          if (!userId) return;
+          // Cache the previous value so the `after` hook can
+          // emit an event only when the flag actually flips.
+          const [row] = await db
+            .select({ twoFactorEnabled: schema.user.twoFactorEnabled })
+            .from(schema.user)
+            .where(eq(schema.user.id, userId))
+            .limit(1);
+          (ctx as unknown as { __mfaPrev?: boolean }).__mfaPrev =
+            row?.twoFactorEnabled === true;
+        },
+        after: async (updated, ctx) => {
+          if (!ctx) return;
+          if (!("twoFactorEnabled" in updated)) return;
+          const userId = (updated as { id?: string }).id;
+          if (!userId) return;
+          const next = (updated as { twoFactorEnabled?: boolean })
+            .twoFactorEnabled === true;
+          const prev = (ctx as unknown as { __mfaPrev?: boolean })
+            .__mfaPrev;
+          if (prev === next) return;
+          try {
+            await recordMfaAudit(db, {
+              userId,
+              enabled: next,
+              actorUserId: ctx.context?.session?.user?.id ?? userId,
+              ipAddress: ctx.request?.headers.get("x-forwarded-for") ?? null,
+              userAgent: ctx.request?.headers.get("user-agent") ?? null,
+            });
+          } catch (err) {
+            log.error(
+              { err, userId, enabled: next },
+              "mfa-audit hook failed; user state already changed",
+            );
+          }
+        },
+      },
+    },
+  },
   emailAndPassword: {
     enabled: true,
     requireEmailVerification: env.NODE_ENV === "production",
@@ -161,6 +223,11 @@ export const auth = betterAuth({
      * `skipVerificationOnEnable: false` (default) means the user
      * must enter a fresh TOTP code before MFA arms — a typo'd
      * authenticator setup cannot lock the user out.
+     *
+     * `issuer` ships as the static brand wordmark in PR 1. PR 2,
+     * when MFA opens to zone-bound users, should pass a per-call
+     * `issuer` override from /two-factor/enable so authenticator
+     * apps differentiate zones for users who administer several.
      */
     twoFactor({
       issuer: BRAND_WORDMARK,
