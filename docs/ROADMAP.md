@@ -311,14 +311,14 @@ Deliverables:
 - Per-zone data export bundle (Postgres dump + uploaded files + reports archive).
 - Retention configuration.
 - GDPR data subject request workflow (export and erase).
-- TOTP MFA (mandatory for `zone_owner` and `zone_finance_admin` roles by default; configurable).
+- TOTP MFA (mandatory for `zone_owner` and `zone_finance_admin` roles by default; configurable). *(PR 1 landed: Better Auth `twoFactor()` plugin enabled, `two_factor` table + `user.two_factor_enabled` migration, opt-in enrollment surface at `/account/security`, password sign-in handles `twoFactorRedirect`. Currently gated to super-admins on the UI — Better Auth's after-hook only challenges `/sign-in/email`, so the OTP / magic-link paths still bypass MFA. PR 2 plugs that gap, adds per-role enforcement, and lifts the gate.)*
 
 Exit checklist:
 
 - [x] Audit search surface is live at `/zone/audit` for admin-tier roles, with date / actor / action / entity filters and inline before/after JSON expansion.
 - [ ] An exported bundle contains every record for that zone and is independently restorable.
 - [ ] An "erase" request can be applied with full audit and reversibility window.
-- [ ] MFA can be enforced at the role level.
+- [ ] MFA can be enforced at the role level. *(PR 1 enables opt-in; PR 2 adds the per-role policy + closes the OTP / magic-link bypass.)*
 
 ---
 
