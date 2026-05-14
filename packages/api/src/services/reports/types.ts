@@ -4,10 +4,10 @@
 // Reports are composed via the `ReportSpec<F, R>` contract: a Zod
 // filter schema, a `fetch` that produces normalised rows, a `columns`
 // projection used by both the screen and exports, and per-format
-// renderers (`excel` here; `pdf` lands in a follow-up PR once the
-// Playwright/Chromium infra ships per ARCHITECTURE.md §2). The
-// registry exposes a typed `id` so route/UI plumbing stays string-key
-// driven.
+// renderers (`excel`; optionally `pdf` — reports that don't supply
+// their own `pdf()` are rendered by the generic branded-table
+// fallback in `pdf/branded-table.ts`). The registry exposes a typed
+// `id` so route/UI plumbing stays string-key driven.
 
 import type { z, ZodTypeAny } from "zod";
 import type { AuthorizedContext } from "@stewardledger/shared";
@@ -85,12 +85,38 @@ export interface ReportSpec<F, R, S extends ZodTypeAny = ZodTypeAny> {
   ): Promise<ReportFetchResult<R>>;
   /** Columns. May depend on filters (e.g. PIVOT reports). */
   columns(filters: F): ReportColumn[];
+  /**
+   * Human-readable one-line summary of the active filters, stamped
+   * onto Excel + PDF headers. Optional — the route layer falls back
+   * to a generic key-value join when omitted. Spec authors override
+   * for friendlier output (e.g. "Period 2025-01-01 → 2025-12-31
+   * • Chapter Trinity" instead of "dateFrom: 2025-01-01 • …").
+   */
+  filterSummary?(filters: F): string;
   /** Render to Excel. */
   excel(
     rows: R[],
     subtotals: CurrencySubtotal[] | undefined,
     filters: F,
     branding: ReportBranding,
+    extras?: ReportFetchResult<R>["meta"],
+  ): Promise<Uint8Array>;
+  /**
+   * Render to PDF. Optional — reports that omit this fall through to
+   * the generic branded-table renderer in `pdf/branded-table.ts`,
+   * which produces a respectable letter-format PDF for any tabular
+   * report. Override only when the report needs a bespoke layout
+   * (e.g. a letter-style member statement once that ships).
+   *
+   * Receives the resolved column projection so a bespoke renderer
+   * doesn't have to re-derive it from `filters`.
+   */
+  pdf?(
+    rows: R[],
+    subtotals: CurrencySubtotal[] | undefined,
+    filters: F,
+    branding: ReportBranding,
+    columns: ReportColumn[],
     extras?: ReportFetchResult<R>["meta"],
   ): Promise<Uint8Array>;
   /**

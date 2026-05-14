@@ -36,7 +36,8 @@
 | Excel | **exceljs** | Modern; replaces EPPlus / NPOI. |
 | CSV | **papaparse** | Streaming parser. |
 | XLSX read | **xlsx** (SheetJS) | For uploaded statement parsing. |
-| PDF | **playwright-core** + `@sparticuz/chromium` (Linux) | Modern, maintained; replaces DinkToPdf. |
+| PDF (tabular) | **pdfkit** | Programmatic, deterministic, no browser dep. Used by the generic branded-table renderer that backs every Phase 7 report. |
+| PDF (bespoke layouts) | **playwright-core** + `@sparticuz/chromium` (Linux) | Reserved for letter-style member statements, partnership receipts, and any layout that needs HTML/CSS. Lands alongside the first bespoke template + the Phase 5 treasurer Playwright happy-path. |
 | Logging | **pino** | JSON; OpenTelemetry-friendly. |
 | Metrics / tracing | OpenTelemetry → Grafana / Tempo | Phase 2; basic logs first. |
 | Tests | Vitest, Playwright, Drizzle test DB | Same patterns as echurcher. |

@@ -17,7 +17,7 @@
 | Pagination | Default 100, max 1000 per page; large reports stream as a background job. |
 | Aggregations | Sum, count, average per period or per category, **always grouped by currency**. |
 | Pivots | Server fetches normalised rows; client pivots in Svelte (small) or worker pivots (large). |
-| Exports | Excel via `exceljs`; PDF via Playwright + branded HTML template. |
+| Exports | Excel via `exceljs`; PDF via `pdfkit` for the tabular reports (generic branded-table renderer). Bespoke HTML/CSS layouts (member-statement letter, partnership receipts) will switch to Playwright + branded templates in a follow-up. |
 | Branding | Zone logo, name, address, currency on every export. |
 | Saved filters | Per user, per zone. |
 | Scheduling | Optional: weekly/monthly delivery via email. |
@@ -28,13 +28,13 @@
 ## 2. v1 report inventory
 
 > **Status legend** (per-report markers below):
-> - **Done (Excel)** — spec, route, UI, and tests landed; Excel artefact verified end-to-end.
+> - **Done** — spec, route, UI, and tests landed; Excel + PDF artefacts verified end-to-end.
 > - **Queued** — not yet implemented.
-> - PDF export is deferred Phase-7-wide until the Playwright/Chromium infra ships (per ARCHITECTURE.md §2). "Done (Excel)" therefore means the Excel half of the deliverable is in; PDF rendering is tracked separately in ROADMAP.md Phase 7.
+> - Every tabular report is rendered to PDF via the generic branded-table renderer in `packages/api/src/services/reports/pdf/branded-table.ts`. Bespoke layouts (letter-style member statement, partnership receipts) will switch to Playwright + HTML/CSS in a follow-up PR per ARCHITECTURE.md §2.
 
 ### 2.1 Member statement (annual)
 
-**Status**: Done (Excel). `packages/api/src/services/reports/member-statement.ts`.
+**Status**: Done. `packages/api/src/services/reports/member-statement.ts`.
 
 - **Filters**: zone, member, year (or custom range), giving type filter (optional), include voided (no by default).
 - **Columns**: date, service event, giving type, account, payment method, amount; running total.
@@ -48,7 +48,7 @@
 
 ### 2.2 Member finance summary (range)
 
-**Status**: Done (Excel). `packages/api/src/services/reports/member-finance-summary.ts`.
+**Status**: Done. `packages/api/src/services/reports/member-finance-summary.ts`.
 
 - **Filters**: zone, chapter, member or all, date range, payment method, giving type.
 - **Columns**: member ref, member name, payment method, period, giving types (pivoted as columns).
@@ -59,7 +59,7 @@
 
 ### 2.3 Weekly finance report
 
-**Status**: Done (Excel). `packages/api/src/services/reports/weekly-finance.ts`. Attendance lives in the new `service_event_attendance` sibling table (1:1 with `service_events`); read / upsert at `GET/PUT /api/tenant/giving/service-events/:id/attendance`.
+**Status**: Done. `packages/api/src/services/reports/weekly-finance.ts`. Attendance lives in the new `service_event_attendance` sibling table (1:1 with `service_events`); read / upsert at `GET/PUT /api/tenant/giving/service-events/:id/attendance`.
 
 - **Filters**: date range, chapter (optional, clamped to bound chapters for chapter readers).
 - **Columns**: service date, week-in-month, service type, chapter ref + name, men/women/teens/children/first-timers/new-converts + total attendance, cash, cheque, line total, currency.
@@ -70,7 +70,7 @@
 
 ### 2.4 Envelope ledger
 
-**Status**: Done (Excel). `packages/api/src/services/reports/envelope-ledger.ts`.
+**Status**: Done. `packages/api/src/services/reports/envelope-ledger.ts`.
 
 - **Filters**: zone, chapter, member (optional), date range.
 - **Columns**: envelope id, member, service event, payment method, lines (giving type + amount), total.
@@ -81,7 +81,7 @@
 
 ### 2.5 Online giving ledger
 
-**Status**: Done (Excel). `packages/api/src/services/reports/online-giving-ledger.ts`.
+**Status**: Done. `packages/api/src/services/reports/online-giving-ledger.ts`.
 
 - **Filters**: zone, chapter (optional), date range, payment method.
 - **Columns**: date, member, chapter, giving type, account, transaction id, amount, currency.
@@ -92,7 +92,7 @@
 
 ### 2.6 General ledger (giving)
 
-**Status**: Done (Excel). `packages/api/src/services/reports/general-ledger.ts`.
+**Status**: Done. `packages/api/src/services/reports/general-ledger.ts`.
 
 - **Filters**: zone, chapter, date range, account, giving type.
 - **Columns**: date, chapter, member, giving type, account, payment method, amount, currency.
@@ -103,7 +103,7 @@
 
 ### 2.7 Giving by chapter (PIVOT by category / period)
 
-**Status**: Done (Excel). `packages/api/src/services/reports/giving-by-chapter.ts` — pivots by giving type, category, or month with optional ministry-year / partnership-year window clamps.
+**Status**: Done. `packages/api/src/services/reports/giving-by-chapter.ts` — pivots by giving type, category, or month with optional ministry-year / partnership-year window clamps.
 
 - **Filters**: zone, date range, ministry-year option, partnership-period option.
 - **Rows**: chapter.
@@ -113,7 +113,7 @@
 
 ### 2.8 Top partners
 
-**Status**: Done (Excel). `packages/api/src/services/reports/top-partners.ts` — per-currency ranking, `topN` (default 20), `partnershipOnly` toggle covers the legacy `Givings_Partnership_TopPartner` variant. Per-category breakdown columns are deferred to land alongside §2.10 partnership progress.
+**Status**: Done. `packages/api/src/services/reports/top-partners.ts` — per-currency ranking, `topN` (default 20), `partnershipOnly` toggle covers the legacy `Givings_Partnership_TopPartner` variant. Per-category breakdown columns are deferred to land alongside §2.10 partnership progress.
 
 - **Filters**: zone, chapter (optional), date range, top N.
 - **Columns**: rank, member, total contributions, partnership category breakdown.
@@ -122,7 +122,7 @@
 
 ### 2.9 Top chapters
 
-**Status**: Done (Excel). `packages/api/src/services/reports/top-chapters.ts` — same shape as top-partners with chapter as the group key.
+**Status**: Done. `packages/api/src/services/reports/top-chapters.ts` — same shape as top-partners with chapter as the group key.
 
 - Same as 2.8, with chapters.
 - **Legacy mapping**: `Givings_All_TopChapter`, `Givings_Partnership_TopChapter`.
@@ -139,7 +139,7 @@
 
 ### 2.11 Statement import reconciliation
 
-**Status**: Done (Excel). `packages/api/src/services/reports/import-reconciliation.ts`.
+**Status**: Done. `packages/api/src/services/reports/import-reconciliation.ts`.
 
 - **Filters**: zone, import job id or date range.
 - **Columns**: file name, uploaded by, total rows, matched, unmatched, duplicates, failed, committed, contributions posted, total amount, status.
@@ -149,7 +149,7 @@
 
 ### 2.12 Member list
 
-**Status**: Done (Excel). `packages/api/src/services/reports/member-list.ts`.
+**Status**: Done. `packages/api/src/services/reports/member-list.ts`.
 
 - **Filters**: zone, chapter, status (active/inactive), member type, date joined ministry range, age range.
 - **Columns**: member ref, full name, gender, date of birth, mobile, email, chapter, member type, marital status, date joined ministry.
@@ -158,7 +158,7 @@
 
 ### 2.13 Audit log report
 
-**Status**: Done (Excel landed via `packages/api/src/services/reports/audit-log.ts`; reads the existing `audit_events` table). PDF deferred Phase 7-wide.
+**Status**: Done. `packages/api/src/services/reports/audit-log.ts` reads the existing `audit_events` table.
 
 - **Filters**: actor user id, entity type, entity id, action, date range.
 - **Columns**: occurred_at, actor email, role, action, entity type/id, reason, before/after JSON.
