@@ -220,7 +220,7 @@ Exit checklist:
 
 ---
 
-## Phase 7 — Reports v1 *(current focus)*
+## Phase 7 — Reports v1
 
 Deliverables (full list in [`REPORTS.md`](REPORTS.md)):
 
@@ -277,15 +277,23 @@ Exit checklist:
 
 ---
 
-## Phase 8 — Targets & partnership
+## Phase 8 — Targets & partnership *(current focus)*
 
 Deliverables:
 
-- Financial target setup per chapter + giving type + ministry year.
-- Optional zone-wide targets that aggregate across chapters.
-- Paying-in book reference ranges.
-- Partnership progress dashboard.
-- Top partners by category and by month.
+- Financial target setup per chapter + giving type + ministry year. *(Schema + CRUD API landed; UI + partnership-progress report follow.)*
+- Optional zone-wide targets that aggregate across chapters. *(Supported by the partial unique indexes on `financial_targets`; `chapter_id IS NULL` = zone-wide.)*
+- Paying-in book reference ranges. *(queued)*
+- Partnership progress dashboard. *(queued; consumes financial_targets)*
+- Top partners by category and by month. *(queued; partnership-progress report covers the breakdown)*
+
+Audited implementation status:
+
+- [x] `financial_targets` schema + Drizzle migration (`0004_little_mad_thinker.sql`) with partial unique indexes for chapter-scoped vs zone-wide rows + non-negative money / count CHECKs.
+- [x] Tenant API `/api/tenant/targets` with role-aware read/write (zone finance admin or chapter admin only writes; treasurers read but cannot write).
+- [ ] Partnership-progress report (REPORTS.md §2.10) — next PR.
+- [ ] Paying-in books schema + reference-code range validation at contribution-entry time.
+- [ ] UI: target setup screen, partnership-progress dashboard.
 
 Exit checklist:
 

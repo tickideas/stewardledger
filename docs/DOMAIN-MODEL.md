@@ -654,16 +654,23 @@ processed_transactions
 
 ## 8. Targets
 
+Implemented (Phase 8). Money columns ship as `numeric(19,4)` for
+consistency with the rest of the ledger. Two partial unique indexes
+enforce one row per `(zone, chapter, giving_type, ministry_year)`
+tuple for chapter-scoped rows and one row per
+`(zone, giving_type, ministry_year)` tuple for zone-wide rows
+(`chapter_id IS NULL`).
+
 ```sql
 financial_targets
-  id uuid pk
-  zone_id uuid not null
-  chapter_id uuid null references chapters(id)   -- null = zone-wide target
-  giving_type_id uuid not null
-  ministry_year_id uuid not null
-  full_target numeric(19,2) not null
-  monthly_target numeric(19,2) null
-  weekly_breakdown numeric(19,2) null
+  id text pk
+  zone_id text not null
+  chapter_id text null references chapters(id)   -- null = zone-wide target
+  giving_type_id text not null
+  ministry_year_id text not null
+  full_target numeric(19,4) not null
+  monthly_target numeric(19,4) null
+  weekly_breakdown numeric(19,4) null
   full_target_copies int null
   number_of_partners int null
   currency_code text not null
