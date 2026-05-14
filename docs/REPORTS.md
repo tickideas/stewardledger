@@ -173,9 +173,10 @@
 
 ### 2.15 Zone dashboard
 
-**Status**: Queued.
+**Status**: Done. Server-aggregated payload via `GET /api/tenant/dashboard/zone`; UI at `/zone/dashboard` (the default zonal landing). Service: `packages/api/src/services/dashboards/zone-dashboard.ts`.
 
-- Cards: total chapters, total members, monthly giving (per currency), partnership progress, top chapters, top partners, recent imports.
+- Cards: total / active chapters, total / active / inactive members, monthly giving (per currency), year-to-date giving (per currency), top 5 chapters, top 5 partners, 5 most recent imports.
+- Partnership progress card deferred (depends on Phase 8 financial targets).
 
 ---
 

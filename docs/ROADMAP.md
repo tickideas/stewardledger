@@ -261,7 +261,8 @@ Audited implementation status (2026-05-13):
 - [x] Online giving ledger data + Excel export are implemented and tested (`online-giving-ledger.ts`, `reports.test.ts`).
 - [x] Top partners + top chapters data + Excel exports are implemented and tested (`top-partners.ts`, `top-chapters.ts`, `reports.test.ts`).
 - [x] Audit log report data + Excel export are implemented and tested (`audit-log.ts`, `reports.test.ts`).
-- [ ] Weekly finance report and dashboards is the next unimplemented batch. *(Weekly finance needs an attendance schema add on `service_events` before the pivot can be built.)*
+- [x] Zone dashboard endpoint + UI are implemented and tested (`services/dashboards/zone-dashboard.ts`, `routes/tenant-dashboard.ts`, `routes/zone/dashboard/+page.svelte`).
+- [ ] Chapter dashboard and weekly finance report remain. *(Chapter dashboard is the next iteration of `/church/overview` reusing the same backend pattern. Weekly finance needs an attendance schema add on `service_events` before the pivot can be built.)*
 - [ ] PDF export infrastructure and per-report PDF renderers.
 - [ ] Saved filters.
 - [ ] Background `report.generate` worker + object-storage retention for large exports.

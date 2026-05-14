@@ -95,6 +95,27 @@ export const importFiles = pgTable(
   ],
 );
 
+/**
+ * State machine for `import_jobs.status`. Single source of truth: the
+ * SQL check constraint below is derived from this tuple, the
+ * TypeScript `ImportJobStatus` union is too, and consumers (the
+ * dashboard, the import-reconciliation report, route layers) import
+ * the union from here rather than duplicate it.
+ */
+export const IMPORT_JOB_STATUSES = [
+  "received",
+  "parsing",
+  "parsed",
+  "matching",
+  "matched",
+  "scheduled",
+  "committing",
+  "committed",
+  "failed",
+  "rolled_back",
+] as const;
+export type ImportJobStatus = (typeof IMPORT_JOB_STATUSES)[number];
+
 export const importJobs = pgTable(
   "import_jobs",
   {
@@ -105,11 +126,8 @@ export const importJobs = pgTable(
       .notNull()
       .references(() => zones.id, { onDelete: "cascade" }),
     importFileId: text("import_file_id").notNull(),
-    /**
-     * received | parsing | parsed | matching | matched | scheduled |
-     * committing | committed | failed | rolled_back
-     */
-    status: text("status").notNull().default("received"),
+    /** See `IMPORT_JOB_STATUSES` for the full enum. */
+    status: text("status").$type<ImportJobStatus>().notNull().default("received"),
     totalRows: integer("total_rows").notNull().default(0),
     matchedRows: integer("matched_rows").notNull().default(0),
     unmatchedRows: integer("unmatched_rows").notNull().default(0),
