@@ -229,6 +229,8 @@ describe("tenant reports routes", () => {
       "member-list",
       "member-statement",
       "online-giving-ledger",
+      "top-chapters",
+      "top-partners",
     ]);
   });
 

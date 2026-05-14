@@ -230,7 +230,7 @@ Deliverables (full list in [`REPORTS.md`](REPORTS.md)):
 - General ledger (giving). *(Excel landed; flat line-level ledger with chapter / account / giving type / payment method / source filters.)*
 - Envelope ledger. *(Excel landed; one row per posted envelope contribution with rolled-up line breakdown.)*
 - Online giving ledger. *(Excel landed; preset on `source_type in ('online','bank_import')` with transaction-id column.)*
-- Top partners, top chapters. *(queued)*
+- Top partners, top chapters. *(Excel landed; per-currency ranking with `topN` (default 20) and `partnershipOnly` toggle.)*
 - Partnership progress. *(queued; depends on Phase 8 targets)*
 - Weekly finance report. *(queued)*
 - Statement import reconciliation report. *(PR-1: Excel landed.)*
@@ -258,7 +258,8 @@ Audited implementation status (2026-05-13):
 - [x] General ledger (giving) data + Excel export are implemented and tested (`general-ledger.ts`, `reports.test.ts`).
 - [x] Envelope ledger data + Excel export are implemented and tested (`envelope-ledger.ts`, `reports.test.ts`).
 - [x] Online giving ledger data + Excel export are implemented and tested (`online-giving-ledger.ts`, `reports.test.ts`).
-- [ ] Weekly finance report, top partners, top chapters, audit log report, dashboards is the next unimplemented batch.
+- [x] Top partners + top chapters data + Excel exports are implemented and tested (`top-partners.ts`, `top-chapters.ts`, `reports.test.ts`).
+- [ ] Weekly finance report, audit log report, dashboards is the next unimplemented batch.
 - [ ] PDF export infrastructure and per-report PDF renderers.
 - [ ] Saved filters.
 - [ ] Background `report.generate` worker + object-storage retention for large exports.
