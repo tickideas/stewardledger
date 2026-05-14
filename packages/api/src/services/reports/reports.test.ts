@@ -39,6 +39,7 @@ import { seedZoneGivingSetup } from "../giving-setup-seed";
 import { seedZonePeriods } from "../period-seed";
 import { InMemoryStorage, setStorageForTesting } from "../storage";
 import { createContribution, postContribution, reverseContribution } from "../contributions";
+import { givingByChapterReport } from "./giving-by-chapter";
 import { importReconciliationReport } from "./import-reconciliation";
 import { loadReportBranding } from "./branding";
 import { memberFinanceSummaryReport } from "./member-finance-summary";
@@ -906,6 +907,299 @@ describe("member-list report", () => {
       chapterId: zone.otherChapterId,
     });
     expect(denial).toBe("forbidden");
+  });
+});
+
+describe("giving-by-chapter report", () => {
+  it("pivots by giving type, ties out per-currency totals, and renders Excel", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    // Chapter A: 100 TITHE + 25 OFFERING + 40 TITHE = 165 total.
+    // Chapter B: 60 OFFERING.
+    const a1 = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[0],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [
+        { givingTypeId: zone.givingTypeId, amount: "100.00" },
+        { givingTypeId: zone.offeringGivingTypeId, amount: "25.00" },
+      ],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, a1.contribution.id);
+    const a2 = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[1],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: zone.givingTypeId, amount: "40.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, a2.contribution.id);
+    const b1 = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.otherChapterId,
+      memberId: zone.memberIds[2],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: zone.offeringGivingTypeId, amount: "60.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, b1.contribution.id);
+
+    const filters = {
+      dateFrom: shiftDays(TODAY, -1),
+      dateTo: shiftDays(TODAY, 1),
+      pivotBy: "givingType" as const,
+    };
+    const result = await givingByChapterReport.fetch(db, ctx, filters);
+
+    expect(result.rows).toHaveLength(2);
+    expect(result.subtotals).toEqual([{ currencyCode: "GBP", total: "225.0000" }]);
+
+    const columns = result.columns as Array<{ key: string; label: string }> | undefined;
+    const titheCol = columns?.find((c) => c.label.startsWith("TITHE - "));
+    const offeringCol = columns?.find((c) => c.label.startsWith("OFFERING - "));
+    expect(titheCol).toBeTruthy();
+    expect(offeringCol).toBeTruthy();
+
+    const rowA = result.rows.find((r) => r.chapterReferenceCode === zone.chapterRef);
+    expect(rowA?.[titheCol!.key]).toBe("140.0000");
+    expect(rowA?.[offeringCol!.key]).toBe("25.0000");
+    expect(rowA?.total).toBe("165.0000");
+
+    const rowB = result.rows.find((r) => r.chapterReferenceCode !== zone.chapterRef);
+    expect(rowB?.[titheCol!.key]).toBe("0.0000");
+    expect(rowB?.[offeringCol!.key]).toBe("60.0000");
+    expect(rowB?.total).toBe("60.0000");
+
+    const branding = await loadReportBranding(db, zone.id);
+    const bytes = await givingByChapterReport.excel(
+      result.rows,
+      result.subtotals,
+      filters,
+      branding,
+      result.meta,
+    );
+    expect(bytes.byteLength).toBeGreaterThan(500);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(toArrayBuffer(bytes));
+    const sheet = wb.getWorksheet("Giving by chapter");
+    expect(sheet).toBeTruthy();
+    expect(sheet!.getCell("A1").value).toBe(branding.zoneName);
+  });
+
+  it("pivots by category, aggregating multiple giving types under one parent", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    const contribution = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[0],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [
+        { givingTypeId: zone.givingTypeId, amount: "30.00" },
+        { givingTypeId: zone.offeringGivingTypeId, amount: "20.00" },
+      ],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, contribution.contribution.id);
+
+    const result = await givingByChapterReport.fetch(db, ctx, {
+      dateFrom: shiftDays(TODAY, -1),
+      dateTo: shiftDays(TODAY, 1),
+      pivotBy: "category",
+    });
+
+    const columns = result.columns as Array<{ key: string; label: string }> | undefined;
+    // The seed assigns Tithe → "Tithes" category and Offering →
+    // "Offerings" category, so both category columns should appear.
+    const titheCatCol = columns?.find((c) => c.label.includes("TITHE -"));
+    const offeringCatCol = columns?.find((c) => c.label.includes("OFFERING -"));
+    expect(titheCatCol).toBeTruthy();
+    expect(offeringCatCol).toBeTruthy();
+
+    expect(result.rows).toHaveLength(1);
+    const row = result.rows[0];
+    expect(row[titheCatCol!.key]).toBe("30.0000");
+    expect(row[offeringCatCol!.key]).toBe("20.0000");
+    expect(row.total).toBe("50.0000");
+  });
+
+  it("pivots by month and emits one column per month present in the dataset", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    // Two dates in distinct months. Using fixed historical dates so
+    // both fall inside the requested window regardless of when the
+    // test runs.
+    const firstDate = "2024-04-15";
+    const secondDate = "2024-06-20";
+    for (const [date, amount] of [
+      [firstDate, "10.00"],
+      [secondDate, "25.00"],
+    ] as const) {
+      const c = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+        chapterId: zone.chapterId,
+        memberId: zone.memberIds[0],
+        sourceType: "manual",
+        paymentMethodId: zone.cashPaymentMethodId,
+        contributionDate: date,
+        lines: [{ givingTypeId: zone.givingTypeId, amount }],
+      });
+      await postContribution(db, { zoneId: zone.id, userId: zone.userId }, c.contribution.id);
+    }
+
+    const result = await givingByChapterReport.fetch(db, ctx, {
+      dateFrom: "2024-01-01",
+      dateTo: "2024-12-31",
+      pivotBy: "month",
+    });
+
+    const columns = result.columns as Array<{ key: string; label: string }> | undefined;
+    const monthColumns = columns?.filter((c) => c.label.match(/^\d{4}-\d{2}$/));
+    expect(monthColumns?.map((c) => c.label)).toEqual(["2024-04", "2024-06"]);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].total).toBe("35.0000");
+  });
+
+  it("scopes chapter callers to bound chapters and rejects an out-of-scope chapterId filter", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+
+    const chapterScopedCtx: AuthorizedContext = {
+      userId: zone.userId,
+      zoneId: zone.id,
+      regionId: null,
+      roleCodes: ["chapter_treasurer"],
+      chapterIds: [zone.chapterId],
+      isPlatformAdmin: false,
+    };
+
+    const denial = givingByChapterReport.accessCheck?.(chapterScopedCtx, {
+      dateFrom: shiftDays(TODAY, -1),
+      dateTo: shiftDays(TODAY, 1),
+      pivotBy: "givingType",
+      chapterId: zone.otherChapterId,
+    });
+    expect(denial).toBe("forbidden");
+
+    const inScope = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[0],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: zone.givingTypeId, amount: "15.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, inScope.contribution.id);
+
+    const outOfScope = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.otherChapterId,
+      memberId: zone.memberIds[2],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: zone.givingTypeId, amount: "99.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, outOfScope.contribution.id);
+
+    const result = await givingByChapterReport.fetch(db, chapterScopedCtx, {
+      dateFrom: shiftDays(TODAY, -1),
+      dateTo: shiftDays(TODAY, 1),
+      pivotBy: "givingType",
+    });
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].chapterReferenceCode).toBe(zone.chapterRef);
+    expect(result.rows[0].total).toBe("15.0000");
+  });
+
+  it("nets reversals to zero inside the date range", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    const original = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[0],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: zone.givingTypeId, amount: "80.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, original.contribution.id);
+    await reverseContribution(db, { zoneId: zone.id, userId: zone.userId }, original.contribution.id, {
+      reason: "test",
+    });
+
+    const result = await givingByChapterReport.fetch(db, ctx, {
+      dateFrom: shiftDays(TODAY, -1),
+      dateTo: shiftDays(TODAY, 1),
+      pivotBy: "givingType",
+    });
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].total).toBe("0.0000");
+    expect(result.subtotals).toEqual([{ currencyCode: "GBP", total: "0.0000" }]);
+  });
+
+  it("escapes formula-injection prefixes in dynamic pivot labels", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    // Poison the active TITHE giving type so its column header would
+    // be a HYPERLINK formula in a naïve renderer.
+    await db
+      .update(givingTypes)
+      .set({
+        name: `=HYPERLINK("http://attacker/x","click")`,
+        shortCode: null,
+      })
+      .where(sql`${givingTypes.zoneId} = ${zone.id} and ${givingTypes.id} = ${zone.givingTypeId}`);
+
+    const c = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[0],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: zone.givingTypeId, amount: "10.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, c.contribution.id);
+
+    const filters = {
+      dateFrom: shiftDays(TODAY, -1),
+      dateTo: shiftDays(TODAY, 1),
+      pivotBy: "givingType" as const,
+    };
+    const result = await givingByChapterReport.fetch(db, ctx, filters);
+    const branding = await loadReportBranding(db, zone.id);
+    const bytes = await givingByChapterReport.excel(
+      result.rows,
+      result.subtotals,
+      filters,
+      branding,
+      result.meta,
+    );
+
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(toArrayBuffer(bytes));
+    const sheet = wb.getWorksheet("Giving by chapter")!;
+    const headerRow = sheet.getRow(6);
+    const values: unknown[] = [];
+    headerRow.eachCell((cell) => values.push(cell.value));
+    const poisoned = values.find(
+      (v) => typeof v === "string" && v.includes("HYPERLINK"),
+    );
+    expect(poisoned).toBeDefined();
+    expect(typeof poisoned).toBe("string");
+    expect(poisoned as string).not.toMatch(/^=/);
   });
 });
 
