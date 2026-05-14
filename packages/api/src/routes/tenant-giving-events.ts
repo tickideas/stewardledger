@@ -222,7 +222,10 @@ tenantGivingEventsRouter.patch(
 /**
  * Read the attendance row for a service event. Returns 404 when no
  * attendance has been recorded yet — callers should treat that as
- * "zero so far" rather than an error.
+ * "zero so far" rather than an error. Single round-trip via a LEFT
+ * JOIN: the event lookup is the authorization check, the attendance
+ * lookup tags along; absence yields a null attendance id which we
+ * map to the recorded-not-yet 404 path.
  */
 tenantGivingEventsRouter.get(
   "/giving/service-events/:id/attendance",
@@ -230,37 +233,46 @@ tenantGivingEventsRouter.get(
     const ctx = c.get("auth") as AuthorizedContext;
     if (!hasZoneEventRead(ctx) && !hasChapterEventRead(ctx)) return forbidden(c);
     const id = c.req.param("id");
-    const [event] = await db
-      .select({ id: serviceEvents.id, chapterId: serviceEvents.chapterId })
-      .from(serviceEvents)
-      .where(and(eq(serviceEvents.id, id), eq(serviceEvents.zoneId, ctx.zoneId)))
-      .limit(1);
-    if (!event || !canReadEvent(ctx, event.chapterId)) {
-      return c.json({ error: { code: "not_found", message: "Service event not found" } }, 404);
-    }
     const [row] = await db
-      .select()
-      .from(serviceEventAttendance)
-      .where(
+      .select({
+        eventChapterId: serviceEvents.chapterId,
+        attendance: serviceEventAttendance,
+      })
+      .from(serviceEvents)
+      .leftJoin(
+        serviceEventAttendance,
         and(
-          eq(serviceEventAttendance.zoneId, ctx.zoneId),
-          eq(serviceEventAttendance.serviceEventId, id),
+          eq(serviceEventAttendance.zoneId, serviceEvents.zoneId),
+          eq(serviceEventAttendance.serviceEventId, serviceEvents.id),
         ),
       )
+      .where(and(eq(serviceEvents.id, id), eq(serviceEvents.zoneId, ctx.zoneId)))
       .limit(1);
-    if (!row) {
+    // Fold "event not in zone" and "event in zone but caller can't
+    // see it" into the same 404 to avoid an existence oracle for
+    // chapter-scoped callers.
+    if (!row || !canReadEvent(ctx, row.eventChapterId)) {
+      return c.json({ error: { code: "not_found", message: "Service event not found" } }, 404);
+    }
+    if (!row.attendance) {
       return c.json(
         { error: { code: "not_found", message: "Attendance not recorded" } },
         404,
       );
     }
-    return c.json({ attendance: row });
+    return c.json({ attendance: row.attendance });
   },
 );
 
 /**
  * Upsert attendance for a service event. Idempotent: a repeat PUT
- * replaces the prior counts in place. Audited on every write.
+ * replaces the prior counts in place; the row identity (primary
+ * key + `created_at`) stays stable across replays. Each upsert is
+ * audited even when the counts are unchanged — the audit log
+ * therefore records "intent to set" rather than "diff against
+ * previous". Treasurers who hit PUT twice with the same body will
+ * see two audit rows; acceptable noise for v1 since the operation
+ * is operator-driven, not automated.
  */
 tenantGivingEventsRouter.put(
   "/giving/service-events/:id/attendance",
