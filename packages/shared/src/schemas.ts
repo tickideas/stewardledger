@@ -691,3 +691,63 @@ export const importRollbackSchema = z.object({
   reason: z.string().min(1).max(2000),
 });
 export type ImportRollbackInput = z.infer<typeof importRollbackSchema>;
+
+// ─── Financial targets (Phase 8) ────────────────────────
+
+/**
+ * Non-negative money on the wire: same `numeric(19,4)` shape as
+ * `moneyAmountSchema` but rejects negative values. Targets are
+ * goal amounts; they don't carry the reversal sign convention.
+ */
+const nonNegativeMoneySchema = z
+  .string()
+  .regex(/^\d+(\.\d{1,4})?$/, "amount must be a non-negative decimal with up to 4 dp");
+
+export const financialTargetCreateSchema = z.object({
+  /** Null = zone-wide target (every chapter aggregates against it). */
+  chapterId: uuidSchema.nullish(),
+  givingTypeId: uuidSchema,
+  ministryYearId: uuidSchema,
+  fullTarget: nonNegativeMoneySchema,
+  monthlyTarget: nonNegativeMoneySchema.nullish(),
+  weeklyBreakdown: nonNegativeMoneySchema.nullish(),
+  fullTargetCopies: z.coerce.number().int().min(0).nullish(),
+  numberOfPartners: z.coerce.number().int().min(0).nullish(),
+  currencyCode: currencyCodeSchema,
+});
+export type FinancialTargetCreateInput = z.infer<typeof financialTargetCreateSchema>;
+
+/**
+ * Update payload. The tuple columns (chapter / giving_type /
+ * ministry_year) are immutable post-create — a different tuple is
+ * a different target — so only the money + count fields are
+ * patchable. `currencyCode` is also immutable: a target's currency
+ * is part of its identity.
+ */
+export const financialTargetUpdateSchema = z.object({
+  fullTarget: nonNegativeMoneySchema.optional(),
+  monthlyTarget: nonNegativeMoneySchema.nullish(),
+  weeklyBreakdown: nonNegativeMoneySchema.nullish(),
+  fullTargetCopies: z.coerce.number().int().min(0).nullish(),
+  numberOfPartners: z.coerce.number().int().min(0).nullish(),
+});
+export type FinancialTargetUpdateInput = z.infer<typeof financialTargetUpdateSchema>;
+
+export const financialTargetListQuerySchema = z
+  .object({
+    chapterId: uuidSchema.optional(),
+    givingTypeId: uuidSchema.optional(),
+    ministryYearId: uuidSchema.optional(),
+    /** When true, include only zone-wide rows (chapter_id is null). */
+    zoneWideOnly: z
+      .union([z.boolean(), z.enum(["true", "false"])])
+      .transform((v) => (typeof v === "boolean" ? v : v === "true"))
+      .optional(),
+    limit: z.coerce.number().int().min(1).max(500).default(200),
+    offset: z.coerce.number().int().min(0).default(0),
+  })
+  .refine((v) => !(v.chapterId && v.zoneWideOnly), {
+    message: "chapterId and zoneWideOnly are mutually exclusive",
+    path: ["zoneWideOnly"],
+  });
+export type FinancialTargetListQuery = z.infer<typeof financialTargetListQuerySchema>;
