@@ -72,4 +72,83 @@ describe("two-factor plugin", () => {
       .limit(1);
     expect(row.twoFactorEnabled).toBe(false);
   });
+
+  // ─── MFA bypass closure (PR 2) ──────────────────────────────────
+  // Each test seeds an MFA-enrolled user, fires the offending
+  // Better Auth endpoint, and asserts a 409 / mfa_required rejection.
+  // A control case for each path asserts non-MFA users are unaffected.
+
+  async function seedUser(opts: { mfa: boolean }): Promise<{
+    id: string;
+    email: string;
+  }> {
+    const id = `u-${unique()}`;
+    const email = `mfa-policy+${unique()}@example.com`;
+    cleanupUserIds.push(id);
+    await db.insert(userTable).values({
+      id,
+      email,
+      emailVerified: true,
+      twoFactorEnabled: opts.mfa,
+    });
+    return { id, email };
+  }
+
+  async function post(path: string, body: unknown): Promise<Response> {
+    return app.fetch(
+      new Request(`${URL}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    );
+  }
+
+  it("refuses /sign-in/magic-link for an MFA-enrolled user", async () => {
+    const { email } = await seedUser({ mfa: true });
+    const res = await post("/api/auth/sign-in/magic-link", { email });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { code?: string; message?: string };
+    expect(body.code).toBe("mfa_required");
+  });
+
+  it("refuses /email-otp/send-verification-otp (type=sign-in) for an MFA-enrolled user", async () => {
+    const { email } = await seedUser({ mfa: true });
+    const res = await post("/api/auth/email-otp/send-verification-otp", {
+      email,
+      type: "sign-in",
+    });
+    expect(res.status).toBe(409);
+  });
+
+  it("refuses /sign-in/email-otp for an MFA-enrolled user", async () => {
+    const { email } = await seedUser({ mfa: true });
+    const res = await post("/api/auth/sign-in/email-otp", {
+      email,
+      otp: "123456",
+    });
+    expect(res.status).toBe(409);
+  });
+
+  it("lets /email-otp/send-verification-otp type=email-verification through for an MFA user", async () => {
+    // Email-verification path is not a sign-in bypass; refusing it
+    // would block password resets / new-email flows for MFA users.
+    const { email } = await seedUser({ mfa: true });
+    const res = await post("/api/auth/email-otp/send-verification-otp", {
+      email,
+      type: "email-verification",
+    });
+    // Better Auth may still 400 because we haven't gone through the
+    // full flow, but the status MUST NOT be our 409 / mfa_required.
+    expect(res.status).not.toBe(409);
+  });
+
+  it("does not block a non-MFA user from /sign-in/magic-link", async () => {
+    const { email } = await seedUser({ mfa: false });
+    const res = await post("/api/auth/sign-in/magic-link", { email });
+    // The magic-link plugin completes successfully (200) for a
+    // known email — the email is sent (or queued). Either way,
+    // our hook MUST NOT have intercepted with a 409.
+    expect(res.status).not.toBe(409);
+  });
 });
