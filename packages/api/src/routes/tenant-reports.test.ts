@@ -221,6 +221,7 @@ describe("tenant reports routes", () => {
     const body = (await res.json()) as { items: Array<{ id: string }> };
     const ids = body.items.map((r) => r.id).sort();
     expect(ids).toEqual([
+      "giving-by-chapter",
       "import-reconciliation",
       "member-finance-summary",
       "member-list",

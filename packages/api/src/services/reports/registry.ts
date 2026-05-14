@@ -2,6 +2,7 @@
 // Phase 7 — central registry of reports. Adding a new report means
 // implementing a `ReportSpec` and pushing it here.
 
+import { givingByChapterReport } from "./giving-by-chapter";
 import { importReconciliationReport } from "./import-reconciliation";
 import { memberFinanceSummaryReport } from "./member-finance-summary";
 import { memberListReport } from "./member-list";
@@ -17,6 +18,7 @@ import { ReportError, type ReportSpec } from "./types";
 const REGISTRY: Array<ReportSpec<unknown, unknown>> = [
   memberStatementReport as unknown as ReportSpec<unknown, unknown>,
   memberFinanceSummaryReport as unknown as ReportSpec<unknown, unknown>,
+  givingByChapterReport as unknown as ReportSpec<unknown, unknown>,
   importReconciliationReport as unknown as ReportSpec<unknown, unknown>,
   memberListReport as unknown as ReportSpec<unknown, unknown>,
 ];

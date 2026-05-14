@@ -59,6 +59,9 @@
   let importStatus = $state("");
   let givingTypeId = $state("");
   let paymentMethodId = $state("");
+  let pivotBy = $state<"givingType" | "category" | "month">("givingType");
+  let ministryYearId = $state("");
+  let partnershipYearId = $state("");
 
   let chapters = $state<Chapter[]>([]);
   let givingTypes = $state<GivingType[]>([]);
@@ -79,6 +82,14 @@
     ],
     "import-reconciliation": ["importJobId", "dateFrom", "dateTo", "importStatus"],
     "member-list": ["chapterId", "isActive"],
+    "giving-by-chapter": [
+      "dateFrom",
+      "dateTo",
+      "pivotBy",
+      "chapterId",
+      "ministryYearId",
+      "partnershipYearId",
+    ],
   };
   const visible = $derived(SHAPES[reportId] ?? []);
 
@@ -123,6 +134,11 @@
     if (visible.includes("importStatus") && importStatus) params.set("status", importStatus);
     if (visible.includes("paymentMethodId") && paymentMethodId) params.set("paymentMethodId", paymentMethodId);
     if (visible.includes("givingTypeId") && givingTypeId) params.set("givingTypeId", givingTypeId);
+    if (visible.includes("pivotBy")) params.set("pivotBy", pivotBy);
+    if (visible.includes("ministryYearId") && ministryYearId)
+      params.set("ministryYearId", ministryYearId);
+    if (visible.includes("partnershipYearId") && partnershipYearId)
+      params.set("partnershipYearId", partnershipYearId);
     return params;
   }
 
@@ -344,6 +360,41 @@
             bind:value={importJobId}
             class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
             placeholder="leave empty to use date range"
+          />
+        </label>
+      {/if}
+      {#if visible.includes("pivotBy")}
+        <label class="text-sm">
+          <span class="block text-slate-600">Pivot by</span>
+          <select
+            bind:value={pivotBy}
+            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+          >
+            <option value="givingType">Giving type</option>
+            <option value="category">Category</option>
+            <option value="month">Month</option>
+          </select>
+        </label>
+      {/if}
+      {#if visible.includes("ministryYearId")}
+        <label class="text-sm">
+          <span class="block text-slate-600">Ministry year ID (optional)</span>
+          <input
+            type="text"
+            bind:value={ministryYearId}
+            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+            placeholder="clamp to a ministry year"
+          />
+        </label>
+      {/if}
+      {#if visible.includes("partnershipYearId")}
+        <label class="text-sm">
+          <span class="block text-slate-600">Partnership year ID (optional)</span>
+          <input
+            type="text"
+            bind:value={partnershipYearId}
+            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+            placeholder="clamp to a partnership year"
           />
         </label>
       {/if}
