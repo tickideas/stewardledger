@@ -18,15 +18,14 @@ import {
   paymentMethods,
 } from "@stewardledger/db/schema";
 import {
-  CHAPTER_ROLES,
   uuidSchema,
-  type AuthorizedContext,
 } from "@stewardledger/shared";
 import {
   addBrandedSheet,
   escapeExcelText,
   moneyFormatForCurrency,
 } from "./branding";
+import { hasAnyZoneRole } from "./access";
 import {
   ReportError,
   type ReportColumn,
@@ -99,7 +98,7 @@ export const memberFinanceSummaryReport: ReportSpec<
     { key: "total", label: "Total", kind: "money" as const },
   ],
   accessCheck: (ctx, filters) => {
-    if (isZoneRead(ctx)) return null;
+    if (hasAnyZoneRole(ctx)) return null;
     if (ctx.chapterIds.length === 0) return "forbidden";
     if (filters.chapterId && !ctx.chapterIds.includes(filters.chapterId)) {
       return "forbidden";
@@ -111,7 +110,7 @@ export const memberFinanceSummaryReport: ReportSpec<
     ctx,
     filters,
   ): Promise<ReportFetchResult<MemberFinanceSummaryRow>> {
-    if (!isZoneRead(ctx) && filters.memberId) {
+    if (!hasAnyZoneRole(ctx) && filters.memberId) {
       const [member] = await database
         .select({ chapterId: members.chapterId })
         .from(members)
@@ -147,7 +146,7 @@ export const memberFinanceSummaryReport: ReportSpec<
     ];
     if (filters.chapterId) {
       conditions.push(eq(contributions.chapterId, filters.chapterId));
-    } else if (!isZoneRead(ctx)) {
+    } else if (!hasAnyZoneRole(ctx)) {
       conditions.push(inArray(contributions.chapterId, ctx.chapterIds));
     }
     if (filters.memberId) conditions.push(eq(contributions.memberId, filters.memberId));
@@ -432,9 +431,4 @@ function buildColumns(givingTypeCols: GivingTypeColumn[]): ReportColumn[] {
     })),
     { key: "total", label: "Total", kind: "money" as const },
   ];
-}
-
-function isZoneRead(ctx: AuthorizedContext): boolean {
-  const chapterCodes: readonly string[] = Object.values(CHAPTER_ROLES);
-  return ctx.roleCodes.some((c) => !chapterCodes.includes(c));
 }

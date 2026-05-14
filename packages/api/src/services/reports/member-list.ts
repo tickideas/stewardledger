@@ -20,11 +20,10 @@ import {
   titles,
 } from "@stewardledger/db/schema";
 import {
-  CHAPTER_ROLES,
   uuidSchema,
-  type AuthorizedContext,
 } from "@stewardledger/shared";
 import { addBrandedSheet, escapeExcelText } from "./branding";
+import { hasAnyZoneRole } from "./access";
 import type { ReportColumn, ReportFetchResult, ReportSpec } from "./types";
 
 export const memberListFiltersSchema = z.object({
@@ -78,7 +77,7 @@ export const memberListReport: ReportSpec<MemberListFilters, MemberListRow> = {
   columns: () => COLUMNS,
   accessCheck: (ctx, filters) => {
     // Chapter-scoped readers can only pull their bound chapters.
-    if (isZoneRead(ctx)) return null;
+    if (hasAnyZoneRole(ctx)) return null;
     if (ctx.chapterIds.length === 0) return "forbidden";
     if (filters.chapterId && !ctx.chapterIds.includes(filters.chapterId)) {
       return "forbidden";
@@ -89,7 +88,7 @@ export const memberListReport: ReportSpec<MemberListFilters, MemberListRow> = {
     const conditions = [eq(members.zoneId, ctx.zoneId), isNull(members.deletedAt)];
     if (filters.isActive !== undefined) conditions.push(eq(members.isActive, filters.isActive));
     if (filters.memberTypeId) conditions.push(eq(members.memberTypeId, filters.memberTypeId));
-    if (isZoneRead(ctx)) {
+    if (hasAnyZoneRole(ctx)) {
       if (filters.chapterId) conditions.push(eq(members.chapterId, filters.chapterId));
     } else {
       // Chapter-scoped: filter to bound chapters (accessCheck has
@@ -226,8 +225,3 @@ export const memberListReport: ReportSpec<MemberListFilters, MemberListRow> = {
     return new Uint8Array(buf as ArrayBuffer);
   },
 };
-
-function isZoneRead(ctx: AuthorizedContext): boolean {
-  const chapterCodes: readonly string[] = Object.values(CHAPTER_ROLES);
-  return ctx.roleCodes.some((c) => !chapterCodes.includes(c));
-}

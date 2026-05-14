@@ -32,15 +32,14 @@ import {
   user as userTable,
 } from "@stewardledger/db/schema";
 import {
-  CHAPTER_ROLES,
   uuidSchema,
-  type AuthorizedContext,
 } from "@stewardledger/shared";
 import {
   addBrandedSheet,
   escapeExcelText,
   moneyFormatForCurrency,
 } from "./branding";
+import { hasAnyZoneRole } from "./access";
 import type {
   CurrencySubtotal,
   ReportColumn,
@@ -109,11 +108,6 @@ const COLUMNS: ReportColumn[] = [
   { key: "errorMessage", label: "Error", kind: "text" },
 ];
 
-function isZoneRead(ctx: AuthorizedContext): boolean {
-  const chapterCodes: readonly string[] = Object.values(CHAPTER_ROLES);
-  return ctx.roleCodes.some((c) => !chapterCodes.includes(c));
-}
-
 export const importReconciliationReport: ReportSpec<
   ImportReconciliationFilters,
   ReconciliationRow
@@ -128,7 +122,7 @@ export const importReconciliationReport: ReportSpec<
     // Zone-wide readers see every job; chapter-scoped readers must own
     // at least one chapter binding (the per-job scope is applied in
     // `fetch` against `import_files.chapter_id`).
-    if (isZoneRead(ctx)) return null;
+    if (hasAnyZoneRole(ctx)) return null;
     if (ctx.chapterIds.length === 0) return "forbidden";
     return null;
   },
@@ -146,7 +140,7 @@ export const importReconciliationReport: ReportSpec<
     // readers see only jobs whose file is tied to one of their
     // bindings. The accessCheck above guarantees
     // `ctx.chapterIds.length > 0` here.
-    if (!isZoneRead(ctx)) {
+    if (!hasAnyZoneRole(ctx)) {
       jobConditions.push(inArray(importFiles.chapterId, ctx.chapterIds));
     }
 

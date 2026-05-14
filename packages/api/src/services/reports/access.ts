@@ -17,6 +17,7 @@ import {
   type AuthorizedContext,
 } from "@stewardledger/shared";
 
+
 /** Zone-wide roles that may VIEW any report. */
 export const REPORT_ZONE_READ_ROLES = [
   ZONE_ROLES.ZONE_OWNER,
@@ -73,4 +74,26 @@ export function canReadReports(ctx: AuthorizedContext): boolean {
 
 export function canExportReports(ctx: AuthorizedContext): boolean {
   return hasZoneReportExport(ctx) || hasChapterReportExport(ctx);
+}
+
+/**
+ * True when the caller holds at least one zone-wide role (any of the
+ * `REPORT_ZONE_READ_ROLES`). Used by spec-level `accessCheck`
+ * implementations to distinguish zone-wide readers (no chapter
+ * clamp) from chapter-scoped readers (clamp to bound chapters).
+ */
+export function hasAnyZoneRole(ctx: AuthorizedContext): boolean {
+  const chapterCodes: readonly string[] = Object.values(CHAPTER_ROLES);
+  return ctx.roleCodes.some((c) => !chapterCodes.includes(c));
+}
+
+/**
+ * True when the caller is admin-tier (zone owner / admin / finance
+ * admin). Used by reports whose READ contract is admin-only (e.g.
+ * the audit log) — viewer roles (auditor / pastor_viewer) are denied
+ * outright rather than served a redacted view.
+ */
+export function hasZoneAdminRole(ctx: AuthorizedContext): boolean {
+  const codes: readonly string[] = REPORT_ZONE_EXPORT_ROLES;
+  return ctx.roleCodes.some((c) => codes.includes(c));
 }
