@@ -461,19 +461,26 @@
         </label>
         <label class="text-sm">
           <span class="block text-slate-600">Target copies (optional)</span>
+          <!-- type="text" + inputmode keeps the bound value a string so
+               the submit handler's .trim() / nullish-coalesce logic
+               works the same way it does for the money fields. -->
           <input
-            type="number"
+            type="text"
             bind:value={createFullTargetCopies}
-            min="0"
+            inputmode="numeric"
+            pattern="[0-9]*"
+            placeholder="0"
             class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
           />
         </label>
         <label class="text-sm">
           <span class="block text-slate-600">Number of partners (optional)</span>
           <input
-            type="number"
+            type="text"
             bind:value={createNumberOfPartners}
-            min="0"
+            inputmode="numeric"
+            pattern="[0-9]*"
+            placeholder="0"
             class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
           />
         </label>
@@ -547,9 +554,10 @@
               </td>
               <td class="px-3 py-2 align-top">
                 <input
-                  type="number"
+                  type="text"
                   bind:value={editNumberOfPartners}
-                  min="0"
+                  inputmode="numeric"
+                  pattern="[0-9]*"
                   class="w-full rounded border border-slate-300 px-2 py-1 text-right"
                 />
               </td>

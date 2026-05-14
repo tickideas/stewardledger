@@ -163,11 +163,11 @@ describe("tenant periods routes", () => {
   it("user with no role in the zone is 403", async () => {
     asUser(outsider, "outsider@example.com");
     const res = await call(zoneA.slug, "/api/tenant/periods/ministry-years");
-    // No binding ⇒ middleware can't resolve a context for this
-    // tenant, so the request is rejected. Accept either 401 or 403
-    // depending on what the auth middleware emits, since we're
-    // testing that read access requires a role binding.
-    expect([401, 403]).toContain(res.status);
+    // The user is authenticated; they just have no binding in this
+    // zone. The auth middleware emits 403 (not 401) for that case
+    // — see `packages/api/src/middleware/auth.ts` 'No access to
+    // this zone'.
+    expect(res.status).toBe(403);
     vi.restoreAllMocks();
   });
 });

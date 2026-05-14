@@ -44,10 +44,34 @@ describe("hasZoneWriteTargets", () => {
 });
 
 describe("hasChapterWriteTargets", () => {
-  it("accepts chapter_admin only", () => {
-    expect(hasChapterWriteTargets(ctx({ roleCodes: ["chapter_admin"] }))).toBe(true);
-    expect(hasChapterWriteTargets(ctx({ roleCodes: ["chapter_treasurer"] }))).toBe(false);
-    expect(hasChapterWriteTargets(ctx({ roleCodes: ["chapter_bookkeeper"] }))).toBe(false);
+  it("accepts chapter_admin with at least one binding", () => {
+    expect(
+      hasChapterWriteTargets(
+        ctx({ roleCodes: ["chapter_admin"], chapterIds: ["c-bound"] }),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects chapter_admin with no bindings", () => {
+    // A chapter_admin role assignment without any bindings is a
+    // data-integrity edge case; the server-side route rejects
+    // writes for it, so the UI must not show a 'new target' CTA.
+    expect(
+      hasChapterWriteTargets(ctx({ roleCodes: ["chapter_admin"], chapterIds: [] })),
+    ).toBe(false);
+  });
+
+  it("rejects non-admin chapter roles + null", () => {
+    expect(
+      hasChapterWriteTargets(
+        ctx({ roleCodes: ["chapter_treasurer"], chapterIds: ["c-bound"] }),
+      ),
+    ).toBe(false);
+    expect(
+      hasChapterWriteTargets(
+        ctx({ roleCodes: ["chapter_bookkeeper"], chapterIds: ["c-bound"] }),
+      ),
+    ).toBe(false);
     expect(hasChapterWriteTargets(null)).toBe(false);
   });
 });

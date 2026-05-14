@@ -20,11 +20,18 @@ export function hasZoneWriteTargets(auth: AuthorizedContext | null): boolean {
   return auth.roleCodes.some((r) => ZONE_WRITE_ROLES.has(r));
 }
 
+/**
+ * True when `auth` holds chapter-admin AND has at least one chapter
+ * binding. A chapter_admin role assignment without any bindings is a
+ * data-integrity edge case (and the server-side route rejects writes
+ * for it), so the UI must not surface a "new target" button for it.
+ */
 export function hasChapterWriteTargets(
   auth: AuthorizedContext | null,
 ): boolean {
   if (!auth) return false;
-  return auth.roleCodes.some((r) => CHAPTER_WRITE_ROLES.has(r));
+  if (!auth.roleCodes.some((r) => CHAPTER_WRITE_ROLES.has(r))) return false;
+  return (auth.chapterIds ?? []).length > 0;
 }
 
 /**
