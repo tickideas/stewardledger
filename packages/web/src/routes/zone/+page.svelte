@@ -2,13 +2,14 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
 
-  // Bare `/zone` has no useful surface of its own; the zonal admin's first
-  // editorial chapter is the chapter register, so we land there.
+  // Bare `/zone` lands on the zone dashboard — the zonal admin's
+  // glance view across the whole tenant. Drilldown links from there
+  // take them into the editorial surfaces.
   $effect(() => {
     const zone = page.url.searchParams.get("zone");
     const target = zone
-      ? `/zone/chapters?zone=${encodeURIComponent(zone)}`
-      : "/zone/chapters";
+      ? `/zone/dashboard?zone=${encodeURIComponent(zone)}`
+      : "/zone/dashboard";
     goto(target, { replaceState: true });
   });
 </script>
