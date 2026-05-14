@@ -26,6 +26,10 @@ import type {
 } from "@stewardledger/shared";
 import { writeAudit, writeAuditMany } from "./audit";
 import { ContributionError } from "./contributions";
+import {
+  assertReferenceCodeInRange,
+  PayingInBookError,
+} from "./paying-in-books/validate";
 import { existsInZone } from "./_zone-scope";
 
 interface ActorContext {
@@ -132,6 +136,32 @@ export async function createBatch(
       if (!zone) throw new ContributionError("zone_default_currency_missing", "Zone is missing.");
       currency = zone.defaultCurrencyCode;
     }
+    // Paying-in book validation: when a treasurer attaches a
+    // reference code, confirm it falls within an active book for
+    // the chapter on the batch's date. "Batch date" is the
+    // attached service event's date when present, otherwise today
+    // UTC — the same calendar a treasurer would use to look up
+    // an active pad.
+    if (input.referenceCode) {
+      const onDate = await resolveBatchValidationDate(
+        tx,
+        ctx.zoneId,
+        input.serviceEventId ?? null,
+      );
+      try {
+        await assertReferenceCodeInRange(tx, {
+          zoneId: ctx.zoneId,
+          chapterId: input.chapterId,
+          referenceCode: input.referenceCode,
+          onDate,
+        });
+      } catch (err) {
+        if (err instanceof PayingInBookError) {
+          throw new ContributionError(err.code, err.message);
+        }
+        throw err;
+      }
+    }
     const [row] = await tx
       .insert(contributionBatches)
       .values({
@@ -219,6 +249,31 @@ export async function updateDraftBatch(
       !(await existsInZone(tx, paymentMethods, ctx.zoneId, patch.paymentMethodId))
     ) {
       throw new ContributionError("payment_method_not_found", "Payment method not in this zone.");
+    }
+    // Re-validate the paying-in-book reference code on update. We
+    // only fire when the patch SETS a non-null code; clearing the
+    // code (\`null\`) is always allowed. The lookup date follows
+    // the patch's service event when set, otherwise the existing
+    // batch's service event, otherwise today.
+    if (patch.referenceCode) {
+      const onDate = await resolveBatchValidationDate(
+        tx,
+        ctx.zoneId,
+        patch.serviceEventId ?? existing.serviceEventId,
+      );
+      try {
+        await assertReferenceCodeInRange(tx, {
+          zoneId: ctx.zoneId,
+          chapterId: existing.chapterId,
+          referenceCode: patch.referenceCode,
+          onDate,
+        });
+      } catch (err) {
+        if (err instanceof PayingInBookError) {
+          throw new ContributionError(err.code, err.message);
+        }
+        throw err;
+      }
     }
     const updates: Record<string, unknown> = {
       updatedAt: new Date(),
@@ -502,3 +557,33 @@ export async function postBatch(
 // Re-export so route handlers can match on the shared error class without
 // introducing an import cycle when the routes module pulls both services.
 export { ContributionError };
+
+/**
+ * Resolve the calendar date the paying-in-book validator should
+ * check against. Service event date wins when set (that's the
+ * treasurer's intent — "this is the pad I used at Sunday
+ * service"); otherwise today UTC. We don't try a zone-tz
+ * lookup here because the validation surface is a date range,
+ * not a wall-clock instant; the day-grain mismatch a TZ shift
+ * would introduce is harmless at this scale (a pad open for
+ * "2025-01-01..2025-12-31" still resolves the same code
+ * regardless of which civil day a treasurer is on at the
+ * UTC ↔ local boundary).
+ */
+async function resolveBatchValidationDate(
+  database: Db,
+  zoneId: string,
+  serviceEventId: string | null,
+): Promise<string> {
+  if (serviceEventId) {
+    const [evt] = await database
+      .select({ serviceDate: serviceEvents.serviceDate })
+      .from(serviceEvents)
+      .where(
+        and(eq(serviceEvents.zoneId, zoneId), eq(serviceEvents.id, serviceEventId)),
+      )
+      .limit(1);
+    if (evt?.serviceDate) return evt.serviceDate;
+  }
+  return new Date().toISOString().slice(0, 10);
+}

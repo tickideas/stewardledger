@@ -1116,6 +1116,7 @@ export const ERROR_STATUS: Record<string, number> = {
   total_without_lines: 422,
   lines_required: 422,
   non_positive_amount: 422,
+  reference_code_not_in_book: 422,
 };
 
 export function errorStatusFor(code: string): number {
