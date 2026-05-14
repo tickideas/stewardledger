@@ -26,7 +26,6 @@ import {
 } from "./branding";
 import { hasAnyZoneRole } from "./access";
 import type {
-  CurrencySubtotal,
   ReportColumn,
   ReportFetchResult,
   ReportSpec,
@@ -271,8 +270,14 @@ export const partnershipProgressReport: ReportSpec<
     const elapsedWeeks = Math.max(1, elapsedDays / 7);
     const elapsedMonths = Math.max(1, monthsBetween(year.startDate, cappedEnd));
 
+    // Subtotal note: this report intentionally does NOT emit a
+    // per-currency "sum of achieved" footer the way the ledger
+    // reports do. Zone-wide and chapter-scoped targets can overlap
+    // (a zone-wide TITHE target's achieved already includes every
+    // chapter's TITHE), so summing achieved across rows would
+    // double-count the contributions visible to multiple targets.
+    // The per-row achieved figure is the canonical answer.
     const rows: PartnershipProgressRow[] = [];
-    const grand = new Map<string, Decimal>();
     for (const t of targetRows) {
       const isZoneWide = t.chapterId === null;
       const achievedDec = isZoneWide
@@ -312,17 +317,10 @@ export const partnershipProgressReport: ReportSpec<
         fullTargetCopies: t.fullTargetCopies,
         numberOfPartners: t.numberOfPartners,
       });
-
-      const cur = grand.get(t.currencyCode) ?? new Decimal(0);
-      grand.set(t.currencyCode, cur.plus(achievedDec));
     }
 
     void totalMonths;
-    const subtotals: CurrencySubtotal[] = Array.from(grand.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([currencyCode, total]) => ({ currencyCode, total: total.toFixed(4) }));
-
-    return { rows, subtotals };
+    return { rows, subtotals: [] };
   },
   async excel(rows, subtotals, filters, branding) {
     const workbook = new ExcelJS.Workbook();

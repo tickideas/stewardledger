@@ -3000,7 +3000,11 @@ describe("partnership-progress report", () => {
     // 250 / 12000 = 2.0833...%; rounded to 1dp.
     expect(row.percentProgress).toBe("2.1%");
     expect(row.currencyCode).toBe("GBP");
-    expect(result.subtotals).toEqual([{ currencyCode: "GBP", total: "250.0000" }]);
+    // The per-currency subtotal block is intentionally empty: zone-
+    // wide and chapter-scoped targets can overlap, so summing
+    // "achieved" across rows would double-count. The per-row
+    // achieved figure is the canonical answer.
+    expect(result.subtotals).toEqual([]);
 
     const branding = await loadReportBranding(db, zone.id);
     const bytes = await partnershipProgressReport.excel(
@@ -3075,6 +3079,56 @@ describe("partnership-progress report", () => {
     expect(result.rows[0].chapterName).toBe("All chapters");
     // Zone-wide aggregates: 100 + 60 = 160.
     expect(result.rows[0].achieved).toBe("160.0000");
+  });
+
+  it("does not double-count when chapter-scoped and zone-wide targets overlap", async () => {
+    // Both a chapter-A target and a zone-wide target exist on the
+    // same partnership giving type, in the same currency. The same
+    // 100 GBP contribution is visible to both targets' achieved
+    // figures. The subtotal block stays empty so the consumer
+    // doesn't read 200 instead of the real 100 GBP in the system.
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+    const { partnerGivingTypeId, ministryYearId } = await seedTargetingContext(zone);
+
+    await db.insert(financialTargets).values([
+      {
+        zoneId: zone.id,
+        chapterId: zone.chapterId,
+        givingTypeId: partnerGivingTypeId,
+        ministryYearId,
+        fullTarget: "1000.0000",
+        currencyCode: "GBP",
+      },
+      {
+        zoneId: zone.id,
+        chapterId: null,
+        givingTypeId: partnerGivingTypeId,
+        ministryYearId,
+        fullTarget: "5000.0000",
+        currencyCode: "GBP",
+      },
+    ]);
+    const c = await createContribution(db, { zoneId: zone.id, userId: zone.userId }, {
+      chapterId: zone.chapterId,
+      memberId: zone.memberIds[0],
+      sourceType: "manual",
+      paymentMethodId: zone.cashPaymentMethodId,
+      contributionDate: TODAY,
+      lines: [{ givingTypeId: partnerGivingTypeId, amount: "100.00" }],
+    });
+    await postContribution(db, { zoneId: zone.id, userId: zone.userId }, c.contribution.id);
+
+    const result = await partnershipProgressReport.fetch(db, ctx, { ministryYearId });
+    expect(result.rows).toHaveLength(2);
+    // Both rows independently report achieved = 100; the chapter
+    // target sees its chapter's bucket, the zone-wide target sees
+    // the same chapter via the zone-wide aggregation.
+    expect(result.rows.every((r) => r.achieved === "100.0000")).toBe(true);
+    // Subtotal would have been 200 with a naive sum, but it must
+    // stay empty because the underlying GBP in the system is 100.
+    expect(result.subtotals).toEqual([]);
   });
 
   it("reversed contributions net to zero in the achieved column", async () => {
