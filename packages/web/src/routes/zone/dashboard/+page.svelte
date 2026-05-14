@@ -76,17 +76,32 @@
   }
 
   /**
-   * Format a UTC ISO datetime as `YYYY-MM-DD HH:mm` without leaning on
-   * `Intl.DateTimeFormat` defaults. Locale-sensitive `toLocaleString`
-   * would diverge across SSR / CSR if this page ever moves to
-   * `+page.server.ts`; sticking to a fixed format keeps both paths
-   * stable and matches the dashboard's other ISO date displays.
+   * Format a UTC ISO datetime in the zone's timezone with a stable
+   * `YYYY-MM-DD HH:mm` shape. We use `Intl.DateTimeFormat` for the
+   * TZ conversion only — the field order is fixed by reassembling
+   * the named parts, so the output stays identical across locales
+   * and remains deterministic on a future SSR path. Returns the raw
+   * iso string if either parsing or the formatter rejects.
    */
-  function fmtDateTime(iso: string): string {
+  function fmtDateTime(iso: string, timeZone: string): string {
     const d = new Date(iso);
     if (Number.isNaN(d.valueOf())) return iso;
-    const pad = (n: number) => String(n).padStart(2, "0");
-    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;
+    try {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).formatToParts(d);
+      const grab = (t: Intl.DateTimeFormatPartTypes) =>
+        parts.find((p) => p.type === t)?.value ?? "";
+      return `${grab("year")}-${grab("month")}-${grab("day")} ${grab("hour")}:${grab("minute")}`;
+    } catch {
+      return iso;
+    }
   }
 </script>
 
@@ -278,7 +293,7 @@
               <tr class="border-t border-[var(--rule)]">
                 <td class="py-2 pr-2 text-[var(--ink)]">{job.fileName}</td>
                 <td class="py-2 pr-2 text-[var(--ink-mute)]">
-                  {fmtDateTime(job.createdAt)}
+                  {fmtDateTime(job.createdAt, data.timeZone)}
                 </td>
                 <td class="py-2 pr-2">
                   <span class="sl-badge {job.status === 'committed' ? 'sl-badge-accent' : ''}">
@@ -303,7 +318,7 @@
     </div>
 
     <p class="sl-reveal sl-reveal-5 mt-10 text-[11px] text-[var(--ink-faint)]">
-      Generated {fmtDateTime(data.asOf)} · zone TZ {data.timeZone}
+      Generated {fmtDateTime(data.asOf, data.timeZone)} · {data.timeZone}
     </p>
   {/if}
 </div>
