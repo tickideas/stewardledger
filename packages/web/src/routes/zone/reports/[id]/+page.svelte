@@ -32,6 +32,7 @@
   type Chapter = { id: string; referenceCode: string; name: string };
   type GivingType = { id: string; name: string; shortCode: string | null; isActive: boolean };
   type PaymentMethod = { id: string; code: string; name: string; isActive: boolean };
+  type Account = { id: string; name: string; currencyCode: string };
 
   const reportId = $derived(page.params.id ?? "");
 
@@ -63,10 +64,13 @@
   let pivotBy = $state<"givingType" | "category" | "month">("givingType");
   let ministryYearId = $state("");
   let partnershipYearId = $state("");
+  let accountId = $state("");
+  let sourceType = $state<"" | "envelope" | "online" | "bank_import" | "oblation" | "manual">("");
 
   let chapters = $state<Chapter[]>([]);
   let givingTypes = $state<GivingType[]>([]);
   let paymentMethods = $state<PaymentMethod[]>([]);
+  let accounts = $state<Account[]>([]);
 
   // Map report id → which filter inputs to surface. Keeps the form
   // honest: the registry chooses what the report needs; this picks
@@ -91,6 +95,15 @@
       "ministryYearId",
       "partnershipYearId",
     ],
+    "general-ledger": [
+      "dateFrom",
+      "dateTo",
+      "chapterId",
+      "accountId",
+      "givingTypeId",
+      "paymentMethodId",
+      "sourceType",
+    ],
   };
   const visible = $derived(SHAPES[reportId] ?? []);
 
@@ -109,11 +122,15 @@
             controller.signal,
           )
         : Promise.resolve({ items: [] }),
+      visible.includes("accountId")
+        ? api.get<{ items: Account[] }>("/api/tenant/giving/accounts", controller.signal)
+        : Promise.resolve({ items: [] }),
     ])
-      .then(([chapterRes, givingTypeRes, paymentMethodRes]) => {
+      .then(([chapterRes, givingTypeRes, paymentMethodRes, accountRes]) => {
         chapters = chapterRes.items;
         givingTypes = givingTypeRes.items.filter((item) => item.isActive !== false);
         paymentMethods = paymentMethodRes.items.filter((item) => item.isActive !== false);
+        accounts = accountRes.items;
       })
       .catch((err) => {
         if (!isAbortError(err)) {
@@ -140,6 +157,8 @@
       params.set("ministryYearId", ministryYearId);
     if (visible.includes("partnershipYearId") && partnershipYearId)
       params.set("partnershipYearId", partnershipYearId);
+    if (visible.includes("accountId") && accountId) params.set("accountId", accountId);
+    if (visible.includes("sourceType") && sourceType) params.set("sourceType", sourceType);
     return params;
   }
 
@@ -397,6 +416,36 @@
             class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
             placeholder="clamp to a partnership year"
           />
+        </label>
+      {/if}
+      {#if visible.includes("accountId")}
+        <label class="text-sm">
+          <span class="block text-slate-600">Account</span>
+          <select
+            bind:value={accountId}
+            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+          >
+            <option value="">All accounts</option>
+            {#each accounts as account (account.id)}
+              <option value={account.id}>{account.name} ({account.currencyCode})</option>
+            {/each}
+          </select>
+        </label>
+      {/if}
+      {#if visible.includes("sourceType")}
+        <label class="text-sm">
+          <span class="block text-slate-600">Source</span>
+          <select
+            bind:value={sourceType}
+            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+          >
+            <option value="">All sources</option>
+            <option value="envelope">Envelope</option>
+            <option value="online">Online</option>
+            <option value="bank_import">Bank import</option>
+            <option value="oblation">Oblation</option>
+            <option value="manual">Manual</option>
+          </select>
         </label>
       {/if}
       {#if visible.includes("importStatus")}
