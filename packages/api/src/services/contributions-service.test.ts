@@ -1195,4 +1195,43 @@ describe("contributions service", () => {
     });
     expect(batch.referenceCode).toBe("PIB-0042");
   });
+
+  it("normalises an empty-string referenceCode to null on createBatch (no bypass, no empty persisted)", async () => {
+    // "" must be treated as 'no code attached' — the validator is
+    // skipped (it would otherwise reject because no book covers
+    // ""), AND the persisted column lands as null rather than "".
+    const batch = await createBatch(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+      referenceCode: "",
+    });
+    expect(batch.referenceCode).toBeNull();
+  });
+
+  it("normalises an empty-string referenceCode to null on updateDraftBatch", async () => {
+    // First create a batch with a real, validated reference code.
+    const { payingInBooks } = await import("@stewardledger/db/schema");
+    await db.insert(payingInBooks).values({
+      zoneId: zoneA.id,
+      chapterId: zoneA.chapterId,
+      referenceCodeStart: "CLR-0000",
+      referenceCodeEnd: "CLR-9999",
+      dateFrom: "2020-01-01",
+      dateTo: null,
+    });
+    const batch = await createBatch(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+      referenceCode: "CLR-0042",
+    });
+    expect(batch.referenceCode).toBe("CLR-0042");
+    // Patch with "": column is cleared to null.
+    const updated = await updateDraftBatch(
+      db,
+      { zoneId: zoneA.id, userId: USER_ID },
+      batch.id,
+      { referenceCode: "" },
+    );
+    expect(updated.referenceCode).toBeNull();
+  });
 });

@@ -141,10 +141,12 @@ export async function createBatch(
     // the chapter on the batch's date. "Batch date" is the
     // attached service event's date when present, otherwise today
     // UTC — the same calendar a treasurer would use to look up
-    // an active pad. We treat null and empty-string the same
-    // ("no code attached"); without the empty-string guard, a
-    // "" code would silently bypass the validator and persist.
-    if (input.referenceCode != null && input.referenceCode !== "") {
+    // an active pad. Normalising empty-string to null up front
+    // means the validator gate AND the persisted column treat the
+    // two identically — a "" code can't slip past validation and
+    // land in the DB as an empty string.
+    const referenceCode = normalizeReferenceCode(input.referenceCode);
+    if (referenceCode !== null) {
       const onDate = await resolveBatchValidationDate(
         tx,
         ctx.zoneId,
@@ -154,7 +156,7 @@ export async function createBatch(
         await assertReferenceCodeInRange(tx, {
           zoneId: ctx.zoneId,
           chapterId: input.chapterId,
-          referenceCode: input.referenceCode,
+          referenceCode,
           onDate,
         });
       } catch (err) {
@@ -172,7 +174,7 @@ export async function createBatch(
         serviceEventId: input.serviceEventId ?? null,
         paymentMethodId: input.paymentMethodId ?? null,
         sourceType: input.sourceType,
-        referenceCode: input.referenceCode ?? null,
+        referenceCode,
         cashTotal: input.cashTotal ?? null,
         chequeTotal: input.chequeTotal ?? null,
         currencyCode: currency,
@@ -252,17 +254,22 @@ export async function updateDraftBatch(
     ) {
       throw new ContributionError("payment_method_not_found", "Payment method not in this zone.");
     }
-    // Re-validate the paying-in-book reference code on update. We
-    // only fire when the patch SETS a non-empty code; clearing the
-    // code (explicit `null` or an empty string) is always allowed.
+    // Re-validate the paying-in-book reference code on update.
+    // Empty-string and null both mean "no code", so we normalise
+    // "" → null up front: the validator gate skips, and the DB
+    // write below clears the column rather than persisting "".
     // The lookup date follows the patch's service event when the
     // key is supplied (including an explicit `null`, which clears
-    // the link); otherwise the existing batch's service event;
-    // otherwise today. Using "key supplied" semantics here matters
-    // because `?? existing.serviceEventId` would silently ignore
-    // an explicit `serviceEventId: null` and validate against the
+    // the link); otherwise the existing batch's service event.
+    // "Key supplied" semantics matter here because
+    // `?? existing.serviceEventId` would silently ignore an
+    // explicit `serviceEventId: null` and validate against the
     // wrong date.
-    if (patch.referenceCode != null && patch.referenceCode !== "") {
+    const patchHasReferenceCode = "referenceCode" in patch;
+    const normalisedRefCode = patchHasReferenceCode
+      ? normalizeReferenceCode(patch.referenceCode)
+      : undefined;
+    if (normalisedRefCode != null) {
       const eventForDate =
         "serviceEventId" in patch ? patch.serviceEventId ?? null : existing.serviceEventId;
       const onDate = await resolveBatchValidationDate(tx, ctx.zoneId, eventForDate);
@@ -270,7 +277,7 @@ export async function updateDraftBatch(
         await assertReferenceCodeInRange(tx, {
           zoneId: ctx.zoneId,
           chapterId: existing.chapterId,
-          referenceCode: patch.referenceCode,
+          referenceCode: normalisedRefCode,
           onDate,
         });
       } catch (err) {
@@ -285,7 +292,10 @@ export async function updateDraftBatch(
       updatedByUserId: ctx.userId,
     };
     for (const k of BATCH_UPDATE_COLUMNS) {
-      const v = (patch as Partial<Record<BatchUpdateColumn, unknown>>)[k];
+      const v =
+        k === "referenceCode" && patchHasReferenceCode
+          ? normalisedRefCode
+          : (patch as Partial<Record<BatchUpdateColumn, unknown>>)[k];
       if (v !== undefined) updates[k] = v;
     }
     const [row] = await tx
@@ -562,6 +572,22 @@ export async function postBatch(
 // Re-export so route handlers can match on the shared error class without
 // introducing an import cycle when the routes module pulls both services.
 export { ContributionError };
+
+/**
+ * Treat empty-string reference codes the same as null. A treasurer
+ * who clears the input field on the UI submits `""`; the validator
+ * should skip the lookup AND the column should land in the DB as
+ * NULL so the absence is uniform across both representations.
+ * Trim before comparing so whitespace-only input is also treated
+ * as absent.
+ */
+function normalizeReferenceCode(
+  value: string | null | undefined,
+): string | null {
+  if (value === null || value === undefined) return null;
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
+}
 
 /**
  * Resolve the calendar date the paying-in-book validator should
