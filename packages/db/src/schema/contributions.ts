@@ -188,6 +188,14 @@ export const contributions = pgTable(
     index("contributions_zone_status_idx").on(table.zoneId, table.status),
     index("contributions_zone_period_idx").on(table.zoneId, table.givingPeriodId),
     index("contributions_batch_idx").on(table.batchId),
+    // Accelerates the weekly-finance report's allocation lookup,
+    // which filters `contributions` by `service_event_id` to attribute
+    // line totals back to a service event. Partial index because
+    // most contributions don't carry a direct service_event link
+    // (they inherit it from their batch).
+    index("contributions_zone_service_event_idx")
+      .on(table.zoneId, table.serviceEventId)
+      .where(sql`${table.serviceEventId} is not null`),
     foreignKey({
       name: "contributions_batch_zone_fk",
       columns: [table.zoneId, table.batchId],
