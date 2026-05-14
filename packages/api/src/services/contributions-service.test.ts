@@ -17,6 +17,7 @@ import {
   contributions,
   givingTypes,
   members,
+  payingInBooks,
   paymentMethods,
   serviceEvents,
   serviceTypes,
@@ -226,6 +227,8 @@ describe("contributions service", () => {
         await tx.execute(sql`delete from contributions where zone_id = ${z}`);
         await tx.execute(sql`delete from contribution_batches where zone_id = ${z}`);
         await tx.execute(sql`delete from service_events where zone_id = ${z}`);
+        // paying_in_books.chapter_id is FK ON DELETE RESTRICT.
+        await tx.execute(sql`delete from paying_in_books where zone_id = ${z}`);
         await tx.execute(sql`delete from members where zone_id = ${z}`);
         await tx.execute(sql`delete from chapters where zone_id = ${z}`);
         await tx.execute(sql`delete from zones where slug = ${slug}`);
@@ -789,6 +792,16 @@ describe("contributions service", () => {
   // ─── updateDraftBatch ──────────────────────────────────────────────
 
   it("updateDraftBatch patches whitelisted columns and audits", async () => {
+    // Phase 8 reference-code validator fires on patch as well, so
+    // we seed a wide-open paying-in book for the chapter first.
+    await db.insert(payingInBooks).values({
+      zoneId: zoneA.id,
+      chapterId: zoneA.chapterId,
+      referenceCodeStart: "ENV-0000-000",
+      referenceCodeEnd: "ENV-9999-999",
+      dateFrom: "2000-01-01",
+      dateTo: null,
+    });
     const batch = await createBatch(db, { zoneId: zoneA.id, userId: USER_ID }, {
       chapterId: zoneA.chapterId,
       sourceType: "manual",
@@ -883,6 +896,27 @@ describe("contributions service", () => {
     // chapter should return only that one. This case caught a real bug
     // where the previous implementation passed `${array}` directly into
     // a sql template, binding the array as a single parameter.
+    //
+    // Phase 8 reference-code validator fires on create, so seed a
+    // wide-open paying-in book for each chapter first.
+    await db.insert(payingInBooks).values([
+      {
+        zoneId: zoneA.id,
+        chapterId: zoneA.chapterId,
+        referenceCodeStart: "LIST-A-",
+        referenceCodeEnd: "LIST-A-zzzzzzzz",
+        dateFrom: "2000-01-01",
+        dateTo: null,
+      },
+      {
+        zoneId: zoneA.id,
+        chapterId: zoneA.otherChapterId,
+        referenceCodeStart: "LIST-O-",
+        referenceCodeEnd: "LIST-O-zzzzzzzz",
+        dateFrom: "2000-01-01",
+        dateTo: null,
+      },
+    ]);
     await createBatch(db, { zoneId: zoneA.id, userId: USER_ID }, {
       chapterId: zoneA.chapterId,
       sourceType: "manual",
@@ -1128,5 +1162,76 @@ describe("contributions service", () => {
       members: [{ memberId: zoneA.memberId, allocationPercent: "33.33" }],
     });
     expect(detail.members[0].allocationPercent).toBe("33.33");
+  });
+
+  it("rejects createBatch with a reference code that doesn't match any paying-in book", async () => {
+    // No paying-in book seeded for zoneA's chapter, so any
+    // non-null referenceCode at create time must reject.
+    await expect(
+      createBatch(db, { zoneId: zoneA.id, userId: USER_ID }, {
+        chapterId: zoneA.chapterId,
+        sourceType: "manual",
+        referenceCode: "NO-MATCH-9999",
+      }),
+    ).rejects.toMatchObject({ code: "reference_code_not_in_book" });
+  });
+
+  it("accepts createBatch when a paying-in book covers the reference code", async () => {
+    // Seed a book that covers the code, then assert the batch
+    // create succeeds.
+    const { payingInBooks } = await import("@stewardledger/db/schema");
+    await db.insert(payingInBooks).values({
+      zoneId: zoneA.id,
+      chapterId: zoneA.chapterId,
+      referenceCodeStart: "PIB-0001",
+      referenceCodeEnd: "PIB-9999",
+      dateFrom: "2020-01-01",
+      dateTo: null,
+    });
+    const batch = await createBatch(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+      referenceCode: "PIB-0042",
+    });
+    expect(batch.referenceCode).toBe("PIB-0042");
+  });
+
+  it("normalises an empty-string referenceCode to null on createBatch (no bypass, no empty persisted)", async () => {
+    // "" must be treated as 'no code attached' — the validator is
+    // skipped (it would otherwise reject because no book covers
+    // ""), AND the persisted column lands as null rather than "".
+    const batch = await createBatch(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+      referenceCode: "",
+    });
+    expect(batch.referenceCode).toBeNull();
+  });
+
+  it("normalises an empty-string referenceCode to null on updateDraftBatch", async () => {
+    // First create a batch with a real, validated reference code.
+    const { payingInBooks } = await import("@stewardledger/db/schema");
+    await db.insert(payingInBooks).values({
+      zoneId: zoneA.id,
+      chapterId: zoneA.chapterId,
+      referenceCodeStart: "CLR-0000",
+      referenceCodeEnd: "CLR-9999",
+      dateFrom: "2020-01-01",
+      dateTo: null,
+    });
+    const batch = await createBatch(db, { zoneId: zoneA.id, userId: USER_ID }, {
+      chapterId: zoneA.chapterId,
+      sourceType: "manual",
+      referenceCode: "CLR-0042",
+    });
+    expect(batch.referenceCode).toBe("CLR-0042");
+    // Patch with "": column is cleared to null.
+    const updated = await updateDraftBatch(
+      db,
+      { zoneId: zoneA.id, userId: USER_ID },
+      batch.id,
+      { referenceCode: "" },
+    );
+    expect(updated.referenceCode).toBeNull();
   });
 });
