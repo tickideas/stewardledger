@@ -42,6 +42,7 @@ import {
   revokeOpenInvitations,
 } from "../services/invitations";
 import { tenantContributionsRouter } from "./tenant-contributions";
+import { tenantDashboardRouter } from "./tenant-dashboard";
 import { tenantGivingRouter } from "./tenant-giving";
 import { tenantGivingEventsRouter } from "./tenant-giving-events";
 import { tenantGivingMethodsRouter } from "./tenant-giving-methods";
@@ -61,6 +62,7 @@ tenantRouter.route("/", tenantGivingEventsRouter);
 tenantRouter.route("/", tenantContributionsRouter);
 tenantRouter.route("/", tenantImportsRouter);
 tenantRouter.route("/", tenantReportsRouter);
+tenantRouter.route("/", tenantDashboardRouter);
 
 /** Current user's authorization context for the resolved zone. */
 tenantRouter.get("/me", async (c) => {
