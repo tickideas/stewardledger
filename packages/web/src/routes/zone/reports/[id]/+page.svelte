@@ -376,12 +376,48 @@
   });
 
   /**
+   * Reset every filter input to its module-load default. Used by
+   * `applySavedFilter` so a saved payload that omits a key clears
+   * the prior form value instead of letting it leak into the next
+   * run — a saved filter is meant to *fully describe* the run.
+   */
+  function resetFiltersToDefaults(): void {
+    memberId = "";
+    dateFrom = `${new Date().getFullYear()}-01-01`;
+    dateTo = new Date().toISOString().slice(0, 10);
+    includeVoided = false;
+    chapterId = "";
+    isActive = "";
+    importJobId = "";
+    importStatus = "";
+    givingTypeId = "";
+    paymentMethodId = "";
+    pivotBy = "givingType";
+    ministryYearId = "";
+    partnershipYearId = "";
+    accountId = "";
+    sourceType = "";
+    topN = 20;
+    partnershipOnly = false;
+    actorUserId = "";
+    entityType = "";
+    entityId = "";
+    action = "";
+  }
+
+  /**
    * Mutate the form's bound state from a saved-filter payload.
-   * Each key in the payload that maps to a known filter input is
-   * applied; unknown keys are ignored. Booleans and numbers come
-   * back as their JS type (the API stores parsed Zod output).
+   * Resets every input to its default first so keys omitted by
+   * the saved payload don't carry over from the prior form state
+   * — otherwise a treasurer applying "Annual 2024" after
+   * tweaking `chapterId` would silently include the stale
+   * chapterId in the next run.
+   *
+   * Booleans and numbers come back as their JS type (the API
+   * stores parsed Zod output); strings are passed through.
    */
   function applySavedFilter(saved: SavedFilter): void {
+    resetFiltersToDefaults();
     const f = saved.filters;
     const get = (k: string): unknown => f[k];
     if ("memberId" in f) memberId = String(get("memberId") ?? "");
