@@ -236,7 +236,7 @@ Deliverables (full list in [`REPORTS.md`](REPORTS.md)):
 - Weekly finance report. *(Excel + PDF landed; reads `service_events` joined with the new `service_event_attendance` sibling table, rolls up per-event cash / cheque / line totals per currency.)*
 - Statement import reconciliation report. *(Excel + PDF landed.)*
 - Member list (active, by chapter, by status). *(Excel + PDF landed.)*
-- Saved filters. *(queued)*
+- Saved filters. *(Personal-per-user named filter bundles per report, persisted in `saved_report_filters` (migration 0009). CRUD under `/api/tenant/reports/:id/saved-filters[/:filterId]`; the per-report UI at `/zone/reports/[id]` surfaces a pill picker + inline "Save current filters as…" form. Payloads re-validate against each report's existing Zod filter schema on write. Per-row audit (create / update / delete). Cross-user + cross-tenant isolation tested.)*
 - Background `report.generate` jobs with email-when-ready. *(queued; requires pg-boss worker, Phase 7+)*
 
 Implementation notes:
@@ -265,7 +265,7 @@ Audited implementation status (2026-05-13):
 - [x] Chapter dashboard endpoint + UI are implemented and tested (`services/dashboards/chapter-dashboard.ts`, `routes/tenant-dashboard.ts`, `routes/church/overview/+page.svelte`).
 - [x] Weekly finance report data + Excel export are implemented and tested (`weekly-finance.ts`, `reports.test.ts`); attendance lives in `service_event_attendance` (migration `0002_hesitant_human_robot.sql`).
 - [x] PDF export infrastructure (`pdfkit`-based generic branded-table renderer at `services/reports/pdf/branded-table.ts`; `GET /api/tenant/reports/:id/export.pdf` route; UI "Download PDF" alongside "Download Excel"). Bespoke layouts (letter-style member statement, partnership receipts) deferred until Playwright lands.
-- [ ] Saved filters.
+- [x] Saved filters.
 - [ ] Background `report.generate` worker + object-storage retention for large exports.
 
 Exit checklist:

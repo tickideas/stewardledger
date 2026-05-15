@@ -78,6 +78,23 @@
   let paymentMethods = $state<PaymentMethod[]>([]);
   let accounts = $state<Account[]>([]);
 
+  // Saved filters for this report. The picker is rendered as a row
+  // of pills above the form; clicking one populates the form fields
+  // by writing each known key back to its bound state.
+  type SavedFilter = {
+    id: string;
+    name: string;
+    filters: Record<string, unknown>;
+    createdAt: string;
+    updatedAt: string;
+  };
+  let savedFilters = $state<SavedFilter[]>([]);
+  let savedFiltersError = $state<string | null>(null);
+  let saveOpen = $state(false);
+  let saveName = $state("");
+  let saving = $state(false);
+  let saveError = $state<string | null>(null);
+
   // Map report id → which filter inputs to surface. Keeps the form
   // honest: the registry chooses what the report needs; this picks
   // which inputs render. Adding a report drops a new entry here.
@@ -326,6 +343,184 @@
       downloadController?.abort();
     };
   });
+
+  // ─── Saved filters ──────────────────────────────────────────
+
+  /**
+   * Refresh the saved-filter list. Called on page load (per
+   * report) and after each create / delete so the picker stays
+   * in sync without a full page reload.
+   */
+  async function refreshSavedFilters(signal?: AbortSignal): Promise<void> {
+    if (!reportId) return;
+    savedFiltersError = null;
+    try {
+      const res = await api.get<{ items: SavedFilter[] }>(
+        `/api/tenant/reports/${reportId}/saved-filters`,
+        signal,
+      );
+      savedFilters = res.items;
+    } catch (err) {
+      if (isAbortError(err)) return;
+      // Non-fatal — the rest of the page still works.
+      savedFiltersError =
+        err instanceof ApiError ? err.message : "Could not load saved filters.";
+    }
+  }
+
+  $effect(() => {
+    void reportId;
+    const controller = new AbortController();
+    void refreshSavedFilters(controller.signal);
+    return () => controller.abort();
+  });
+
+  /**
+   * Reset every filter input ahead of an `applySavedFilter` call so
+   * fields not present in the saved payload don't carry over from
+   * the user's prior tweaks. Each value below is deliberately the
+   * *empty / neutral* state — NOT the page's first-load date
+   * defaults (`${year}-01-01` / today). Recomputing those on every
+   * apply would make a saved filter that omits `dateFrom` /
+   * `dateTo` non-deterministic: the same pill click on different
+   * days would produce different runs.
+   *
+   * `currentParams()` already drops empty strings so a missing
+   * date here translates to a missing date in the next request,
+   * which is what "the saved filter doesn't constrain on date"
+   * means.
+   */
+  function resetFiltersToDefaults(): void {
+    memberId = "";
+    dateFrom = "";
+    dateTo = "";
+    includeVoided = false;
+    chapterId = "";
+    isActive = "";
+    importJobId = "";
+    importStatus = "";
+    givingTypeId = "";
+    paymentMethodId = "";
+    pivotBy = "givingType";
+    ministryYearId = "";
+    partnershipYearId = "";
+    accountId = "";
+    sourceType = "";
+    topN = 20;
+    partnershipOnly = false;
+    actorUserId = "";
+    entityType = "";
+    entityId = "";
+    action = "";
+  }
+
+  /**
+   * Mutate the form's bound state from a saved-filter payload.
+   * Resets every input to its default first so keys omitted by
+   * the saved payload don't carry over from the prior form state
+   * — otherwise a treasurer applying "Annual 2024" after
+   * tweaking `chapterId` would silently include the stale
+   * chapterId in the next run.
+   *
+   * Booleans and numbers come back as their JS type (the API
+   * stores parsed Zod output); strings are passed through.
+   */
+  function applySavedFilter(saved: SavedFilter): void {
+    resetFiltersToDefaults();
+    const f = saved.filters;
+    const get = (k: string): unknown => f[k];
+    if ("memberId" in f) memberId = String(get("memberId") ?? "");
+    if ("dateFrom" in f) dateFrom = String(get("dateFrom") ?? "");
+    if ("dateTo" in f) dateTo = String(get("dateTo") ?? "");
+    if ("includeVoided" in f) includeVoided = Boolean(get("includeVoided"));
+    if ("chapterId" in f) chapterId = String(get("chapterId") ?? "");
+    if ("isActive" in f) {
+      const v = get("isActive");
+      isActive = v === true || v === "true" ? "true" : v === false || v === "false" ? "false" : "";
+    }
+    if ("importJobId" in f) importJobId = String(get("importJobId") ?? "");
+    if ("status" in f) importStatus = String(get("status") ?? "");
+    if ("paymentMethodId" in f) paymentMethodId = String(get("paymentMethodId") ?? "");
+    if ("givingTypeId" in f) givingTypeId = String(get("givingTypeId") ?? "");
+    if ("pivotBy" in f) {
+      const v = String(get("pivotBy") ?? "givingType");
+      pivotBy = v === "category" || v === "month" ? v : "givingType";
+    }
+    if ("ministryYearId" in f) ministryYearId = String(get("ministryYearId") ?? "");
+    if ("partnershipYearId" in f)
+      partnershipYearId = String(get("partnershipYearId") ?? "");
+    if ("accountId" in f) accountId = String(get("accountId") ?? "");
+    if ("sourceType" in f) {
+      const v = String(get("sourceType") ?? "");
+      sourceType = v === "" || v === "envelope" || v === "online" || v === "bank_import" || v === "oblation" || v === "manual"
+        ? v
+        : "";
+    }
+    if ("topN" in f) {
+      const n = Number(get("topN"));
+      if (Number.isFinite(n)) topN = n;
+    }
+    if ("partnershipOnly" in f) partnershipOnly = Boolean(get("partnershipOnly"));
+    if ("actorUserId" in f) actorUserId = String(get("actorUserId") ?? "");
+    if ("entityType" in f) entityType = String(get("entityType") ?? "");
+    if ("entityId" in f) entityId = String(get("entityId") ?? "");
+    if ("action" in f) action = String(get("action") ?? "");
+  }
+
+  /**
+   * Build the filter payload to persist. We re-use `currentParams()`
+   * so the saved shape is byte-identical to what the report would
+   * see at run time — the API re-validates against the spec's Zod
+   * schema, which expects parsed types (number / boolean) rather
+   * than the URL-encoded string form. We coerce here for the keys
+   * the schemas treat as non-string.
+   */
+  function snapshotFilters(): Record<string, unknown> {
+    const params = currentParams();
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of params.entries()) {
+      if (key === "includeVoided" || key === "partnershipOnly") {
+        out[key] = value === "true";
+      } else if (key === "topN") {
+        const n = Number(value);
+        out[key] = Number.isFinite(n) ? n : value;
+      } else {
+        out[key] = value;
+      }
+    }
+    return out;
+  }
+
+  async function submitSave(evt: SubmitEvent): Promise<void> {
+    evt.preventDefault();
+    if (saving || !saveName.trim()) return;
+    saving = true;
+    saveError = null;
+    try {
+      await api.post<{ savedFilter: SavedFilter }>(
+        `/api/tenant/reports/${reportId}/saved-filters`,
+        { name: saveName.trim(), filters: snapshotFilters() },
+      );
+      saveName = "";
+      saveOpen = false;
+      await refreshSavedFilters();
+    } catch (err) {
+      saveError = err instanceof ApiError ? err.message : "Could not save.";
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function deleteSaved(saved: SavedFilter): Promise<void> {
+    if (!confirm(`Delete saved filter "${saved.name}"?`)) return;
+    try {
+      await api.delete(`/api/tenant/reports/${reportId}/saved-filters/${saved.id}`);
+      await refreshSavedFilters();
+    } catch (err) {
+      savedFiltersError =
+        err instanceof ApiError ? err.message : "Could not delete.";
+    }
+  }
 </script>
 
 <div class="max-w-6xl mx-auto px-6 py-8">
@@ -340,6 +535,43 @@
     </div>
     <a href="/zone/reports" class="text-sm text-slate-600 hover:text-slate-900">← All reports</a>
   </div>
+
+  {#if savedFilters.length > 0 || savedFiltersError}
+    <div class="mt-6 rounded-xl border bg-white p-4 shadow-sm">
+      <div class="flex items-baseline justify-between gap-3">
+        <h2 class="text-sm font-medium text-slate-900">Saved filters</h2>
+        <span class="text-[11px] text-slate-500">
+          Personal — visible only to you in this zone.
+        </span>
+      </div>
+      {#if savedFiltersError}
+        <p class="mt-2 text-[13px] text-rose-700">{savedFiltersError}</p>
+      {/if}
+      {#if savedFilters.length > 0}
+        <div class="mt-3 flex flex-wrap gap-2">
+          {#each savedFilters as saved (saved.id)}
+            <span
+              class="inline-flex items-center gap-1 rounded-full border border-slate-300 bg-slate-50 px-2.5 py-1 text-[12.5px] text-slate-700"
+            >
+              <button
+                type="button"
+                onclick={() => applySavedFilter(saved)}
+                class="hover:text-slate-900"
+                title="Apply these filters"
+              >{saved.name}</button>
+              <button
+                type="button"
+                onclick={() => deleteSaved(saved)}
+                aria-label={`Delete ${saved.name}`}
+                title={`Delete "${saved.name}"`}
+                class="text-slate-400 hover:text-rose-700"
+              >×</button>
+            </span>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   <form onsubmit={onSubmit} class="mt-6 rounded-xl border bg-white p-5 shadow-sm">
     <div class="grid grid-cols-1 gap-4 sm:grid-cols-4">
@@ -637,6 +869,66 @@
       {/if}
       {#if downloadError}
         <p>{downloadError}</p>
+      {/if}
+    </div>
+
+    <div class="mt-4 border-t border-slate-200 pt-4">
+      {#if !saveOpen}
+        <button
+          type="button"
+          onclick={() => {
+            saveOpen = true;
+            saveError = null;
+          }}
+          class="text-[13px] text-slate-600 hover:text-slate-900"
+        >+ Save current filters as…</button>
+      {:else}
+        <!--
+          Inline save form. Treated as a sub-form: we don't nest a
+          <form> inside the main filter form (HTML doesn't allow it);
+          instead we handle the click on the Save button and
+          submitSave's own preventDefault is unused. Pressing Enter
+          in the name field would submit the OUTER form (Run report),
+          so we trap Enter explicitly.
+        -->
+        <div class="flex flex-wrap items-center gap-2">
+          <input
+            type="text"
+            bind:value={saveName}
+            placeholder="e.g. Monthly close"
+            maxlength={80}
+            disabled={saving}
+            onkeydown={(ev) => {
+              if (ev.key === "Enter") {
+                ev.preventDefault();
+                void submitSave(new SubmitEvent("submit"));
+              }
+            }}
+            class="rounded-lg border border-slate-300 px-3 py-1.5 text-[13px]"
+          />
+          <button
+            type="button"
+            onclick={(ev) => {
+              ev.preventDefault();
+              void submitSave(new SubmitEvent("submit"));
+            }}
+            disabled={saving || !saveName.trim()}
+            class="rounded-lg bg-slate-900 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+          >{saving ? "Saving…" : "Save"}</button>
+          <button
+            type="button"
+            onclick={() => {
+              saveOpen = false;
+              saveName = "";
+              saveError = null;
+            }}
+            disabled={saving}
+            class="text-[13px] text-slate-500 hover:text-slate-900"
+          >Cancel</button>
+          {#if saveError}
+            <p class="text-[13px] text-rose-700">{saveError}</p>
+          {/if}
+        </div>
       {/if}
     </div>
   </form>
