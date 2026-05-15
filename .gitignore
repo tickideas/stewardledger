@@ -1,6 +1,10 @@
 # Dependencies
 node_modules/
 
+# Local object-storage root (filesystem adapter default).
+# STORAGE_ROOT overrides this; tests use a hardcoded local path.
+.stewardledger-storage/
+
 # Build outputs
 dist/
 build/
