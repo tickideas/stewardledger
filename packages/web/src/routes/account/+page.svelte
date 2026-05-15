@@ -1,3 +1,9 @@
+<!-- packages/web/src/routes/account/+page.svelte -->
+<!-- User account index: profile + password + link to /account/security -->
+<!-- (TOTP MFA). Reachable from every role surface via the sidebar -->
+<!-- profile menu. -->
+<!-- RELEVANT FILES: packages/web/src/routes/account/security/+page.svelte, packages/api/src/auth.ts -->
+
 <script lang="ts">
   import { PUBLIC_API_URL } from "$lib/env";
   import { loadSession, session } from "$lib/session.svelte";
