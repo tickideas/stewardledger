@@ -33,10 +33,29 @@
     }
   });
 
+  /**
+   * Authenticated landing + MFA enforcement. Combined into one effect
+   * so a user with a required role signing in goes straight to
+   * `/account/security?required=1` instead of bouncing through their
+   * normal landing path first.
+   *
+   * Rules:
+   *  - MFA enforcement wins over everything except the security page
+   *    itself (which is exempt so the user can actually enrol).
+   *  - From `/` or `/login`, an authenticated user without an
+   *    enforcement gate goes to their canonical landing path.
+   *  - Other paths under an authenticated session are left alone
+   *    unless enforcement applies.
+   */
   $effect(() => {
     if (session.current.status !== "authenticated") return;
     const path = page.url.pathname;
-    if (path === "/" || path === "/login") {
+    const enforced = session.current.zones.some((z) => z.mfaRequired);
+    if (enforced && path !== "/account/security") {
+      goto("/account/security?required=1", { replaceState: true });
+      return;
+    }
+    if (!enforced && (path === "/" || path === "/login")) {
       const input = landingInputFor(session.current);
       if (input) goto(authenticatedLandingPath(input), { replaceState: true });
     }
@@ -47,27 +66,6 @@
     const path = page.url.pathname;
     if (isProtectedPath(path)) {
       goto("/login?error=no_zone", { replaceState: true });
-    }
-  });
-
-  /**
-   * Per-zone MFA enforcement. When any zone in the user's session
-   * reports `mfaRequired` (the user holds a role on the zone's
-   * required-role list AND has not enrolled MFA), force them to
-   * `/account/security?required=1` until enrolment completes. The
-   * security page itself is exempt so the user can actually finish.
-   *
-   * Mirrors the existing `no_zone` gate: we don't block sign-in,
-   * we redirect post-auth so the user keeps their session and has
-   * a clear remediation path.
-   */
-  $effect(() => {
-    if (session.current.status !== "authenticated") return;
-    const path = page.url.pathname;
-    if (path === "/account/security") return;
-    const enforced = session.current.zones.some((z) => z.mfaRequired);
-    if (enforced) {
-      goto("/account/security?required=1", { replaceState: true });
     }
   });
 
