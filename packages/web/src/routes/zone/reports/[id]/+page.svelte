@@ -95,6 +95,28 @@
   let saving = $state(false);
   let saveError = $state<string | null>(null);
 
+  // Async export jobs for this report. Polled while any job is
+  // queued / running; otherwise refreshed on-demand after a queue
+  // action.
+  type JobSummary = {
+    id: string;
+    reportId: string;
+    format: "xlsx" | "pdf";
+    status: "queued" | "running" | "completed" | "failed";
+    rowCount: number | null;
+    byteCount: number | null;
+    errorCode: string | null;
+    errorMessage: string | null;
+    expiresAt: string;
+    createdAt: string;
+    startedAt: string | null;
+    completedAt: string | null;
+  };
+  let jobs = $state<JobSummary[]>([]);
+  let jobsError = $state<string | null>(null);
+  let queueingFormat = $state<"xlsx" | "pdf" | null>(null);
+  let queueError = $state<string | null>(null);
+
   // Map report id → which filter inputs to surface. Keeps the form
   // honest: the registry chooses what the report needs; this picks
   // which inputs render. Adding a report drops a new entry here.
@@ -521,6 +543,90 @@
         err instanceof ApiError ? err.message : "Could not delete.";
     }
   }
+
+  // ─── Async export jobs ───────────────────────────────────────────
+
+  async function refreshJobs(signal?: AbortSignal): Promise<void> {
+    if (!reportId) return;
+    jobsError = null;
+    try {
+      const res = await api.get<{ items: JobSummary[] }>(
+        `/api/tenant/reports/jobs?reportId=${encodeURIComponent(reportId)}&limit=10`,
+        signal,
+      );
+      jobs = res.items;
+    } catch (err) {
+      if (isAbortError(err)) return;
+      jobsError = err instanceof ApiError ? err.message : "Could not load jobs.";
+    }
+  }
+
+  $effect(() => {
+    void reportId;
+    const controller = new AbortController();
+    void refreshJobs(controller.signal);
+    return () => controller.abort();
+  });
+
+  // Poll while any job is in flight. The interval restarts whenever
+  // `jobs` changes so a finished poll doesn't keep firing.
+  $effect(() => {
+    const inFlight = jobs.some(
+      (j) => j.status === "queued" || j.status === "running",
+    );
+    if (!inFlight) return;
+    const handle = setInterval(() => {
+      void refreshJobs();
+    }, 5_000);
+    return () => clearInterval(handle);
+  });
+
+  async function queueJob(format: "xlsx" | "pdf"): Promise<void> {
+    if (queueingFormat) return;
+    queueingFormat = format;
+    queueError = null;
+    try {
+      // Reuse the same filter payload the report would see at
+      // synchronous run time; coerce non-string fields the same
+      // way snapshotFilters() does for saved filters.
+      const params = currentParams();
+      const filters: Record<string, unknown> = {};
+      for (const [key, value] of params.entries()) {
+        if (key === "includeVoided" || key === "partnershipOnly") {
+          filters[key] = value === "true";
+        } else if (key === "topN") {
+          const n = Number(value);
+          filters[key] = Number.isFinite(n) ? n : value;
+        } else {
+          filters[key] = value;
+        }
+      }
+      await api.post<{ job: JobSummary }>(
+        `/api/tenant/reports/${reportId}/jobs`,
+        { format, filters },
+      );
+      await refreshJobs();
+    } catch (err) {
+      queueError = err instanceof ApiError ? err.message : "Could not queue.";
+    } finally {
+      queueingFormat = null;
+    }
+  }
+
+  function jobDownloadHref(job: JobSummary): string {
+    return `${PUBLIC_API_URL}/api/tenant/reports/jobs/${job.id}/download`;
+  }
+
+  function formatRelative(iso: string): string {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return new Intl.DateTimeFormat(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      month: "short",
+      day: "numeric",
+    }).format(d);
+  }
 </script>
 
 <div class="max-w-6xl mx-auto px-6 py-8">
@@ -862,6 +968,25 @@
           {downloadingFormat === "pdf" ? "Downloading…" : "Download PDF"}
         </button>
       {/if}
+      <span class="ml-2 inline-flex items-center gap-2 text-[12px] text-slate-500">
+        or generate in background:
+      </span>
+      <button
+        type="button"
+        onclick={() => void queueJob("xlsx")}
+        disabled={queueingFormat !== null}
+        class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[13px] text-slate-700 hover:border-slate-400 disabled:opacity-50"
+      >
+        {queueingFormat === "xlsx" ? "Queueing…" : "Queue Excel"}
+      </button>
+      <button
+        type="button"
+        onclick={() => void queueJob("pdf")}
+        disabled={queueingFormat !== null}
+        class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[13px] text-slate-700 hover:border-slate-400 disabled:opacity-50"
+      >
+        {queueingFormat === "pdf" ? "Queueing…" : "Queue PDF"}
+      </button>
     </div>
     <div aria-live="polite" class="mt-3 text-sm text-rose-700">
       {#if loadError}
@@ -869,6 +994,9 @@
       {/if}
       {#if downloadError}
         <p>{downloadError}</p>
+      {/if}
+      {#if queueError}
+        <p>{queueError}</p>
       {/if}
     </div>
 
@@ -977,5 +1105,57 @@
         </dl>
       </div>
     {/if}
+  {/if}
+
+  {#if jobs.length > 0 || jobsError}
+    <div class="mt-6 rounded-xl border bg-white p-4 shadow-sm">
+      <div class="flex items-baseline justify-between gap-3">
+        <h2 class="text-sm font-medium text-slate-900">My recent jobs</h2>
+        <span class="text-[11px] text-slate-500">
+          Background exports for this report. Queued / running rows refresh
+          every 5 s.
+        </span>
+      </div>
+      {#if jobsError}
+        <p class="mt-2 text-[13px] text-rose-700">{jobsError}</p>
+      {/if}
+      {#if jobs.length > 0}
+        <ul class="mt-3 divide-y divide-slate-200">
+          {#each jobs as job (job.id)}
+            <li class="flex items-center justify-between gap-3 py-2 text-[13px]">
+              <div class="flex items-baseline gap-2">
+                <span class="font-mono uppercase text-slate-500">{job.format}</span>
+                <span
+                  class="rounded-full px-2 py-[1px] text-[11px]"
+                  class:bg-slate-100={job.status === "queued"}
+                  class:text-slate-600={job.status === "queued"}
+                  class:bg-amber-100={job.status === "running"}
+                  class:text-amber-800={job.status === "running"}
+                  class:bg-emerald-100={job.status === "completed"}
+                  class:text-emerald-800={job.status === "completed"}
+                  class:bg-rose-100={job.status === "failed"}
+                  class:text-rose-800={job.status === "failed"}
+                >{job.status}</span>
+                <span class="text-slate-500">{formatRelative(job.createdAt)}</span>
+                {#if job.rowCount !== null}
+                  <span class="text-slate-500">· {job.rowCount} rows</span>
+                {/if}
+                {#if job.errorMessage}
+                  <span class="text-rose-700">— {job.errorMessage}</span>
+                {/if}
+              </div>
+              <div class="flex items-center gap-3">
+                {#if job.status === "completed"}
+                  <a
+                    href={jobDownloadHref(job)}
+                    class="text-slate-700 underline hover:text-slate-900"
+                  >Download</a>
+                {/if}
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
   {/if}
 </div>
