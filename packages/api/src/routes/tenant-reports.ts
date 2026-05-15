@@ -1,17 +1,26 @@
 // packages/api/src/routes/tenant-reports.ts
 // Phase 7 — tenant-scoped reports endpoints. Mounted onto tenantRouter.
 //
-// GET  /api/tenant/reports                   list registered reports
-// GET  /api/tenant/reports/:id/data          fetch rows + per-currency subtotals
-// GET  /api/tenant/reports/:id/export.xlsx   download Excel artefact
-// GET  /api/tenant/reports/:id/export.pdf    download PDF artefact
+// GET    /api/tenant/reports                            list registered reports
+// GET    /api/tenant/reports/:id/data                   fetch rows + per-currency subtotals
+// GET    /api/tenant/reports/:id/export.xlsx            download Excel artefact
+// GET    /api/tenant/reports/:id/export.pdf             download PDF artefact
+// GET    /api/tenant/reports/:id/saved-filters          list caller's saved filters
+// POST   /api/tenant/reports/:id/saved-filters          create one
+// PATCH  /api/tenant/reports/:id/saved-filters/:filterId  rename / replace payload
+// DELETE /api/tenant/reports/:id/saved-filters/:filterId  hard delete (audited)
 //
 // Filters arrive as query params (`q.<key>=value`) so a treasurer can
 // bookmark a URL and re-run the same report without re-keying. Per-spec
 // `accessCheck` runs after the registry-level read/export gate.
 
+import { zValidator } from "@hono/zod-validator";
+import {
+  savedReportFilterCreateSchema,
+  savedReportFilterUpdateSchema,
+  type AuthorizedContext,
+} from "@stewardledger/shared";
 import { Hono } from "hono";
-import type { AuthorizedContext } from "@stewardledger/shared";
 import { db } from "../db";
 import {
   canExportReports,
@@ -20,6 +29,13 @@ import {
 import { loadReportBranding } from "../services/reports/branding";
 import { renderBrandedTablePdf } from "../services/reports/pdf/branded-table";
 import { getReport, listReports } from "../services/reports/registry";
+import {
+  createSavedFilter,
+  deleteSavedFilter,
+  listSavedFilters,
+  SavedFilterError,
+  updateSavedFilter,
+} from "../services/reports/saved-filters";
 import {
   parseReportFilters,
   ReportError,
@@ -233,6 +249,158 @@ tenantReportsRouter.get("/reports/:id/export.pdf", async (c) => {
     return handleError(c, err);
   }
 });
+
+// ─── Saved filters ───────────────────────────────────────────
+
+/**
+ * Resolve the spec, validate the saved filter's payload against
+ * the spec's Zod schema, and surface the canonical error envelope
+ * on mismatch. Returns the parsed filters on success; calls the
+ * usual `handleError` -> response builder on failure.
+ */
+function parseSavedFilterPayload(
+  spec: ReportSpec<unknown, unknown>,
+  filters: unknown,
+): { ok: true; filters: unknown } | { ok: false; error: ReportError } {
+  try {
+    const parsed = parseReportFilters(spec, filters ?? {});
+    return { ok: true, filters: parsed };
+  } catch (err) {
+    if (err instanceof ReportError) return { ok: false, error: err };
+    throw err;
+  }
+}
+
+function savedFilterErrorResponse(
+  c: { json: (b: unknown, s: number) => Response },
+  err: SavedFilterError,
+): Response {
+  const status: 404 | 409 = err.code === "not_found" ? 404 : 409;
+  return c.json({ error: { code: err.code, message: err.message } }, status);
+}
+
+tenantReportsRouter.get("/reports/:id/saved-filters", async (c) => {
+  const ctx = c.get("auth") as AuthorizedContext;
+  if (!canReadReports(ctx)) return forbidden(c);
+  const id = c.req.param("id");
+  try {
+    // Validate the report id against the registry so a stale
+    // report-id (removed from code) returns 404 instead of an
+    // empty list that looks confusingly normal.
+    getReport(id);
+  } catch (err) {
+    return handleError(c, err);
+  }
+  const items = await listSavedFilters(db, {
+    zoneId: ctx.zoneId,
+    userId: ctx.userId,
+    reportId: id,
+  });
+  c.header("cache-control", NO_STORE);
+  return c.json({ items });
+});
+
+tenantReportsRouter.post(
+  "/reports/:id/saved-filters",
+  zValidator("json", savedReportFilterCreateSchema),
+  async (c) => {
+    const ctx = c.get("auth") as AuthorizedContext;
+    if (!canReadReports(ctx)) return forbidden(c);
+    const id = c.req.param("id");
+    let spec: ReportSpec<unknown, unknown>;
+    try {
+      spec = getReport(id);
+    } catch (err) {
+      return handleError(c, err);
+    }
+    const input = c.req.valid("json");
+    const parsed = parseSavedFilterPayload(spec, input.filters);
+    if (!parsed.ok) return handleError(c, parsed.error);
+    try {
+      const row = await createSavedFilter(
+        db,
+        { zoneId: ctx.zoneId, userId: ctx.userId, reportId: id },
+        { name: input.name, filters: parsed.filters },
+      );
+      return c.json({ savedFilter: row }, 201);
+    } catch (err) {
+      if (err instanceof SavedFilterError)
+        return savedFilterErrorResponse(c, err);
+      throw err;
+    }
+  },
+);
+
+tenantReportsRouter.patch(
+  "/reports/:id/saved-filters/:filterId",
+  zValidator("json", savedReportFilterUpdateSchema),
+  async (c) => {
+    const ctx = c.get("auth") as AuthorizedContext;
+    if (!canReadReports(ctx)) return forbidden(c);
+    const id = c.req.param("id");
+    const filterId = c.req.param("filterId");
+    let spec: ReportSpec<unknown, unknown>;
+    try {
+      spec = getReport(id);
+    } catch (err) {
+      return handleError(c, err);
+    }
+    const input = c.req.valid("json");
+    let nextFilters: unknown;
+    if (input.filters !== undefined) {
+      const parsed = parseSavedFilterPayload(spec, input.filters);
+      if (!parsed.ok) return handleError(c, parsed.error);
+      nextFilters = parsed.filters;
+    }
+    try {
+      const row = await updateSavedFilter(
+        db,
+        {
+          id: filterId,
+          zoneId: ctx.zoneId,
+          userId: ctx.userId,
+          reportId: id,
+        },
+        { name: input.name, filters: nextFilters },
+      );
+      return c.json({ savedFilter: row });
+    } catch (err) {
+      if (err instanceof SavedFilterError)
+        return savedFilterErrorResponse(c, err);
+      throw err;
+    }
+  },
+);
+
+tenantReportsRouter.delete(
+  "/reports/:id/saved-filters/:filterId",
+  async (c) => {
+    const ctx = c.get("auth") as AuthorizedContext;
+    if (!canReadReports(ctx)) return forbidden(c);
+    const id = c.req.param("id");
+    const filterId = c.req.param("filterId");
+    try {
+      // Match GET behaviour: validate the report id so a stale
+      // call returns 404 here rather than after the DB read.
+      getReport(id);
+    } catch (err) {
+      return handleError(c, err);
+    }
+    try {
+      await deleteSavedFilter(db, {
+        id: filterId,
+        zoneId: ctx.zoneId,
+        userId: ctx.userId,
+        reportId: id,
+      });
+      return c.json({ deleted: true });
+    } catch (err) {
+      if (err instanceof SavedFilterError)
+        return savedFilterErrorResponse(c, err);
+      throw err;
+    }
+  },
+);
 
 function buildExportFilename(reportId: string, zoneSlug: string, ext: string): string {
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
