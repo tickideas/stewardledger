@@ -144,4 +144,22 @@ describe("isMfaEnrolled", () => {
     expect(await isMfaEnrolled(db, "")).toBe(false);
     expect(await isMfaEnrolled(db, "   ")).toBe(false);
   });
+
+  it("matches case-insensitively against a mixed-case stored email", async () => {
+    // Better Auth lowercases on signup but our admin scripts /
+    // imports could insert a mixed-case email directly. The bypass
+    // check must catch the user either way — otherwise an attacker
+    // could probe with a case variant and slip past the policy.
+    const id = `u-${unique()}`;
+    cleanupUserIds.push(id);
+    const stored = `User+${unique()}@Example.COM`;
+    await db.insert(userTable).values({
+      id,
+      email: stored,
+      emailVerified: true,
+      twoFactorEnabled: true,
+    });
+    expect(await isMfaEnrolled(db, stored.toLowerCase())).toBe(true);
+    expect(await isMfaEnrolled(db, stored.toUpperCase())).toBe(true);
+  });
 });

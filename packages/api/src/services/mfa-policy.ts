@@ -15,7 +15,7 @@
 //
 // RELEVANT FILES: packages/api/src/auth.ts, packages/api/src/routes/public.ts, packages/db/src/schema/zones.ts
 
-import { eq } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { user as userTable } from "@stewardledger/db/schema";
 import type { Db } from "@stewardledger/db";
 
@@ -77,9 +77,11 @@ export function extractBypassEmail(
  * default sign-in path keeps working; the caller will get the same
  * "no such user" error it would have gotten without us).
  *
- * Lookup is case-insensitive on the local-part-preserving lower
- * case used elsewhere in the codebase. Better Auth itself stores
- * emails verbatim, so we match by lowercase comparison.
+ * Comparison is case-insensitive: we don't depend on Better Auth's
+ * (current) lowercase-on-write contract because future code paths
+ * (imports, migration backfills, ad-hoc admin scripts) could insert
+ * a mixed-case email. Doing `lower(email) = lower(input)` keeps the
+ * bypass-closure correct regardless of how the row landed.
  */
 export async function isMfaEnrolled(
   database: Db,
@@ -90,8 +92,7 @@ export async function isMfaEnrolled(
   const [row] = await database
     .select({ twoFactorEnabled: userTable.twoFactorEnabled })
     .from(userTable)
-    // user.email is stored verbatim; compare case-insensitively.
-    .where(eq(userTable.email, normalised))
+    .where(sql`lower(${userTable.email}) = ${normalised}`)
     .limit(1);
   return row?.twoFactorEnabled === true;
 }
