@@ -376,15 +376,24 @@
   });
 
   /**
-   * Reset every filter input to its module-load default. Used by
-   * `applySavedFilter` so a saved payload that omits a key clears
-   * the prior form value instead of letting it leak into the next
-   * run — a saved filter is meant to *fully describe* the run.
+   * Reset every filter input ahead of an `applySavedFilter` call so
+   * fields not present in the saved payload don't carry over from
+   * the user's prior tweaks. Each value below is deliberately the
+   * *empty / neutral* state — NOT the page's first-load date
+   * defaults (`${year}-01-01` / today). Recomputing those on every
+   * apply would make a saved filter that omits `dateFrom` /
+   * `dateTo` non-deterministic: the same pill click on different
+   * days would produce different runs.
+   *
+   * `currentParams()` already drops empty strings so a missing
+   * date here translates to a missing date in the next request,
+   * which is what "the saved filter doesn't constrain on date"
+   * means.
    */
   function resetFiltersToDefaults(): void {
     memberId = "";
-    dateFrom = `${new Date().getFullYear()}-01-01`;
-    dateTo = new Date().toISOString().slice(0, 10);
+    dateFrom = "";
+    dateTo = "";
     includeVoided = false;
     chapterId = "";
     isActive = "";
