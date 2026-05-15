@@ -119,7 +119,22 @@ publicRouter.get("/session-zones", async (c) => {
   // chapter name so the church-admin sidebar can render a switcher without
   // a second round-trip.
   type ChapterRole = { chapterId: string; chapterName: string; roleCode: string };
-  type ZoneItem = {
+  /**
+   * Working state collected by the aggregator loop. Holds the
+   * zone's enforcement list so we can compute `mfaRequired` once
+   * all bindings for the zone are in; converted to the public
+   * `ZoneItem` shape below so the wire payload never carries
+   * server-internal fields.
+   */
+  type ZoneAggregator = {
+    id: string;
+    slug: string;
+    name: string;
+    zoneRoles: string[];
+    chapterRoles: ChapterRole[];
+    requiredRoleCodes: string[];
+  };
+  interface ZoneItem {
     id: string;
     slug: string;
     name: string;
@@ -131,14 +146,8 @@ publicRouter.get("/session-zones", async (c) => {
      * uses this to redirect MFA-less users to /account/security.
      */
     mfaRequired: boolean;
-    /**
-     * Internal: the zone's enforcement list. Carried on the
-     * aggregator so we can compute `mfaRequired` after all bindings
-     * have been collected. Dropped before serialising.
-     */
-    _mfaRequiredRoleCodes: string[];
-  };
-  const byZone = new Map<string, ZoneItem>();
+  }
+  const byZone = new Map<string, ZoneAggregator>();
   for (const b of bindingRows) {
     let z = byZone.get(b.zoneId);
     if (!z) {
@@ -148,8 +157,7 @@ publicRouter.get("/session-zones", async (c) => {
         name: b.zoneName,
         zoneRoles: [],
         chapterRoles: [],
-        mfaRequired: false,
-        _mfaRequiredRoleCodes: b.zoneMfaRequiredRoleCodes ?? [],
+        requiredRoleCodes: b.zoneMfaRequiredRoleCodes ?? [],
       };
       byZone.set(b.zoneId, z);
     }
@@ -168,19 +176,19 @@ publicRouter.get("/session-zones", async (c) => {
       }
     }
   }
-  const items = [...byZone.values()].map((z) => {
+  const items: ZoneItem[] = [...byZone.values()].map((z) => {
     const userRoleCodes = [
       ...z.zoneRoles,
       ...z.chapterRoles.map((r) => r.roleCode),
     ];
-    const mfaRequired = mfaRequiredInZone(
-      z._mfaRequiredRoleCodes,
-      userRoleCodes,
-    );
-    // Strip the internal helper before serialising.
-    const { _mfaRequiredRoleCodes: _drop, ...rest } = z;
-    void _drop;
-    return { ...rest, mfaRequired };
+    return {
+      id: z.id,
+      slug: z.slug,
+      name: z.name,
+      zoneRoles: z.zoneRoles,
+      chapterRoles: z.chapterRoles,
+      mfaRequired: mfaRequiredInZone(z.requiredRoleCodes, userRoleCodes),
+    };
   });
 
   return c.json({
