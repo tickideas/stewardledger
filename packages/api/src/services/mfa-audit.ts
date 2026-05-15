@@ -14,8 +14,12 @@
 //
 // RELEVANT FILES: packages/api/src/auth.ts, packages/db/src/schema/audit.ts, packages/api/src/services/audit.ts
 
-import { and, eq, isNull } from "drizzle-orm";
-import { userRoleBindings, zones } from "@stewardledger/db/schema";
+import { and, eq, isNull, sql } from "drizzle-orm";
+import {
+  user as userTable,
+  userRoleBindings,
+  zones,
+} from "@stewardledger/db/schema";
 import type { Db } from "@stewardledger/db";
 import { writeAuditMany, type AuditWrite } from "./audit";
 
@@ -78,6 +82,58 @@ export async function recordMfaAudit(
     entityType: "user",
     entityId: args.userId,
     after: { twoFactorEnabled: args.enabled },
+    ipAddress: args.ipAddress ?? null,
+    userAgent: args.userAgent ?? null,
+    requestId: args.requestId ?? null,
+  }));
+  await writeAuditMany(database, events);
+}
+
+interface RecordMfaBypassBlockedArgs {
+  email: string;
+  path: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  requestId?: string | null;
+}
+
+/**
+ * Audit a blocked MFA-bypass attempt. The user has TOTP enabled and
+ * someone tried to sign them in via /sign-in/email-otp,
+ * /sign-in/magic-link, or /email-otp/send-verification-otp — the
+ * bypass-closure rejected with 409. Without this, the attempt is
+ * invisible to operators (the response goes back to the attacker,
+ * nothing lands in the audit log).
+ *
+ * Resolves the email -> user id case-insensitively. If the email
+ * doesn't map to a known user the function no-ops — there's nothing
+ * to attribute the event to and the bypass-closure wouldn't have
+ * fired in that case either.
+ */
+export async function recordMfaBypassBlocked(
+  database: Db,
+  args: RecordMfaBypassBlockedArgs,
+): Promise<void> {
+  const normalised = args.email.trim().toLowerCase();
+  if (!normalised) return;
+  const [row] = await database
+    .select({ id: userTable.id })
+    .from(userTable)
+    .where(sql`lower(${userTable.email}) = ${normalised}`)
+    .limit(1);
+  if (!row) return;
+  const zoneIds = await scopedZoneIds(database, row.id);
+  if (zoneIds.length === 0) return;
+  const events: AuditWrite[] = zoneIds.map((zoneId) => ({
+    zoneId,
+    // The attacker is not authenticated; the event is attributed to
+    // the targeted user so a zone auditor can see "this account was
+    // probed via /sign-in/magic-link".
+    actorUserId: row.id,
+    action: "user.mfa_bypass_blocked",
+    entityType: "user",
+    entityId: row.id,
+    after: { path: args.path },
     ipAddress: args.ipAddress ?? null,
     userAgent: args.userAgent ?? null,
     requestId: args.requestId ?? null,

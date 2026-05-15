@@ -12,7 +12,7 @@ import { db } from "./db";
 import { env } from "./env";
 import { log } from "./logger";
 import { brandedEmailHtml, escapeHtml, sendEmail } from "./services/email";
-import { recordMfaAudit } from "./services/mfa-audit";
+import { recordMfaAudit, recordMfaBypassBlocked } from "./services/mfa-audit";
 import {
   extractBypassEmail,
   isMfaEnrolled,
@@ -257,9 +257,27 @@ export const auth = betterAuth({
           {
             matcher: (ctx) => MFA_BYPASS_PATHS.has(ctx.path ?? ""),
             handler: createAuthMiddleware(async (ctx) => {
-              const email = extractBypassEmail(ctx.path ?? "", ctx.body);
+              const path = ctx.path ?? "";
+              const email = extractBypassEmail(path, ctx.body);
               if (!email) return;
               if (await isMfaEnrolled(db, email)) {
+                // Audit the blocked attempt first so the event lands
+                // even if the caller drops the response. Best-effort:
+                // a failure here MUST NOT swallow the rejection.
+                try {
+                  await recordMfaBypassBlocked(db, {
+                    email,
+                    path,
+                    ipAddress:
+                      ctx.request?.headers.get("x-forwarded-for") ?? null,
+                    userAgent: ctx.request?.headers.get("user-agent") ?? null,
+                  });
+                } catch (err) {
+                  log.error(
+                    { err, path, email },
+                    "mfa-bypass audit hook failed; rejection still applied",
+                  );
+                }
                 throw new APIError("CONFLICT", {
                   code: "mfa_required",
                   message:

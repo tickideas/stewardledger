@@ -138,9 +138,12 @@ describe("two-factor plugin", () => {
       email,
       type: "email-verification",
     });
-    // Better Auth may still 400 because we haven't gone through the
-    // full flow, but the status MUST NOT be our 409 / mfa_required.
+    // Better Auth may 200 (queued) or 400 (the email path needs an
+    // existing verification context) depending on internal state,
+    // but it MUST NOT be our 409 / mfa_required and MUST NOT be a
+    // 5xx (which would indicate the hook crashed).
     expect(res.status).not.toBe(409);
+    expect(res.status).toBeLessThan(500);
   });
 
   it("does not block a non-MFA user from /sign-in/magic-link", async () => {
@@ -148,7 +151,9 @@ describe("two-factor plugin", () => {
     const res = await post("/api/auth/sign-in/magic-link", { email });
     // The magic-link plugin completes successfully (200) for a
     // known email — the email is sent (or queued). Either way,
-    // our hook MUST NOT have intercepted with a 409.
+    // our hook MUST NOT have intercepted with a 409 and MUST NOT
+    // crash with 5xx.
     expect(res.status).not.toBe(409);
+    expect(res.status).toBeLessThan(500);
   });
 });

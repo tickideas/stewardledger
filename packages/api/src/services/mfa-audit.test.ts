@@ -18,7 +18,11 @@ import {
 } from "@stewardledger/db/schema";
 import { db } from "../db";
 import { seedZoneRoles } from "./role-seed";
-import { recordMfaAudit, scopedZoneIds } from "./mfa-audit";
+import {
+  recordMfaAudit,
+  recordMfaBypassBlocked,
+  scopedZoneIds,
+} from "./mfa-audit";
 
 function unique(): string {
   return Math.random().toString(36).slice(2, 10);
@@ -164,5 +168,41 @@ describe("mfa-audit", () => {
     const events = await readMfaEvents(userId);
     expect(events).toHaveLength(1);
     expect(events[0].zoneId).toBe(zoneActive.id);
+  });
+
+  it("records user.mfa_bypass_blocked per zone with the offending path", async () => {
+    const zone = await seedZone();
+    cleanupZoneIds.push(zone.id);
+    const userId = await seedUser();
+    cleanupUserIds.push(userId);
+    // Look up the seeded email so we can pass it back in.
+    const [row] = await db
+      .select({ email: userTable.email })
+      .from(userTable)
+      .where(eq(userTable.id, userId))
+      .limit(1);
+    await bind(userId, zone.id, zone.ownerRoleId);
+
+    await recordMfaBypassBlocked(db, {
+      email: row.email,
+      path: "/sign-in/magic-link",
+    });
+
+    const events = await readMfaEvents(userId);
+    const blocked = events.filter((e) => e.action === "user.mfa_bypass_blocked");
+    expect(blocked).toHaveLength(1);
+    expect(blocked[0].zoneId).toBe(zone.id);
+    expect(blocked[0].after).toEqual({ path: "/sign-in/magic-link" });
+  });
+
+  it("recordMfaBypassBlocked no-ops for unknown emails", async () => {
+    // No exception, no rows written — the bypass-closure hook still
+    // throws the 409; the audit just has nothing to attribute.
+    await recordMfaBypassBlocked(db, {
+      email: `nobody-${unique()}@test.local`,
+      path: "/sign-in/email-otp",
+    });
+    // Sanity: smoke an unrelated user's events are still readable.
+    // Nothing to assert beyond "didn't throw".
   });
 });
