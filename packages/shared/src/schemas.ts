@@ -811,3 +811,29 @@ export const payingInBookListQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 export type PayingInBookListQuery = z.infer<typeof payingInBookListQuerySchema>;
+
+/**
+ * Saved report-filter payload. `filters` is a free-shape object
+ * because each report's filter contract is owned by its `ReportSpec`
+ * — the API route re-validates against the spec's schema before
+ * persisting. The schema here only enforces the wrapper.
+ */
+export const savedReportFilterCreateSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  filters: z.record(z.string(), z.unknown()).default({}),
+});
+export type SavedReportFilterCreateInput = z.infer<
+  typeof savedReportFilterCreateSchema
+>;
+
+export const savedReportFilterUpdateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(80).optional(),
+    filters: z.record(z.string(), z.unknown()).optional(),
+  })
+  .refine((v) => v.name !== undefined || v.filters !== undefined, {
+    message: "At least one of `name` or `filters` must be provided",
+  });
+export type SavedReportFilterUpdateInput = z.infer<
+  typeof savedReportFilterUpdateSchema
+>;
