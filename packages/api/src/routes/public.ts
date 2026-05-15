@@ -25,6 +25,7 @@ import {
   findInvitationByToken,
   InvitationError,
 } from "../services/invitations";
+import { mfaRequiredInZone } from "../services/mfa-policy";
 
 export const publicRouter = new Hono();
 
@@ -84,6 +85,7 @@ publicRouter.get("/session-zones", async (c) => {
         zoneId: zones.id,
         zoneSlug: zones.slug,
         zoneName: zones.name,
+        zoneMfaRequiredRoleCodes: zones.mfaRequiredRoleCodes,
         chapterId: userRoleBindings.chapterId,
         chapterName: chapters.name,
         roleCode: rolesTable.code,
@@ -117,14 +119,35 @@ publicRouter.get("/session-zones", async (c) => {
   // chapter name so the church-admin sidebar can render a switcher without
   // a second round-trip.
   type ChapterRole = { chapterId: string; chapterName: string; roleCode: string };
-  type ZoneItem = {
+  /**
+   * Working state collected by the aggregator loop. Holds the
+   * zone's enforcement list so we can compute `mfaRequired` once
+   * all bindings for the zone are in; converted to the public
+   * `ZoneItem` shape below so the wire payload never carries
+   * server-internal fields.
+   */
+  type ZoneAggregator = {
     id: string;
     slug: string;
     name: string;
     zoneRoles: string[];
     chapterRoles: ChapterRole[];
+    requiredRoleCodes: string[];
   };
-  const byZone = new Map<string, ZoneItem>();
+  interface ZoneItem {
+    id: string;
+    slug: string;
+    name: string;
+    zoneRoles: string[];
+    chapterRoles: ChapterRole[];
+    /**
+     * True when at least one of the user's role codes in this zone
+     * is on the zone's `mfa_required_role_codes` list. The web shell
+     * uses this to redirect MFA-less users to /account/security.
+     */
+    mfaRequired: boolean;
+  }
+  const byZone = new Map<string, ZoneAggregator>();
   for (const b of bindingRows) {
     let z = byZone.get(b.zoneId);
     if (!z) {
@@ -134,6 +157,7 @@ publicRouter.get("/session-zones", async (c) => {
         name: b.zoneName,
         zoneRoles: [],
         chapterRoles: [],
+        requiredRoleCodes: b.zoneMfaRequiredRoleCodes ?? [],
       };
       byZone.set(b.zoneId, z);
     }
@@ -152,7 +176,20 @@ publicRouter.get("/session-zones", async (c) => {
       }
     }
   }
-  const items = [...byZone.values()];
+  const items: ZoneItem[] = [...byZone.values()].map((z) => {
+    const userRoleCodes = [
+      ...z.zoneRoles,
+      ...z.chapterRoles.map((r) => r.roleCode),
+    ];
+    return {
+      id: z.id,
+      slug: z.slug,
+      name: z.name,
+      zoneRoles: z.zoneRoles,
+      chapterRoles: z.chapterRoles,
+      mfaRequired: mfaRequiredInZone(z.requiredRoleCodes, userRoleCodes),
+    };
+  });
 
   return c.json({
     items,

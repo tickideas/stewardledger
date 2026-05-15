@@ -6,12 +6,18 @@ import * as schema from "@stewardledger/db/schema";
 import { betterAuth } from "better-auth";
 import { eq } from "drizzle-orm";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { emailOTP, magicLink, twoFactor } from "better-auth/plugins";
 import { db } from "./db";
 import { env } from "./env";
 import { log } from "./logger";
 import { brandedEmailHtml, escapeHtml, sendEmail } from "./services/email";
-import { recordMfaAudit } from "./services/mfa-audit";
+import { recordMfaAudit, recordMfaBypassBlocked } from "./services/mfa-audit";
+import {
+  extractBypassEmail,
+  isMfaEnrolled,
+  MFA_BYPASS_PATHS,
+} from "./services/mfa-policy";
 
 // Cross-subdomain cookie support. Enabled only when AUTH_COOKIE_DOMAIN is
 // set in env — e.g. `.example.com` to share the session cookie between
@@ -213,25 +219,76 @@ export const auth = betterAuth({
       },
     }),
     /**
-     * TOTP-based two-factor authentication. Enrolment is currently
-     * gated to super-admins on the UI side (`/account/security`) —
-     * Better Auth's after-hook only challenges `/sign-in/email`, not
-     * the OTP / magic-link paths, so an MFA-enrolled user can still
-     * sign in unchallenged via those routes. PR 2 will plug that
-     * gap and lift the super-admin gate. See `tasks/totp-mfa.md`.
+     * TOTP-based two-factor authentication. The bypass-closure hook
+     * below refuses /sign-in/email-otp + /sign-in/magic-link +
+     * /email-otp/send-verification-otp for MFA-enrolled users, so
+     * those endpoints cannot end-run the TOTP challenge.
      *
      * `skipVerificationOnEnable: false` (default) means the user
      * must enter a fresh TOTP code before MFA arms — a typo'd
      * authenticator setup cannot lock the user out.
      *
-     * `issuer` ships as the static brand wordmark in PR 1. PR 2,
-     * when MFA opens to zone-bound users, should pass a per-call
-     * `issuer` override from /two-factor/enable so authenticator
-     * apps differentiate zones for users who administer several.
+     * `issuer` ships as the static brand wordmark today; a future
+     * iteration could pass a per-call `issuer` override from
+     * /two-factor/enable so authenticator apps differentiate zones
+     * for users who administer several.
      */
     twoFactor({
       issuer: BRAND_WORDMARK,
     }),
+    /**
+     * MFA bypass-closure plugin. Better Auth's two-factor after-hook
+     * only challenges `/sign-in/email`; we add a `before` hook that
+     * refuses the OTP / magic-link paths for an MFA-enrolled user so
+     * those routes cannot end-run the second factor.
+     *
+     * Implemented as an inline plugin because the top-level
+     * `betterAuth({ hooks: ... })` slot is a single middleware,
+     * whereas a plugin's `hooks.before` is the matcher-array shape
+     * we want.
+     *
+     * Returns 409 (conflict) on rejection: the credentials are not
+     * the problem, the user's MFA posture forbids this path.
+     */
+    {
+      id: "mfa-bypass-closure",
+      hooks: {
+        before: [
+          {
+            matcher: (ctx) => MFA_BYPASS_PATHS.has(ctx.path ?? ""),
+            handler: createAuthMiddleware(async (ctx) => {
+              const path = ctx.path ?? "";
+              const email = extractBypassEmail(path, ctx.body);
+              if (!email) return;
+              if (await isMfaEnrolled(db, email)) {
+                // Audit the blocked attempt first so the event lands
+                // even if the caller drops the response. Best-effort:
+                // a failure here MUST NOT swallow the rejection.
+                try {
+                  await recordMfaBypassBlocked(db, {
+                    email,
+                    path,
+                    ipAddress:
+                      ctx.request?.headers.get("x-forwarded-for") ?? null,
+                    userAgent: ctx.request?.headers.get("user-agent") ?? null,
+                  });
+                } catch (err) {
+                  log.error(
+                    { err, path, email },
+                    "mfa-bypass audit hook failed; rejection still applied",
+                  );
+                }
+                throw new APIError("CONFLICT", {
+                  code: "mfa_required",
+                  message:
+                    "This account has two-factor authentication on. Sign in with your password and enter the 6-digit code.",
+                });
+              }
+            }),
+          },
+        ],
+      },
+    },
   ],
   trustedOrigins: () => {
     const origins = new Set<string>([env.PUBLIC_APP_URL, env.PUBLIC_API_URL]);
