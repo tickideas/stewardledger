@@ -7,6 +7,7 @@
 <!-- RELEVANT FILES: packages/api/src/auth.ts, packages/api/src/services/mfa-policy.ts, packages/web/src/lib/qr.ts -->
 
 <script lang="ts">
+  import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { PUBLIC_API_URL } from "$lib/env";
   import { renderQrDataUrl } from "$lib/qr";
@@ -116,6 +117,11 @@
       verifyCode = "";
       // Refresh session so `user.twoFactorEnabled` flips locally.
       await loadSession({ force: true });
+      // Drop the `?required=1` query so a refresh / bookmark of this
+      // URL post-enrolment doesn't surface a now-irrelevant banner.
+      if (page.url.searchParams.has("required")) {
+        goto("/account/security", { replaceState: true });
+      }
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : "Could not verify the code.";
     } finally {
