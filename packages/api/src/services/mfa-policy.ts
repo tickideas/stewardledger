@@ -80,8 +80,9 @@ export function extractBypassEmail(
  * Comparison is case-insensitive: we don't depend on Better Auth's
  * (current) lowercase-on-write contract because future code paths
  * (imports, migration backfills, ad-hoc admin scripts) could insert
- * a mixed-case email. Doing `lower(email) = lower(input)` keeps the
- * bypass-closure correct regardless of how the row landed.
+ * a mixed-case email. The `user_email_lower_idx` functional unique
+ * index (migration 0008) backs this query so the lookup stays
+ * indexed instead of degrading to a seq scan.
  */
 export async function isMfaEnrolled(
   database: Db,

@@ -57,6 +57,13 @@
       "when": 1778802389556,
       "tag": "0007_zones_mfa_required_role_codes",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1778822081718,
+      "tag": "0008_user_email_lower_idx",
+      "breakpoints": true
     }
   ]
 }

@@ -4,6 +4,7 @@
 // `twoFactor`).
 // We add a thin StewardLedger-specific layer in roles.ts (user_role_bindings).
 
+import { sql } from "drizzle-orm";
 import { boolean, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 // ─── User ─────────────────────────────────────────────
@@ -30,7 +31,16 @@ export const user = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [uniqueIndex("user_email_idx").on(table.email)],
+  /**
+   * Functional unique on `lower(email)`. Better Auth lowercases on
+   * sign-up and reads via `email.toLowerCase()`, so this enforces
+   * the same invariant the application-layer expects. It also lets
+   * the MFA-bypass-closure lookup at
+   * `packages/api/src/services/mfa-policy.ts` (which does
+   * `where lower(email) = lower($1)`) ride an index instead of a
+   * seq scan.
+   */
+  (table) => [uniqueIndex("user_email_lower_idx").on(sql`lower(${table.email})`)],
 );
 
 // ─── Session ──────────────────────────────────────────
