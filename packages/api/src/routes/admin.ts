@@ -749,7 +749,6 @@ adminRouter.get("/regions", async (c) => {
       id: regions.id,
       name: regions.name,
       shortCode: regions.shortCode,
-      countryCode: regions.countryCode,
       isActive: regions.isActive,
       createdAt: regions.createdAt,
     })
@@ -773,7 +772,6 @@ adminRouter.post("/regions", zValidator("json", regionCreateSchema), async (c) =
     .values({
       name: input.name,
       shortCode: input.shortCode ?? null,
-      countryCode: input.countryCode ?? null,
       createdByUserId: user.id,
     })
     .returning();
@@ -797,7 +795,6 @@ adminRouter.patch("/regions/:id", zValidator("json", regionUpdateSchema), async 
     .set({
       ...(input.name !== undefined && { name: input.name }),
       ...(input.shortCode !== undefined && { shortCode: input.shortCode }),
-      ...(input.countryCode !== undefined && { countryCode: input.countryCode }),
       ...(input.isActive !== undefined && { isActive: input.isActive }),
       updatedAt: new Date(),
     })
@@ -869,7 +866,6 @@ adminRouter.post("/regions/promote", zValidator("json", regionPromoteSchema), as
         .values({
           name: input.regionDraft.name,
           shortCode: input.regionDraft.shortCode ?? null,
-          countryCode: input.regionDraft.countryCode ?? null,
           createdByUserId: user.id,
         })
         .returning({ id: regions.id });

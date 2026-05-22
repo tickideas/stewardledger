@@ -15,7 +15,6 @@ export const regions = pgTable(
       .$defaultFn(() => crypto.randomUUID()),
     name: text("name").notNull(),
     shortCode: text("short_code"),
-    countryCode: text("country_code"),
     isActive: boolean("is_active").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

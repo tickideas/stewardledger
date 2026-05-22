@@ -57,7 +57,6 @@ export type ZoneSignupInput = z.infer<typeof zoneSignupSchema>;
 export const regionCreateSchema = z.object({
   name: z.string().min(2).max(120),
   shortCode: z.string().min(2).max(16).optional(),
-  countryCode: countryCodeSchema.optional(),
 });
 export type RegionCreateInput = z.infer<typeof regionCreateSchema>;
 

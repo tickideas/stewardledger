@@ -45,7 +45,6 @@ publicRouter.get(
         id: regions.id,
         name: regions.name,
         shortCode: regions.shortCode,
-        countryCode: regions.countryCode,
       })
       .from(regions)
       .where(and(eq(regions.isActive, true), ilike(regions.name, `%${q}%`)))
