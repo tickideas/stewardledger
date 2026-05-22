@@ -106,6 +106,7 @@ export function landingInputFor(state: SessionState):
   | {
       activeZoneSlug: string | null;
       isSuperAdmin: boolean;
+      platformRoles: string[];
       activeZoneRoles: string[];
       activeZoneChapterRoles: Array<{ chapterId: string; roleCode: string }>;
     }
@@ -115,6 +116,10 @@ export function landingInputFor(state: SessionState):
   return {
     activeZoneSlug: state.activeZoneSlug,
     isSuperAdmin: state.isSuperAdmin,
+    // Surface platformRoles so the routing helpers can land a
+    // platform-only user (no zone bindings) on /admin/* instead of
+    // the no-zone login banner. See PR #48 review thread.
+    platformRoles: state.platformRoles,
     activeZoneRoles: zone?.zoneRoles ?? [],
     activeZoneChapterRoles:
       zone?.chapterRoles.map((r) => ({ chapterId: r.chapterId, roleCode: r.roleCode })) ?? [],

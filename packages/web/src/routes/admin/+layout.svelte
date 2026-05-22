@@ -7,17 +7,28 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { PLATFORM_NAV, isNavActive } from "$lib/nav";
-  import { isSuperAdmin, isSuperAdminOnlyPath, session, signOut } from "$lib/session.svelte";
+  import { isSuperAdmin, session, signOut } from "$lib/session.svelte";
+  import { canEnterAdminPath } from "$lib/session-paths";
 
   let { children } = $props();
 
   $effect(() => {
     const s = session.current;
-    if (
-      s.status === "authenticated" &&
-      !s.isSuperAdmin &&
-      isSuperAdminOnlyPath(page.url.pathname)
-    ) {
+    if (s.status !== "authenticated") return;
+    const hasZoneBinding = s.zones.some(
+      (z) => z.zoneRoles.length > 0 || z.chapterRoles.length > 0,
+    );
+    const ok = canEnterAdminPath({
+      pathname: page.url.pathname,
+      isSuperAdmin: s.isSuperAdmin,
+      platformRoles: s.platformRoles ?? [],
+      hasZoneBinding,
+    });
+    if (!ok) {
+      // Bounce in-app navigations the same way SSR would. We don’t
+      // recompute the precise landing here — /zone/chapters is the
+      // safe fallback for the tenant-bound case that triggers this
+      // branch most often.
       goto("/zone/chapters", { replaceState: true });
     }
   });
@@ -26,8 +37,16 @@
     const s = session.current;
     if (s.status === "loading") return true;
     if (isSuperAdmin(s)) return true;
-    if (s.status === "authenticated") return !isSuperAdminOnlyPath(page.url.pathname);
-    return false;
+    if (s.status !== "authenticated") return false;
+    const hasZoneBinding = s.zones.some(
+      (z) => z.zoneRoles.length > 0 || z.chapterRoles.length > 0,
+    );
+    return canEnterAdminPath({
+      pathname: page.url.pathname,
+      isSuperAdmin: s.isSuperAdmin,
+      platformRoles: s.platformRoles ?? [],
+      hasZoneBinding,
+    });
   });
 
   const path = $derived(page.url.pathname);

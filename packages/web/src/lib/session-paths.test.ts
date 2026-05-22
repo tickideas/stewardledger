@@ -7,6 +7,7 @@ import {
   authenticatedLandingPath,
   canAccessRole,
   canAccessRoleAnyZone,
+  canEnterAdminPath,
   isProtectedPath,
   isSafeInternalPath,
   isPlatformAdminPath,
@@ -515,6 +516,60 @@ describe("primaryRole + authenticatedLandingPath (platform-roles plumbed)", () =
         platformRoles: ["billing_admin"],
       }),
     ).toBe("/account");
+  });
+});
+
+describe("canEnterAdminPath", () => {
+  const sa = { isSuperAdmin: true, platformRoles: [] as string[], hasZoneBinding: false };
+  const supportOnly = { isSuperAdmin: false, platformRoles: ["support_admin"], hasZoneBinding: false };
+  const regionOnly = { isSuperAdmin: false, platformRoles: ["region_curator"], hasZoneBinding: false };
+  const billingOnly = { isSuperAdmin: false, platformRoles: ["billing_admin"], hasZoneBinding: false };
+  const zoneOnly = { isSuperAdmin: false, platformRoles: [] as string[], hasZoneBinding: true };
+  const nothing = { isSuperAdmin: false, platformRoles: [] as string[], hasZoneBinding: false };
+
+  it("super-admin can enter everything", () => {
+    for (const p of [
+      "/admin",
+      "/admin/zones",
+      "/admin/zones/demo",
+      "/admin/regions",
+      "/admin/regions/inbox",
+      "/admin/administrators",
+      "/admin/audit",
+    ]) {
+      expect(canEnterAdminPath({ pathname: p, ...sa })).toBe(true);
+    }
+  });
+
+  it("/admin/administrators + /admin/audit are super-admin only", () => {
+    for (const u of [supportOnly, regionOnly, billingOnly, zoneOnly, nothing]) {
+      expect(canEnterAdminPath({ pathname: "/admin/administrators", ...u })).toBe(false);
+      expect(canEnterAdminPath({ pathname: "/admin/audit", ...u })).toBe(false);
+    }
+  });
+
+  it("/admin/zones admits super_admin + support_admin only", () => {
+    expect(canEnterAdminPath({ pathname: "/admin/zones", ...supportOnly })).toBe(true);
+    expect(canEnterAdminPath({ pathname: "/admin/zones", ...regionOnly })).toBe(false);
+    expect(canEnterAdminPath({ pathname: "/admin/zones", ...billingOnly })).toBe(false);
+    expect(canEnterAdminPath({ pathname: "/admin/zones", ...zoneOnly })).toBe(false);
+    expect(canEnterAdminPath({ pathname: "/admin/zones", ...nothing })).toBe(false);
+  });
+
+  it("/admin/regions admits region_curator and any zone-bound user", () => {
+    expect(canEnterAdminPath({ pathname: "/admin/regions", ...regionOnly })).toBe(true);
+    expect(canEnterAdminPath({ pathname: "/admin/regions/inbox", ...zoneOnly })).toBe(true);
+    expect(canEnterAdminPath({ pathname: "/admin/regions", ...supportOnly })).toBe(false);
+    expect(canEnterAdminPath({ pathname: "/admin/regions", ...billingOnly })).toBe(false);
+    expect(canEnterAdminPath({ pathname: "/admin/regions", ...nothing })).toBe(false);
+  });
+
+  it("/admin index admits anyone with a meaningful platform footprint", () => {
+    expect(canEnterAdminPath({ pathname: "/admin", ...supportOnly })).toBe(true);
+    expect(canEnterAdminPath({ pathname: "/admin", ...regionOnly })).toBe(true);
+    expect(canEnterAdminPath({ pathname: "/admin", ...zoneOnly })).toBe(true);
+    expect(canEnterAdminPath({ pathname: "/admin", ...billingOnly })).toBe(false);
+    expect(canEnterAdminPath({ pathname: "/admin", ...nothing })).toBe(false);
   });
 });
 

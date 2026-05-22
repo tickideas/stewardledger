@@ -120,6 +120,42 @@ export function isSuperAdminOnlyPath(pathname: string): boolean {
  * admin layout SSR gate enforces this; the root gate only handles the
  * super-admin-only subset.
  */
+/**
+ * Per-path admission predicate for the `/admin/*` shell. Mirrors the
+ * API allow-lists so a non-super-admin who can use one route doesn't
+ * land on another that 403s every call. Used by both the SSR admin
+ * layout and the client-side `$effect` that watches in-app SPA
+ * navigation.
+ */
+export function canEnterAdminPath(args: {
+  pathname: string;
+  isSuperAdmin: boolean;
+  platformRoles: string[];
+  hasZoneBinding: boolean;
+}): boolean {
+  if (args.isSuperAdmin) return true;
+  const roles = new Set(args.platformRoles);
+  const path = args.pathname;
+  if (path === "/admin/administrators" || path.startsWith("/admin/administrators/"))
+    return false; // super-admin only
+  if (path === "/admin/audit" || path.startsWith("/admin/audit/"))
+    return false; // super-admin only
+  if (path === "/admin/zones" || path.startsWith("/admin/zones/")) {
+    return roles.has("support_admin");
+  }
+  if (path === "/admin/regions" || path.startsWith("/admin/regions/")) {
+    return roles.has("region_curator") || args.hasZoneBinding;
+  }
+  // /admin index + anything not enumerated: admit anyone with a
+  // meaningful platform footprint so we do not render an empty
+  // shell. Sub-pages still enforce their own rules above.
+  return (
+    roles.has("support_admin") ||
+    roles.has("region_curator") ||
+    args.hasZoneBinding
+  );
+}
+
 export function isPlatformAdminPath(pathname: string): boolean {
   return pathname === "/admin" || pathname.startsWith("/admin/");
 }
