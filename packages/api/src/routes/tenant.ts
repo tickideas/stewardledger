@@ -4,7 +4,9 @@
 import { zValidator } from "@hono/zod-validator";
 import {
   chapterBatchTemplates,
+  chapterGroupHistory,
   chapters,
+  groups,
   invitations,
   members,
   roles as rolesTable,
@@ -20,8 +22,10 @@ import {
   chapterProfileSchema,
   contributionBatchTemplateCreateSchema,
   invitationCreateSchema,
+  uuidSchema,
   ZONE_ROLES,
 } from "@stewardledger/shared";
+import { z } from "zod";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
@@ -34,6 +38,12 @@ import {
 import { type TenantBindings, tenantMiddleware } from "../middleware/tenant";
 import { writeAudit } from "../services/audit";
 import { nextChapterReferenceCode } from "../services/chapter-codes";
+import {
+  assignChapterToGroupPreEnable,
+  ChapterNotFoundError,
+  GroupNotFoundError,
+  GroupsNotEnabledError,
+} from "../services/groups";
 import { brandedEmailHtml, escapeHtml, sendEmail } from "../services/email";
 import {
   buildAcceptUrl,
@@ -193,27 +203,93 @@ tenantRouter.post("/chapters", zValidator("json", chapterCreateSchema), async (c
   const input = c.req.valid("json");
   const today = new Date().toISOString().slice(0, 10);
   const result = await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${ctx.zoneId}, 0))`,
+    );
     const referenceCode = await nextChapterReferenceCode(tx, ctx.zoneId);
     const [zone] = await tx
-      .select({ regionId: zones.regionId })
+      .select({ regionId: zones.regionId, groupsEnabled: zones.groupsEnabled })
       .from(zones)
       .where(eq(zones.id, ctx.zoneId))
       .limit(1);
+
+    if (zone?.groupsEnabled && !input.groupId) {
+      return {
+        error: {
+          status: 400 as const,
+          code: "group_required",
+          message: "groupId is required when groups are enabled",
+        },
+      } as const;
+    }
+    if (input.groupId) {
+      const [grp] = await tx
+        .select({ id: groups.id })
+        .from(groups)
+        .where(
+          and(
+            eq(groups.id, input.groupId),
+            eq(groups.zoneId, ctx.zoneId),
+            isNull(groups.deletedAt),
+          ),
+        )
+        .limit(1);
+      if (!grp) {
+        return {
+          error: {
+            status: 404 as const,
+            code: "group_not_found",
+            message: "Group not in this zone",
+          },
+        } as const;
+      }
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${input.groupId}, 0))`,
+      );
+      const [grp2] = await tx
+        .select({ deletedAt: groups.deletedAt })
+        .from(groups)
+        .where(eq(groups.id, input.groupId))
+        .limit(1);
+      if (!grp2 || grp2.deletedAt) {
+        return {
+          error: {
+            status: 404 as const,
+            code: "group_not_found",
+            message: "Group not in this zone",
+          },
+        } as const;
+      }
+    }
+
+    const dateFrom = input.dateFrom ?? today;
+
     const [row] = await tx
       .insert(chapters)
       .values({
         zoneId: ctx.zoneId,
         regionId: zone?.regionId ?? null,
+        groupId: input.groupId ?? null,
         referenceCode,
         name: input.name,
         countryCode: input.countryCode ?? null,
-        dateFrom: input.dateFrom ?? today,
+        dateFrom,
       })
       .returning({
         id: chapters.id,
         referenceCode: chapters.referenceCode,
         name: chapters.name,
+        groupId: chapters.groupId,
       });
+
+    if (zone?.groupsEnabled && input.groupId) {
+      await tx.insert(chapterGroupHistory).values({
+        zoneId: ctx.zoneId,
+        chapterId: row.id,
+        groupId: input.groupId,
+        dateFrom,
+      });
+    }
     await writeAudit(tx, {
       zoneId: ctx.zoneId,
       actorUserId: ctx.userId,
@@ -222,9 +298,12 @@ tenantRouter.post("/chapters", zValidator("json", chapterCreateSchema), async (c
       entityId: row.id,
       after: row,
     });
-    return row;
+    return { ok: row } as const;
   });
-  return c.json({ chapter: result }, 201);
+  if ("error" in result && result.error) {
+    return c.json({ error: result.error }, result.error.status);
+  }
+  return c.json({ chapter: result.ok }, 201);
 });
 
 /**
@@ -398,6 +477,52 @@ tenantRouter.patch(
     if (!result)
       return c.json({ error: { code: "not_found", message: "Chapter not found" } }, 404);
     return c.json({ banking: result });
+  },
+);
+
+tenantRouter.patch(
+  "/chapters/:id",
+  zValidator("json", z.object({ groupId: uuidSchema }).strict()),
+  async (c) => {
+    const ctx = c.get("auth") as AuthorizedContext;
+    if (!hasAnyRole(ctx, ZONE_ROLES.ZONE_OWNER, ZONE_ROLES.ZONE_ADMIN)) return forbidden(c);
+    const id = c.req.param("id");
+    const input = c.req.valid("json");
+
+    try {
+      await assignChapterToGroupPreEnable(db, {
+        zoneId: ctx.zoneId,
+        chapterId: id,
+        groupId: input.groupId,
+        actorUserId: ctx.userId,
+      });
+    } catch (e) {
+      if (e instanceof GroupsNotEnabledError) {
+        return c.json(
+          {
+            error: {
+              code: "use_move_group",
+              message: "Use POST /chapters/:id/move-group when groups are enabled",
+            },
+          },
+          400,
+        );
+      }
+      if (e instanceof GroupNotFoundError) {
+        return c.json(
+          { error: { code: "group_not_found", message: "Group not in this zone" } },
+          404,
+        );
+      }
+      if (e instanceof ChapterNotFoundError) {
+        return c.json(
+          { error: { code: "chapter_not_found", message: "Chapter not in this zone" } },
+          404,
+        );
+      }
+      throw e;
+    }
+    return c.json({ status: "assigned" });
   },
 );
 

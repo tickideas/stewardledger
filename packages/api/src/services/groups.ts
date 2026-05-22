@@ -20,6 +20,13 @@ export class GroupNotFoundError extends Error {
   }
 }
 
+export class ChapterNotFoundError extends Error {
+  readonly code = "chapter_not_found";
+  constructor(msg = "Chapter not found.") {
+    super(msg);
+  }
+}
+
 export class GroupNameTakenError extends Error {
   readonly code = "group_name_taken";
   constructor(name: string) {
@@ -115,6 +122,9 @@ export async function assignChapterToGroupPreEnable(
   args: { zoneId: string; chapterId: string; groupId: string; actorUserId: string | null },
 ): Promise<void> {
   await database.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${args.zoneId}, 0))`,
+    );
     const [zone] = await tx
       .select({ groupsEnabled: zones.groupsEnabled })
       .from(zones)
@@ -128,7 +138,7 @@ export async function assignChapterToGroupPreEnable(
       .from(groups)
       .where(and(eq(groups.id, args.groupId), eq(groups.zoneId, args.zoneId), isNull(groups.deletedAt)))
       .limit(1);
-    if (!grp) throw new Error("Group not found in zone");
+    if (!grp) throw new GroupNotFoundError();
 
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtextextended(${args.groupId}, 0))`,
@@ -138,14 +148,14 @@ export async function assignChapterToGroupPreEnable(
       .from(groups)
       .where(and(eq(groups.id, args.groupId), eq(groups.zoneId, args.zoneId), isNull(groups.deletedAt)))
       .limit(1);
-    if (!grp2) throw new Error("Group not found in zone");
+    if (!grp2) throw new GroupNotFoundError();
 
     const result = await tx
       .update(chapters)
       .set({ groupId: args.groupId, updatedAt: new Date() })
       .where(and(eq(chapters.id, args.chapterId), eq(chapters.zoneId, args.zoneId), isNull(chapters.deletedAt)))
       .returning({ id: chapters.id });
-    if (result.length === 0) throw new Error("Chapter not found in zone");
+    if (result.length === 0) throw new ChapterNotFoundError();
 
     await writeAudit(tx, {
       zoneId: args.zoneId,
@@ -164,6 +174,9 @@ export async function moveChapterToGroup(
   args: { zoneId: string; chapterId: string; newGroupId: string; effectiveDate: string; actorUserId: string | null },
 ): Promise<{ changed: boolean }> {
   return database.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${args.zoneId}, 0))`,
+    );
     const [zone] = await tx
       .select({ groupsEnabled: zones.groupsEnabled, tz: zones.defaultTimeZone })
       .from(zones)
@@ -184,7 +197,7 @@ export async function moveChapterToGroup(
       .from(chapters)
       .where(and(eq(chapters.id, args.chapterId), eq(chapters.zoneId, args.zoneId), isNull(chapters.deletedAt)))
       .limit(1);
-    if (!chap) throw new Error("Chapter not found in zone");
+    if (!chap) throw new ChapterNotFoundError();
 
     if (chap.groupId === args.newGroupId) return { changed: false };
 
@@ -193,7 +206,7 @@ export async function moveChapterToGroup(
       .from(groups)
       .where(and(eq(groups.id, args.newGroupId), eq(groups.zoneId, args.zoneId), isNull(groups.deletedAt)))
       .limit(1);
-    if (!grp) throw new Error("Target group not found in zone");
+    if (!grp) throw new GroupNotFoundError("Target group not found.");
 
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtextextended(${args.newGroupId}, 0))`,
@@ -203,7 +216,7 @@ export async function moveChapterToGroup(
       .from(groups)
       .where(and(eq(groups.id, args.newGroupId), eq(groups.zoneId, args.zoneId), isNull(groups.deletedAt)))
       .limit(1);
-    if (!g2) throw new Error("Target group not found in zone");
+    if (!g2) throw new GroupNotFoundError("Target group not found.");
 
     const [openSeg] = await tx
       .select({ id: chapterGroupHistory.id, dateFrom: chapterGroupHistory.dateFrom })
@@ -317,6 +330,9 @@ export async function softDeleteGroup(
   args: { zoneId: string; groupId: string; actorUserId: string | null },
 ): Promise<void> {
   await database.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${args.zoneId}, 0))`,
+    );
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtextextended(${args.groupId}, 0))`,
     );
