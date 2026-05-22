@@ -103,7 +103,7 @@ tenantGroupsRouter.post("/groups", zValidator("json", groupCreateSchema), async 
       return c.json({ error: { code: "group_slug_taken", message: e.message } }, 409);
     throw e;
   }
-  let result;
+  let result: { id: string; slug: string; name: string; createdAt: Date };
   try {
     result = await db.transaction(async (tx) => {
       const [row] = await tx
@@ -190,7 +190,7 @@ tenantGroupsRouter.patch("/groups/:id", zValidator("json", groupUpdateSchema), a
       return c.json({ error: { code: "group_slug_taken", message: e.message } }, 409);
     throw e;
   }
-  let result;
+  let result: { id: string; slug: string; name: string } | null;
   try {
     result = await db.transaction(async (tx) => {
       const [before] = await tx
