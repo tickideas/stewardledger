@@ -22,6 +22,7 @@ import {
   chapters,
   financialTargets,
   givingTypes,
+  groups,
   members,
   ministryYears,
   paymentMethods,
@@ -264,6 +265,7 @@ afterAll(async () => {
         await tx.execute(sql`delete from financial_targets where zone_id = ${id}`);
         await tx.execute(sql`delete from members where zone_id = ${id}`);
         await tx.execute(sql`delete from chapters where zone_id = ${id}`);
+        await tx.execute(sql`delete from groups where zone_id = ${id}`);
         await tx.execute(sql`delete from zones where id = ${id}`);
       }
       for (const [t, n] of guards) {
@@ -364,7 +366,7 @@ describe("member-statement report", () => {
     // accessCheck passes (chapter B is bound); the row-level enforcement
     // throws ReportError("forbidden") rather than returning empty so a
     // route caller cannot use the empty response as an existence oracle.
-    expect(memberStatementReport.accessCheck?.(chapterScopedCtx, filters)).toBeNull();
+    expect(await memberStatementReport.accessCheck?.(chapterScopedCtx, filters)).toBeNull();
     await expect(
       memberStatementReport.fetch(db, chapterScopedCtx, filters),
     ).rejects.toMatchObject({ code: "forbidden" });
@@ -509,7 +511,7 @@ describe("import-reconciliation tenancy", () => {
     };
 
     // accessCheck passes (caller has at least one binding).
-    expect(importReconciliationReport.accessCheck?.(chapterAReader, {})).toBeNull();
+    expect(await importReconciliationReport.accessCheck?.(chapterAReader, {})).toBeNull();
 
     // fetch returns only the chapter-A job; chapter-B's job is invisible.
     const result = await importReconciliationReport.fetch(db, chapterAReader, {
@@ -528,7 +530,7 @@ describe("import-reconciliation tenancy", () => {
     expect(bothIds).toContain(uploadedB.importJobId);
   });
 
-  it("denies a chapter-scoped caller with no bindings via accessCheck", () => {
+  it("denies a chapter-scoped caller with no bindings via accessCheck", async () => {
     const noBindings: AuthorizedContext = {
       userId: "u-x",
       zoneId: "z-x",
@@ -538,7 +540,7 @@ describe("import-reconciliation tenancy", () => {
       groupIds: [],
       isPlatformAdmin: false,
     };
-    expect(importReconciliationReport.accessCheck?.(noBindings, {})).toBe("forbidden");
+    expect(await importReconciliationReport.accessCheck?.(noBindings, {})).toBe("forbidden");
   });
 });
 
@@ -836,7 +838,7 @@ describe("member-finance-summary report", () => {
       isPlatformAdmin: false,
     };
 
-    const denial = memberFinanceSummaryReport.accessCheck?.(chapterScopedCtx, {
+    const denial = await memberFinanceSummaryReport.accessCheck?.(chapterScopedCtx, {
       chapterId: zone.otherChapterId,
       dateFrom: shiftDays(TODAY, -1),
       dateTo: shiftDays(TODAY, 1),
@@ -933,10 +935,41 @@ describe("member-list report", () => {
       isPlatformAdmin: false,
     };
 
-    const denial = memberListReport.accessCheck?.(chapterScopedCtx, {
+    const denial = await memberListReport.accessCheck?.(chapterScopedCtx, {
       chapterId: zone.otherChapterId,
     });
     expect(denial).toBe("forbidden");
+  });
+
+  it("clamps a group-tier caller to chapters in their bound group", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+
+    // Put only chapterA into a new group. ChapterB stays unaffiliated.
+    const [group] = await db
+      .insert(groups)
+      .values({ zoneId: zone.id, name: `G ${unique()}`, slug: `g-${unique()}` })
+      .returning({ id: groups.id });
+    await db
+      .update(chapters)
+      .set({ groupId: group.id })
+      .where(sql`${chapters.id} = ${zone.chapterId}`);
+
+    const groupCtx: AuthorizedContext = {
+      userId: zone.userId,
+      zoneId: zone.id,
+      regionId: null,
+      roleCodes: ["group_admin"],
+      chapterIds: [],
+      groupIds: [group.id],
+      isPlatformAdmin: false,
+    };
+
+    const result = await memberListReport.fetch(db, groupCtx, {});
+    // Only chapterA's members surface; chapterB (m2) must be invisible.
+    expect(result.rows.map((r) => r.referenceCode).sort()).toEqual(
+      [zone.memberRefs[0], zone.memberRefs[1]].sort(),
+    );
   });
 });
 
@@ -1112,7 +1145,7 @@ describe("giving-by-chapter report", () => {
       isPlatformAdmin: false,
     };
 
-    const denial = givingByChapterReport.accessCheck?.(chapterScopedCtx, {
+    const denial = await givingByChapterReport.accessCheck?.(chapterScopedCtx, {
       dateFrom: shiftDays(TODAY, -1),
       dateTo: shiftDays(TODAY, 1),
       pivotBy: "givingType",
@@ -1486,8 +1519,7 @@ describe("general-ledger report", () => {
       isPlatformAdmin: false,
     };
 
-    expect(
-      generalLedgerReport.accessCheck?.(chapterScopedCtx, {
+    expect(await generalLedgerReport.accessCheck?.(chapterScopedCtx, {
         dateFrom: shiftDays(TODAY, -1),
         dateTo: shiftDays(TODAY, 1),
         chapterId: zone.otherChapterId,
@@ -1706,8 +1738,7 @@ describe("envelope-ledger report", () => {
       isPlatformAdmin: false,
     };
 
-    expect(
-      envelopeLedgerReport.accessCheck?.(chapterScopedCtx, {
+    expect(await envelopeLedgerReport.accessCheck?.(chapterScopedCtx, {
         dateFrom: shiftDays(TODAY, -1),
         dateTo: shiftDays(TODAY, 1),
         chapterId: zone.otherChapterId,
@@ -1967,8 +1998,7 @@ describe("online-giving-ledger report", () => {
       isPlatformAdmin: false,
     };
 
-    expect(
-      onlineGivingLedgerReport.accessCheck?.(chapterScopedCtx, {
+    expect(await onlineGivingLedgerReport.accessCheck?.(chapterScopedCtx, {
         dateFrom: shiftDays(TODAY, -1),
         dateTo: shiftDays(TODAY, 1),
         chapterId: zone.otherChapterId,
@@ -2206,8 +2236,7 @@ describe("top-partners report", () => {
       isPlatformAdmin: false,
     };
 
-    expect(
-      topPartnersReport.accessCheck?.(chapterScopedCtx, {
+    expect(await topPartnersReport.accessCheck?.(chapterScopedCtx, {
         dateFrom: shiftDays(TODAY, -1),
         dateTo: shiftDays(TODAY, 1),
         topN: 20,
@@ -2392,8 +2421,7 @@ describe("top-chapters report", () => {
     };
 
     // accessCheck just requires at least one binding.
-    expect(
-      topChaptersReport.accessCheck?.(chapterScopedCtx, {
+    expect(await topChaptersReport.accessCheck?.(chapterScopedCtx, {
         dateFrom: shiftDays(TODAY, -1),
         dateTo: shiftDays(TODAY, 1),
         topN: 20,
@@ -2559,7 +2587,7 @@ describe("audit-log report", () => {
     expect(result.rows).toHaveLength(0);
   });
 
-  it("denies non-admin callers via accessCheck (chapter + viewer roles)", () => {
+  it("denies non-admin callers via accessCheck (chapter + viewer roles)", async () => {
     const baseCtx: Omit<AuthorizedContext, "roleCodes"> = {
       userId: "u-stub",
       zoneId: "z-stub",
@@ -2569,8 +2597,7 @@ describe("audit-log report", () => {
       isPlatformAdmin: false,
     };
     // Chapter-scoped role — no zone view at all.
-    expect(
-      auditLogReport.accessCheck?.(
+    expect(await auditLogReport.accessCheck?.(
         { ...baseCtx, roleCodes: ["chapter_treasurer"] } satisfies AuthorizedContext,
         wideFilters(),
       ),
@@ -2578,8 +2605,7 @@ describe("audit-log report", () => {
     // Zone viewer tiers are also denied: REPORTS.md §2.13 marks this
     // report admin-facing, and the trail itself is sensitive even
     // read-only (it exposes who edited what / when across the zone).
-    expect(
-      auditLogReport.accessCheck?.(
+    expect(await auditLogReport.accessCheck?.(
         {
           ...baseCtx,
           roleCodes: [ZONE_ROLES.ZONE_AUDITOR],
@@ -2589,8 +2615,7 @@ describe("audit-log report", () => {
         wideFilters(),
       ),
     ).toBe("forbidden");
-    expect(
-      auditLogReport.accessCheck?.(
+    expect(await auditLogReport.accessCheck?.(
         {
           ...baseCtx,
           roleCodes: [ZONE_ROLES.ZONE_PASTOR_VIEWER],
@@ -2606,8 +2631,7 @@ describe("audit-log report", () => {
       ZONE_ROLES.ZONE_ADMIN,
       ZONE_ROLES.ZONE_FINANCE_ADMIN,
     ]) {
-      expect(
-        auditLogReport.accessCheck?.(
+      expect(await auditLogReport.accessCheck?.(
           {
             ...baseCtx,
             roleCodes: [code],
@@ -2874,8 +2898,7 @@ describe("weekly-finance report", () => {
 
     // accessCheck allows the request; the fetch only returns events
     // in bound chapters.
-    expect(
-      weeklyFinanceReport.accessCheck?.(chapterScopedCtx, {
+    expect(await weeklyFinanceReport.accessCheck?.(chapterScopedCtx, {
         dateFrom: shiftDays(TODAY, -1),
         dateTo: shiftDays(TODAY, 1),
       }),
@@ -2893,8 +2916,7 @@ describe("weekly-finance report", () => {
     ).toBe(false);
 
     // Out-of-scope chapterId filter is denied.
-    expect(
-      weeklyFinanceReport.accessCheck?.(chapterScopedCtx, {
+    expect(await weeklyFinanceReport.accessCheck?.(chapterScopedCtx, {
         dateFrom: shiftDays(TODAY, -1),
         dateTo: shiftDays(TODAY, 1),
         chapterId: zone.otherChapterId,
@@ -3227,8 +3249,7 @@ describe("partnership-progress report", () => {
     };
 
     // Out-of-scope chapter filter is denied.
-    expect(
-      partnershipProgressReport.accessCheck?.(chapterScopedCtx, {
+    expect(await partnershipProgressReport.accessCheck?.(chapterScopedCtx, {
         ministryYearId,
         chapterId: zone.otherChapterId,
       }),

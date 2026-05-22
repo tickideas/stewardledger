@@ -391,7 +391,7 @@ export async function runClaimedJob(
     }
 
     if (spec.accessCheck) {
-      const denial = spec.accessCheck(ctx, filters);
+      const denial = await spec.accessCheck(ctx, filters);
       if (denial) {
         return {
           status: "failed",

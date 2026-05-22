@@ -26,7 +26,7 @@ import {
   escapeExcelText,
   moneyFormatForCurrency,
 } from "./branding";
-import { hasAnyZoneRole } from "./access";
+import { reportVisibleScope } from "./access";
 import type {
   CurrencySubtotal,
   ReportColumn,
@@ -117,10 +117,11 @@ export const weeklyFinanceReport: ReportSpec<
     "Per-service-event headcount and giving totals, grouped per currency.",
   filtersSchema: weeklyFinanceFiltersSchema,
   columns: () => COLUMNS,
-  accessCheck: (ctx, filters) => {
-    if (hasAnyZoneRole(ctx)) return null;
-    if (ctx.chapterIds.length === 0) return "forbidden";
-    if (filters.chapterId && !ctx.chapterIds.includes(filters.chapterId)) {
+  async accessCheck(ctx, filters) {
+    const scope = await reportVisibleScope(ctx);
+    if (scope.kind === "all") return null;
+    if (scope.ids.length === 0) return "forbidden";
+    if (filters.chapterId && !scope.ids.includes(filters.chapterId)) {
       return "forbidden";
     }
     return null;
@@ -134,10 +135,11 @@ export const weeklyFinanceReport: ReportSpec<
       sql`${serviceEvents.serviceDate} >= ${filters.dateFrom}::date`,
       sql`${serviceEvents.serviceDate} <= ${filters.dateTo}::date`,
     ];
+    const scope = await reportVisibleScope(ctx);
     if (filters.chapterId) {
       eventConditions.push(eq(serviceEvents.chapterId, filters.chapterId));
-    } else if (!hasAnyZoneRole(ctx)) {
-      eventConditions.push(inArray(serviceEvents.chapterId, ctx.chapterIds));
+    } else if (scope.kind === "list") {
+      eventConditions.push(inArray(serviceEvents.chapterId, scope.ids));
     }
 
     const eventRows = await database

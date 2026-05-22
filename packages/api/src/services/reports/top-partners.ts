@@ -25,7 +25,7 @@ import {
   escapeExcelText,
   moneyFormatForCurrency,
 } from "./branding";
-import { hasAnyZoneRole } from "./access";
+import { reportVisibleScope } from "./access";
 import type {
   CurrencySubtotal,
   ReportColumn,
@@ -78,10 +78,11 @@ export const topPartnersReport: ReportSpec<TopPartnersFilters, TopPartnersRow> =
     "Members ranked by total posted giving over a date range. Optional partnership-only mode.",
   filtersSchema: topPartnersFiltersSchema,
   columns: () => COLUMNS,
-  accessCheck: (ctx, filters) => {
-    if (hasAnyZoneRole(ctx)) return null;
-    if (ctx.chapterIds.length === 0) return "forbidden";
-    if (filters.chapterId && !ctx.chapterIds.includes(filters.chapterId)) {
+  async accessCheck(ctx, filters) {
+    const scope = await reportVisibleScope(ctx);
+    if (scope.kind === "all") return null;
+    if (scope.ids.length === 0) return "forbidden";
+    if (filters.chapterId && !scope.ids.includes(filters.chapterId)) {
       return "forbidden";
     }
     return null;
@@ -98,10 +99,11 @@ export const topPartnersReport: ReportSpec<TopPartnersFilters, TopPartnersRow> =
       // them, but state the intent explicitly.
       sql`${contributions.memberId} is not null`,
     ];
+    const scope = await reportVisibleScope(ctx);
     if (filters.chapterId) {
       conditions.push(eq(contributions.chapterId, filters.chapterId));
-    } else if (!hasAnyZoneRole(ctx)) {
-      conditions.push(inArray(contributions.chapterId, ctx.chapterIds));
+    } else if (scope.kind === "list") {
+      conditions.push(inArray(contributions.chapterId, scope.ids));
     }
     if (filters.partnershipOnly) {
       conditions.push(eq(givingTypes.hasPartnershipTarget, true));

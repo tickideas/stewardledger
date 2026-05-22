@@ -8,7 +8,7 @@
 // RELEVANT FILES: packages/api/src/services/dashboards/zone-dashboard.ts, packages/api/src/services/dashboards/chapter-dashboard.ts, packages/api/src/services/dashboards/calendar.ts
 
 import Decimal from "decimal.js";
-import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { contributionLines, contributions, members, zones } from "@stewardledger/db/schema";
 import type { Database } from "@stewardledger/db";
 import type { CurrencyTotal } from "./zone-dashboard";
@@ -45,10 +45,11 @@ export async function loadZoneTimeZone(
 export async function countMembers(
   database: Database,
   zoneId: string,
-  options: { chapterId?: string } = {},
+  options: { chapterId?: string; chapterIds?: string[] } = {},
 ): Promise<{ total: number; active: number; inactive: number }> {
   const conditions: SQL[] = [eq(members.zoneId, zoneId), isNull(members.deletedAt)];
   if (options.chapterId) conditions.push(eq(members.chapterId, options.chapterId));
+  if (options.chapterIds) conditions.push(inArray(members.chapterId, options.chapterIds));
   const [row] = await database
     .select({
       total: sql<number>`count(*)::int`,
@@ -75,7 +76,7 @@ export async function sumPostedByCurrency(
   database: Database,
   zoneId: string,
   bounds: DateBounds,
-  options: { chapterId?: string } = {},
+  options: { chapterId?: string; chapterIds?: string[] } = {},
 ): Promise<CurrencyTotal[]> {
   const conditions: SQL[] = [
     eq(contributions.zoneId, zoneId),
@@ -84,6 +85,7 @@ export async function sumPostedByCurrency(
     sql`${contributions.status} in ('posted', 'reversed')`,
   ];
   if (options.chapterId) conditions.push(eq(contributions.chapterId, options.chapterId));
+  if (options.chapterIds) conditions.push(inArray(contributions.chapterId, options.chapterIds));
   const rows = await database
     .select({
       currencyCode: contributionLines.currencyCode,

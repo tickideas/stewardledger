@@ -16,6 +16,7 @@ import {
   ZONE_ROLES,
   type AuthorizedContext,
 } from "@stewardledger/shared";
+import { visibleChapterIds } from "../../middleware/auth";
 
 
 /** Zone-wide roles that may VIEW any report. */
@@ -83,8 +84,20 @@ export function canExportReports(ctx: AuthorizedContext): boolean {
  * clamp) from chapter-scoped readers (clamp to bound chapters).
  */
 export function hasAnyZoneRole(ctx: AuthorizedContext): boolean {
-  const chapterCodes: readonly string[] = Object.values(CHAPTER_ROLES);
-  return ctx.roleCodes.some((c) => !chapterCodes.includes(c));
+  if (ctx.isPlatformAdmin) return true;
+  const zoneCodes: readonly string[] = Object.values(ZONE_ROLES);
+  return ctx.roleCodes.some((c) => zoneCodes.includes(c));
+}
+
+/**
+ * Resolve the chapter-id scope for a reports caller using the standard
+ * report read-role whitelist. Thin wrapper over `visibleChapterIds` so
+ * report services don't need to import middleware directly.
+ */
+export async function reportVisibleScope(
+  ctx: AuthorizedContext,
+): Promise<{ kind: "all" } | { kind: "list"; ids: string[] }> {
+  return visibleChapterIds(ctx, REPORT_ZONE_READ_ROLES);
 }
 
 /**

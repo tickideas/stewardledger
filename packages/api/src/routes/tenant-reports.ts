@@ -133,7 +133,7 @@ async function prepareExportContext(c: {
   }
 
   if (spec.accessCheck) {
-    const denial = spec.accessCheck(ctx, filters);
+    const denial = await spec.accessCheck(ctx, filters);
     if (denial) return forbidden(c, denial);
   }
 
@@ -173,7 +173,7 @@ tenantReportsRouter.get("/reports/:id/data", async (c) => {
   }
 
   if (spec.accessCheck) {
-    const denial = spec.accessCheck(ctx, filters);
+    const denial = await spec.accessCheck(ctx, filters);
     if (denial) return forbidden(c, denial);
   }
 
@@ -467,7 +467,7 @@ tenantReportsRouter.post(
       return handleError(c, err);
     }
     if (spec.accessCheck) {
-      const denial = spec.accessCheck(ctx, parsedForCheck);
+      const denial = await spec.accessCheck(ctx, parsedForCheck);
       if (denial) return forbidden(c, denial);
     }
 

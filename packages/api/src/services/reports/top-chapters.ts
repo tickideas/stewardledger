@@ -22,7 +22,7 @@ import {
   escapeExcelText,
   moneyFormatForCurrency,
 } from "./branding";
-import { hasAnyZoneRole } from "./access";
+import { reportVisibleScope } from "./access";
 import type {
   CurrencySubtotal,
   ReportColumn,
@@ -70,13 +70,14 @@ export const topChaptersReport: ReportSpec<TopChaptersFilters, TopChaptersRow> =
     "Chapters ranked by total posted giving over a date range. Optional partnership-only mode.",
   filtersSchema: topChaptersFiltersSchema,
   columns: () => COLUMNS,
-  accessCheck: (ctx, _filters) => {
+  async accessCheck(ctx, _filters) {
     // Top chapters has no chapter filter (filtering by one chapter
-    // and ranking chapters would always yield one row). Chapter-
+    // and ranking chapters would always yield one row). Chapter/group-
     // scoped readers see only their bound chapters via the `fetch`
     // clamp; they need at least one binding to call this.
-    if (hasAnyZoneRole(ctx)) return null;
-    if (ctx.chapterIds.length === 0) return "forbidden";
+    const scope = await reportVisibleScope(ctx);
+    if (scope.kind === "all") return null;
+    if (scope.ids.length === 0) return "forbidden";
     return null;
   },
   async fetch(database, ctx, filters): Promise<ReportFetchResult<TopChaptersRow>> {
@@ -87,8 +88,9 @@ export const topChaptersReport: ReportSpec<TopChaptersFilters, TopChaptersRow> =
       sql`${contributions.status} in ('posted', 'reversed')`,
       isNull(members.deletedAt),
     ];
-    if (!hasAnyZoneRole(ctx)) {
-      conditions.push(inArray(contributions.chapterId, ctx.chapterIds));
+    const scope = await reportVisibleScope(ctx);
+    if (scope.kind === "list") {
+      conditions.push(inArray(contributions.chapterId, scope.ids));
     }
     if (filters.partnershipOnly) {
       conditions.push(eq(givingTypes.hasPartnershipTarget, true));

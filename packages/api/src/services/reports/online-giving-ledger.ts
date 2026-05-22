@@ -27,7 +27,7 @@ import {
   escapeExcelText,
   moneyFormatForCurrency,
 } from "./branding";
-import { hasAnyZoneRole } from "./access";
+import { reportVisibleScope } from "./access";
 import type {
   CurrencySubtotal,
   ReportColumn,
@@ -107,10 +107,11 @@ export const onlineGivingLedgerReport: ReportSpec<
     "Line-level ledger of every online / bank-import contribution with transaction ids.",
   filtersSchema: onlineGivingLedgerFiltersSchema,
   columns: () => COLUMNS,
-  accessCheck: (ctx, filters) => {
-    if (hasAnyZoneRole(ctx)) return null;
-    if (ctx.chapterIds.length === 0) return "forbidden";
-    if (filters.chapterId && !ctx.chapterIds.includes(filters.chapterId)) {
+  async accessCheck(ctx, filters) {
+    const scope = await reportVisibleScope(ctx);
+    if (scope.kind === "all") return null;
+    if (scope.ids.length === 0) return "forbidden";
+    if (filters.chapterId && !scope.ids.includes(filters.chapterId)) {
       return "forbidden";
     }
     return null;
@@ -128,10 +129,11 @@ export const onlineGivingLedgerReport: ReportSpec<
         : inArray(contributions.sourceType, [...ONLINE_SOURCE_TYPES]),
       isNull(members.deletedAt),
     ];
+    const scope = await reportVisibleScope(ctx);
     if (filters.chapterId) {
       conditions.push(eq(contributions.chapterId, filters.chapterId));
-    } else if (!hasAnyZoneRole(ctx)) {
-      conditions.push(inArray(contributions.chapterId, ctx.chapterIds));
+    } else if (scope.kind === "list") {
+      conditions.push(inArray(contributions.chapterId, scope.ids));
     }
     if (filters.givingTypeId) {
       conditions.push(eq(contributionLines.givingTypeId, filters.givingTypeId));

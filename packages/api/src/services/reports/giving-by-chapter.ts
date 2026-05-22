@@ -27,7 +27,7 @@ import {
   escapeExcelText,
   moneyFormatForCurrency,
 } from "./branding";
-import { hasAnyZoneRole } from "./access";
+import { reportVisibleScope } from "./access";
 import {
   ReportError,
   type CurrencySubtotal,
@@ -95,10 +95,11 @@ export const givingByChapterReport: ReportSpec<
     ...BASE_COLUMNS,
     { key: "total", label: "Total", kind: "money" as const },
   ],
-  accessCheck: (ctx, filters) => {
-    if (hasAnyZoneRole(ctx)) return null;
-    if (ctx.chapterIds.length === 0) return "forbidden";
-    if (filters.chapterId && !ctx.chapterIds.includes(filters.chapterId)) {
+  async accessCheck(ctx, filters) {
+    const scope = await reportVisibleScope(ctx);
+    if (scope.kind === "all") return null;
+    if (scope.ids.length === 0) return "forbidden";
+    if (filters.chapterId && !scope.ids.includes(filters.chapterId)) {
       return "forbidden";
     }
     return null;
@@ -146,10 +147,11 @@ export const givingByChapterReport: ReportSpec<
       // still belong to a chapter, so we don't filter by member
       // existence here.
     ];
+    const scope = await reportVisibleScope(ctx);
     if (filters.chapterId) {
       conditions.push(eq(contributions.chapterId, filters.chapterId));
-    } else if (!hasAnyZoneRole(ctx)) {
-      conditions.push(inArray(contributions.chapterId, ctx.chapterIds));
+    } else if (scope.kind === "list") {
+      conditions.push(inArray(contributions.chapterId, scope.ids));
     }
 
 
