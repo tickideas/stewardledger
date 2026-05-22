@@ -33,6 +33,7 @@ import { db } from "../db";
 import {
   hasAnyRole,
   requireChapterScope,
+  visibleChapterIds,
   requireSession,
   requireTenantAuth,
 } from "../middleware/auth";
@@ -166,10 +167,10 @@ async function canWriteChapterSettings(ctx: AuthorizedContext, chapterId: string
 
 tenantRouter.get("/chapters", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
-  const zoneWide = hasAnyRole(ctx, ...CHAPTER_READ_ZONE_ROLES);
-  if (!zoneWide && ctx.chapterIds.length === 0) return c.json({ items: [] });
+  const scope = await visibleChapterIds(ctx, CHAPTER_READ_ZONE_ROLES);
+  if (scope.kind === "list" && scope.ids.length === 0) return c.json({ items: [] });
   const conditions = [eq(chapters.zoneId, ctx.zoneId), isNull(chapters.deletedAt)];
-  if (!zoneWide) conditions.push(inArray(chapters.id, ctx.chapterIds));
+  if (scope.kind === "list") conditions.push(inArray(chapters.id, scope.ids));
   const rows = await db
     .select({
       id: chapters.id,
@@ -964,8 +965,11 @@ tenantRouter.get("/invitations", async (c) => {
   } else if (!isZoneAdmin) {
     // Chapter admin without a filter → only see invitations for chapters
     // they administer. Empty list when they're somehow unbound.
-    if (ctx.chapterIds.length === 0) return c.json({ items: [] });
-    conditions.push(inArray(invitations.chapterId, ctx.chapterIds));
+    const scope = await visibleChapterIds(ctx, CHAPTER_READ_ZONE_ROLES);
+    if (scope.kind === "list") {
+      if (scope.ids.length === 0) return c.json({ items: [] });
+      conditions.push(inArray(invitations.chapterId, scope.ids));
+    }
   }
   const rows = await db
     .select({
