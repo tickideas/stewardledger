@@ -5,6 +5,7 @@
 import { zValidator } from "@hono/zod-validator";
 import {
   chapters,
+  groups,
   platformRoleBindings,
   regions,
   roles as rolesTable,
@@ -95,6 +96,8 @@ publicRouter.get("/session-zones", async (c) => {
         zoneMfaRequiredRoleCodes: zones.mfaRequiredRoleCodes,
         chapterId: userRoleBindings.chapterId,
         chapterName: chapters.name,
+        groupId: userRoleBindings.groupId,
+        groupName: groups.name,
         roleCode: rolesTable.code,
         roleScope: rolesTable.scope,
       })
@@ -108,6 +111,10 @@ publicRouter.get("/session-zones", async (c) => {
       .leftJoin(
         chapters,
         and(eq(userRoleBindings.chapterId, chapters.id), isNull(chapters.deletedAt)),
+      )
+      .leftJoin(
+        groups,
+        and(eq(userRoleBindings.groupId, groups.id), isNull(groups.deletedAt)),
       )
       .where(
         and(
@@ -140,6 +147,7 @@ publicRouter.get("/session-zones", async (c) => {
   // chapter name so the church-admin sidebar can render a switcher without
   // a second round-trip.
   type ChapterRole = { chapterId: string; chapterName: string; roleCode: string };
+  type GroupRole = { groupId: string; groupName: string; roleCode: string };
   /**
    * Working state collected by the aggregator loop. Holds the
    * zone's enforcement list so we can compute `mfaRequired` once
@@ -153,6 +161,7 @@ publicRouter.get("/session-zones", async (c) => {
     name: string;
     zoneRoles: string[];
     chapterRoles: ChapterRole[];
+    groupRoles: GroupRole[];
     requiredRoleCodes: string[];
   };
   interface ZoneItem {
@@ -161,6 +170,7 @@ publicRouter.get("/session-zones", async (c) => {
     name: string;
     zoneRoles: string[];
     chapterRoles: ChapterRole[];
+    groupRoles: GroupRole[];
     /**
      * True when at least one of the user's role codes in this zone
      * is on the zone's `mfa_required_role_codes` list. The web shell
@@ -178,6 +188,7 @@ publicRouter.get("/session-zones", async (c) => {
         name: b.zoneName,
         zoneRoles: [],
         chapterRoles: [],
+        groupRoles: [],
         requiredRoleCodes: b.zoneMfaRequiredRoleCodes ?? [],
       };
       byZone.set(b.zoneId, z);
@@ -195,12 +206,24 @@ publicRouter.get("/session-zones", async (c) => {
           roleCode: b.roleCode,
         });
       }
+    } else if (b.roleScope === "group" && b.groupId && b.groupName) {
+      const exists = z.groupRoles.some(
+        (r) => r.groupId === b.groupId && r.roleCode === b.roleCode,
+      );
+      if (!exists) {
+        z.groupRoles.push({
+          groupId: b.groupId,
+          groupName: b.groupName,
+          roleCode: b.roleCode,
+        });
+      }
     }
   }
   const items: ZoneItem[] = [...byZone.values()].map((z) => {
     const userRoleCodes = [
       ...z.zoneRoles,
       ...z.chapterRoles.map((r) => r.roleCode),
+      ...z.groupRoles.map((r) => r.roleCode),
     ];
     return {
       id: z.id,
@@ -208,6 +231,7 @@ publicRouter.get("/session-zones", async (c) => {
       name: z.name,
       zoneRoles: z.zoneRoles,
       chapterRoles: z.chapterRoles,
+      groupRoles: z.groupRoles,
       mfaRequired: mfaRequiredInZone(z.requiredRoleCodes, userRoleCodes),
     };
   });

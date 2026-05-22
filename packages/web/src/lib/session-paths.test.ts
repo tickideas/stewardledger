@@ -173,6 +173,95 @@ describe("authenticatedLandingPath", () => {
   });
 });
 
+describe("authenticatedLandingPath \u2014 group tier", () => {
+  it("group-tier without zone-tier \u2192 /group/dashboard", () => {
+    expect(
+      authenticatedLandingPath({
+        activeZoneSlug: "demo",
+        isSuperAdmin: false,
+        platformRoles: [],
+        activeZoneRoles: [],
+        activeZoneGroupRoles: [{ groupId: "g1", roleCode: "group_admin" }],
+        activeZoneChapterRoles: [],
+      }),
+    ).toBe("/group/dashboard?zone=demo");
+  });
+
+  it("group + chapter \u2192 /group/dashboard (group beats church)", () => {
+    expect(
+      authenticatedLandingPath({
+        activeZoneSlug: "demo",
+        isSuperAdmin: false,
+        activeZoneRoles: [],
+        activeZoneGroupRoles: [{ groupId: "g1", roleCode: "group_pastor_viewer" }],
+        activeZoneChapterRoles: [{ chapterId: "c1", roleCode: "chapter_admin" }],
+      }),
+    ).toBe("/group/dashboard?zone=demo");
+  });
+
+  it("zone + group \u2192 /zone/chapters (zone still wins)", () => {
+    expect(
+      authenticatedLandingPath({
+        activeZoneSlug: "demo",
+        isSuperAdmin: false,
+        activeZoneRoles: ["zone_admin"],
+        activeZoneGroupRoles: [{ groupId: "g1", roleCode: "group_admin" }],
+        activeZoneChapterRoles: [],
+      }),
+    ).toBe("/zone/chapters?zone=demo");
+  });
+
+  it("chapter only \u2192 /church/overview (unchanged)", () => {
+    expect(
+      authenticatedLandingPath({
+        activeZoneSlug: "demo",
+        isSuperAdmin: false,
+        activeZoneRoles: [],
+        activeZoneGroupRoles: [],
+        activeZoneChapterRoles: [{ chapterId: "c1", roleCode: "chapter_admin" }],
+      }),
+    ).toBe("/church/overview?zone=demo");
+  });
+});
+
+describe("canAccessRoleAnyZone \u2014 group", () => {
+  it("returns true for any zone with group bindings", () => {
+    expect(
+      canAccessRoleAnyZone(
+        {
+          isSuperAdmin: false,
+          items: [{ slug: "demo", zoneRoles: [], chapterRoles: [], groupRoles: [{ groupId: "g1", roleCode: "group_admin" }] }],
+        },
+        "group",
+      ),
+    ).toBe(true);
+  });
+
+  it("returns true for zone-tier (zone admins can also use /group)", () => {
+    expect(
+      canAccessRoleAnyZone(
+        {
+          isSuperAdmin: false,
+          items: [{ slug: "demo", zoneRoles: ["zone_admin"], chapterRoles: [], groupRoles: [] }],
+        },
+        "group",
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false for chapter-only users", () => {
+    expect(
+      canAccessRoleAnyZone(
+        {
+          isSuperAdmin: false,
+          items: [{ slug: "demo", zoneRoles: [], chapterRoles: [{ chapterId: "c1", roleCode: "chapter_admin" }], groupRoles: [] }],
+        },
+        "group",
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("canAccessRole", () => {
   // Super-admins reach every dashboard. They have no zone bindings of their
   // own — the platform shell is their home, but they routinely drop into a

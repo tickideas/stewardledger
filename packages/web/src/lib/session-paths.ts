@@ -10,6 +10,7 @@
 export const PROTECTED_PREFIXES = [
   "/admin",
   "/zone",
+  "/group",
   "/church",
   "/account",
   "/onboarding",
@@ -172,7 +173,7 @@ export function isPlatformAdminPath(pathname: string): boolean {
  *
  * Precedence: platform > zonal > church.
  */
-export type PrimaryRole = "platform" | "zonal" | "church";
+export type PrimaryRole = "platform" | "zonal" | "group" | "church";
 
 export type AuthenticatedLandingInput = {
   activeZoneSlug: string | null;
@@ -198,6 +199,11 @@ export type AuthenticatedLandingInput = {
    * don't need it; the sidebar switcher reads it from the session store.
    */
   activeZoneChapterRoles?: Array<{ chapterId: string; roleCode: string }>;
+  /**
+   * Group role bindings within the currently-active zone. Used to detect
+   * group-tier admins so we can land them on /group instead of /church.
+   */
+  activeZoneGroupRoles?: Array<{ groupId: string; roleCode: string }>;
 };
 
 /**
@@ -212,6 +218,7 @@ export function primaryRole(s: AuthenticatedLandingInput): PrimaryRole | null {
   // brand link from /admin/* gets bounced to the no-zone login banner.
   if ((s.platformRoles ?? []).length > 0) return "platform";
   if (s.activeZoneRoles && s.activeZoneRoles.length > 0) return "zonal";
+  if (s.activeZoneGroupRoles && s.activeZoneGroupRoles.length > 0) return "group";
   if (s.activeZoneChapterRoles && s.activeZoneChapterRoles.length > 0) return "church";
   // Tenant-bound user with no resolved role data — fall back to zonal so
   // existing tenant-bound flows keep working until the API ships roles.
@@ -244,6 +251,7 @@ export type ServerSession = {
     name?: string;
     zoneRoles: string[];
     chapterRoles: Array<{ chapterId: string; chapterName?: string; roleCode: string }>;
+    groupRoles?: Array<{ groupId: string; groupName?: string; roleCode: string }>;
     /**
      * True when this zone enforces MFA for at least one of the
      * user's role codes. Treated by the UI as "redirect to
@@ -278,6 +286,9 @@ export function canAccessRoleAnyZone(s: ServerSession, role: PrimaryRole): boole
     return (s.platformRoles ?? []).length > 0;
   }
   if (role === "zonal") return s.items.some((z) => z.zoneRoles.length > 0);
+  if (role === "group") {
+    return s.items.some((z) => z.zoneRoles.length > 0 || (z.groupRoles ?? []).length > 0);
+  }
   if (role === "church") {
     return s.items.some((z) => z.zoneRoles.length > 0 || z.chapterRoles.length > 0);
   }
@@ -301,6 +312,7 @@ export function landingInputFromServerSession(
     platformRoles: s.platformRoles ?? [],
     activeZoneRoles: picked?.zoneRoles ?? [],
     activeZoneChapterRoles: picked?.chapterRoles ?? [],
+    activeZoneGroupRoles: picked?.groupRoles ?? [],
   };
 }
 
@@ -331,6 +343,10 @@ export function canAccessRole(s: AuthenticatedLandingInput, role: PrimaryRole): 
       return false; // only super-admins reach /admin/*
     case "zonal":
       return hasZoneRoles || hasLegacyTenantBinding;
+    case "group":
+      // Group-tier surface: zone roles can also enter (zone admin oversees groups)
+      // OR users with at least one group binding in this zone.
+      return hasZoneRoles || (s.activeZoneGroupRoles?.length ?? 0) > 0 || hasLegacyTenantBinding;
     case "church":
       return hasZoneRoles || hasChapterRoles || hasLegacyTenantBinding;
   }
@@ -374,6 +390,7 @@ export function authenticatedLandingPath(
   const zoneQs = session.activeZoneSlug
     ? `?zone=${encodeURIComponent(session.activeZoneSlug)}`
     : "";
+  if (role === "group") return `/group/dashboard${zoneQs}`;
   if (role === "church") return `/church/overview${zoneQs}`;
   // Default: zonal. Covers explicit zone bindings AND the legacy
   // "tenant-bound but no role data yet" path.
