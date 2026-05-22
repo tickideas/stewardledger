@@ -5,6 +5,7 @@
 import { zValidator } from "@hono/zod-validator";
 import {
   chapters,
+  platformRoleBindings,
   regions,
   roles as rolesTable,
   userRoleBindings,
@@ -73,7 +74,7 @@ publicRouter.get("/session-zones", async (c) => {
   // sequential pair was material. The bindings query pulls role code + scope
   // so the client can decide which dashboard surface to land on (and which
   // sidebar to render) without a follow-up call.
-  const [userRows, bindingRows] = await Promise.all([
+  const [userRows, bindingRows, platformRoleRows] = await Promise.all([
     db
       .select({
         isSuperAdmin: userTable.isSuperAdmin,
@@ -116,8 +117,22 @@ publicRouter.get("/session-zones", async (c) => {
         ),
       )
       .orderBy(asc(zones.name), asc(chapters.name)),
+    db
+      .select({ roleCode: platformRoleBindings.roleCode })
+      .from(platformRoleBindings)
+      .where(
+        and(
+          eq(platformRoleBindings.userId, session.user.id),
+          isNull(platformRoleBindings.revokedAt),
+        ),
+      ),
   ]);
   const userRow = userRows[0];
+  // Dedupe in case the same role appears twice (e.g. concurrent admin
+  // grant + leftover binding pre-PR#44 unique-index race fix).
+  const platformRoles = Array.from(
+    new Set(platformRoleRows.map((r) => r.roleCode)),
+  );
 
   // Collapse the binding rows into one entry per zone. A user can hold
   // multiple bindings within the same zone (e.g. zone_admin AND a chapter
@@ -200,6 +215,7 @@ publicRouter.get("/session-zones", async (c) => {
   return c.json({
     items,
     isSuperAdmin: userRow?.isSuperAdmin ?? false,
+    platformRoles,
     user: {
       id: session.user.id,
       email: userRow?.email ?? session.user.email,

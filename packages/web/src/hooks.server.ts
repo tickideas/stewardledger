@@ -28,6 +28,13 @@ type WireSessionZones = {
     mfaRequired?: boolean;
   }>;
   isSuperAdmin: boolean;
+  /**
+   * Platform-role bindings the user holds (e.g. `support_admin`,
+   * `region_curator`). Optional on the wire so a web build talking to
+   * an API that pre-dates this field still parses; the loader below
+   * defaults it to `[]`.
+   */
+  platformRoles?: string[];
   user?: {
     id: string;
     email: string;
@@ -138,6 +145,7 @@ async function loadSession(
     // `isSuperAdmin` + the role arrays; extra fields are inert for them.
     return {
       isSuperAdmin: body.isSuperAdmin === true,
+      platformRoles: body.platformRoles ?? [],
       items: (body.items ?? []).map((z) => ({
         id: z.id,
         slug: z.slug,

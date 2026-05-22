@@ -31,19 +31,32 @@
   });
 
   const path = $derived(page.url.pathname);
-  const showZonesItem = $derived(isSuperAdmin(session.current));
-  // Hide /admin/zones from non-super-admins (regional moderators landing on
-  // /admin/regions still get a useful sidebar — just without the Zones link).
+
+  // What can the current user actually open?
+  //
+  //   - /admin/zones          super_admin OR support_admin
+  //   - /admin/administrators super_admin only
+  //   - everything else under /admin/* is implicitly admin-wide
+  //
+  // Filter the nav so we don't surface links the API would 403.
+  const sessionPlatformRoles = $derived.by(() => {
+    const s = session.current;
+    return s.status === "authenticated" ? (s.platformRoles ?? []) : [];
+  });
+  const canSeeZones = $derived(
+    isSuperAdmin(session.current) || sessionPlatformRoles.includes("support_admin"),
+  );
+  const canSeeAdministrators = $derived(isSuperAdmin(session.current));
+
   const groups = $derived(
-    showZonesItem
-      ? PLATFORM_NAV
-      : PLATFORM_NAV.map((g) => ({
-          ...g,
-          items: g.items.filter(
-            (it) =>
-              it.href !== "/admin/zones" && it.href !== "/admin/administrators",
-          ),
-        })),
+    PLATFORM_NAV.map((g) => ({
+      ...g,
+      items: g.items.filter((it) => {
+        if (it.href === "/admin/zones") return canSeeZones;
+        if (it.href === "/admin/administrators") return canSeeAdministrators;
+        return true;
+      }),
+    })).filter((g) => g.items.length > 0),
   );
 
   const sessionUser = $derived(

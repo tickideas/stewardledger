@@ -66,42 +66,62 @@ export function isSafeInternalPath(p: string): boolean {
 
 /**
  * Landing path for a freshly-accepted platform-admin invitation.
- * Each role goes to a surface it can actually use — the previous
- * blanket redirect to `/admin/zones` left region_curator + billing_admin
- * invitees on a 403’d page.
+ * Each role goes to a surface it can actually use:
  *
- * Note on `support_admin`: the API admits them to `/admin/zones`, but
- * the web session shape (`ServerSession`) does not yet carry
- * platform-role bindings, so `isSuperAdminOnlyPath("/admin/zones")` in
- * the root layout still bounces them. Until SSR knows about platform
- * roles, we land support_admin on `/account` where they have a session
- * but no admin nav. Follow-up: plumb `platformRoles: string[]` through
- * `/api/public/session-zones` and revisit this routing.
+ *   super_admin / support_admin → /admin/zones (read-only tenants list)
+ *   region_curator               → /admin/regions (curate reference data)
+ *   billing_admin                → /account (no surface yet; Phase 10)
+ *   unknown                      → /account (safe authenticated fallback)
+ *
+ * The SSR layout's admin gate (`/admin/+layout.server.ts`) now reads
+ * `platformRoles[]` from the session, so support_admin and
+ * region_curator no longer bounce off `/admin/*` for having no zone
+ * binding. This routing matches that admission policy.
  */
 export function platformInviteLandingPath(args: {
   roleCode: string;
   superAdmin: boolean;
 }): string {
   if (args.superAdmin) return "/admin/zones";
-  // The web ServerSession does not yet carry platformRoles[], so the
-  // `/admin/*` SSR gates fall back to "super_admin or hasAnyBinding"
-  // — which means a freshly-invited region_curator (or support /
-  // billing admin) with no tenant binding gets 303'd off the admin
-  // surface even though their API role is valid.
-  //
-  // Until the SSR session is widened to carry platform-role bindings,
-  // every non-super-admin invitee lands on /account, which is the
-  // universal authenticated page. Follow-up: plumb platformRoles into
-  // `/api/public/session-zones` and route each role to its admin
-  // surface here.
-  return "/account";
+  switch (args.roleCode) {
+    case "support_admin":
+      return "/admin/zones";
+    case "region_curator":
+      return "/admin/regions";
+    case "billing_admin":
+      // No admin surface yet — subscriptions ship in Phase 10. Until
+      // then, /account is the universal authenticated landing.
+      return "/account";
+    default:
+      return "/account";
+  }
 }
 
+/**
+ * Paths that ONLY a super-admin can reach. Used by the root SSR gate
+ * to bounce non-super-admins before any HTML ships.
+ *
+ * `/admin/zones` is intentionally NOT here — it admits both
+ * super_admin and support_admin (per the API gate). It is still gated
+ * via `isPlatformAdminPath` below.
+ */
 export function isSuperAdminOnlyPath(pathname: string): boolean {
-  if (pathname === "/admin/zones" || pathname.startsWith("/admin/zones/")) return true;
-  if (pathname === "/admin/administrators" || pathname.startsWith("/admin/administrators/"))
-    return true;
-  return false;
+  return (
+    pathname === "/admin/administrators" ||
+    pathname.startsWith("/admin/administrators/")
+  );
+}
+
+/**
+ * Paths under the `/admin/*` surface that require *some* platform
+ * footprint — super-admin, any platform-role binding, or a zone
+ * binding (because /admin/regions has a region-curator-via-zone use
+ * case carried over from before platform_role_bindings existed). The
+ * admin layout SSR gate enforces this; the root gate only handles the
+ * super-admin-only subset.
+ */
+export function isPlatformAdminPath(pathname: string): boolean {
+  return pathname === "/admin" || pathname.startsWith("/admin/");
 }
 
 /**
@@ -160,6 +180,12 @@ export function primaryRole(s: AuthenticatedLandingInput): PrimaryRole | null {
  */
 export type ServerSession = {
   isSuperAdmin: boolean;
+  /**
+   * Platform-role bindings (e.g. `support_admin`, `region_curator`).
+   * Optional in the wire shape — a legacy API build that pre-dates
+   * the field will simply omit it. Consumers default to `[]`.
+   */
+  platformRoles?: string[];
   items: Array<{
     id?: string;
     slug: string;
@@ -193,7 +219,12 @@ export type ServerSession = {
  */
 export function canAccessRoleAnyZone(s: ServerSession, role: PrimaryRole): boolean {
   if (s.isSuperAdmin) return true;
-  if (role === "platform") return false;
+  if (role === "platform") {
+    // Any platform-role binding admits the user to the platform
+    // surface (the specific routes within `/admin/*` are still
+    // gated per-route at the API layer).
+    return (s.platformRoles ?? []).length > 0;
+  }
   if (role === "zonal") return s.items.some((z) => z.zoneRoles.length > 0);
   if (role === "church") {
     return s.items.some((z) => z.zoneRoles.length > 0 || z.chapterRoles.length > 0);
@@ -264,8 +295,10 @@ export function authenticatedLandingPath(
   next?: string | null,
 ): string {
   // Platform-only super-admins: tenant routes cannot work for them.
+  // Honour any safe `next` that lives under `/admin/*` (super-admins
+  // can reach every admin path); fall back to the default landing.
   if (session.isSuperAdmin && !session.activeZoneSlug) {
-    if (next && isSafeInternalPath(next) && isSuperAdminOnlyPath(next)) return next;
+    if (next && isSafeInternalPath(next) && isPlatformAdminPath(next)) return next;
     return "/admin/zones";
   }
 

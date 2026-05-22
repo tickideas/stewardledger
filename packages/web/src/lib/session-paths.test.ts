@@ -9,6 +9,7 @@ import {
   canAccessRoleAnyZone,
   isProtectedPath,
   isSafeInternalPath,
+  isPlatformAdminPath,
   isSuperAdminOnlyPath,
   landingInputFromServerSession,
   platformInviteLandingPath,
@@ -66,9 +67,13 @@ describe("isSafeInternalPath", () => {
 });
 
 describe("isSuperAdminOnlyPath", () => {
-  it("matches the zones admin surface", () => {
-    expect(isSuperAdminOnlyPath("/admin/zones")).toBe(true);
-    expect(isSuperAdminOnlyPath("/admin/zones/demo-grace-uk")).toBe(true);
+  it("matches only /admin/administrators after SSR learned about support_admin", () => {
+    // /admin/zones used to be super-admin-only here, but support_admin
+    // is now admitted by both the API gate and the SSR admin layout,
+    // so it is no longer in the super-admin-only set. /admin/regions
+    // remains reachable by region_curator + zone-bound users.
+    expect(isSuperAdminOnlyPath("/admin/zones")).toBe(false);
+    expect(isSuperAdminOnlyPath("/admin/zones/demo-grace-uk")).toBe(false);
     expect(isSuperAdminOnlyPath("/admin/regions")).toBe(false);
     expect(isSuperAdminOnlyPath("/admin/zonesish")).toBe(false);
   });
@@ -396,23 +401,17 @@ describe("platformInviteLandingPath", () => {
       platformInviteLandingPath({ roleCode: "support_admin", superAdmin: true }),
     ).toBe("/admin/zones");
   });
-  it("routes support_admin to /account until SSR carries platform-role bindings", () => {
-    // The API gate admits support_admin to /admin/zones, but the web
-    // root layout still treats /admin/zones as super-admin-only (the
-    // session shape does not yet carry platformRoles). Land them on
-    // /account so onboarding does not 303 them off a freshly-accepted
-    // invitation. See the comment on platformInviteLandingPath().
+  it("routes support_admin to /admin/zones (read-only surface they can reach)", () => {
+    // SSR now carries platformRoles[], so the layout admits
+    // support_admin and the deep-link is safe.
     expect(
       platformInviteLandingPath({ roleCode: "support_admin", superAdmin: false }),
-    ).toBe("/account");
+    ).toBe("/admin/zones");
   });
-  it("routes region_curator to /account until SSR carries platform-role bindings", () => {
-    // Web /admin/* gates require super_admin OR a zone/chapter binding.
-    // A region_curator invitee may have neither, so /admin/regions
-    // would 303 them off. See the comment on platformInviteLandingPath().
+  it("routes region_curator to /admin/regions", () => {
     expect(
       platformInviteLandingPath({ roleCode: "region_curator", superAdmin: false }),
-    ).toBe("/account");
+    ).toBe("/admin/regions");
   });
   it("routes billing_admin to /account until subscriptions ship", () => {
     expect(
@@ -423,6 +422,40 @@ describe("platformInviteLandingPath", () => {
     expect(
       platformInviteLandingPath({ roleCode: "future_role", superAdmin: false }),
     ).toBe("/account");
+  });
+});
+
+describe("isPlatformAdminPath", () => {
+  it("matches anything under /admin/*", () => {
+    expect(isPlatformAdminPath("/admin")).toBe(true);
+    expect(isPlatformAdminPath("/admin/zones")).toBe(true);
+    expect(isPlatformAdminPath("/admin/zones/demo")).toBe(true);
+    expect(isPlatformAdminPath("/admin/regions")).toBe(true);
+    expect(isPlatformAdminPath("/admin/administrators")).toBe(true);
+  });
+  it("does not match adjacent paths", () => {
+    expect(isPlatformAdminPath("/admins")).toBe(false);
+    expect(isPlatformAdminPath("/admincats")).toBe(false);
+    expect(isPlatformAdminPath("/zone/chapters")).toBe(false);
+  });
+});
+
+describe("canAccessRoleAnyZone (platform surface, with platformRoles)", () => {
+  it("admits a non-super-admin with a platform-role binding", () => {
+    const s = {
+      isSuperAdmin: false,
+      platformRoles: ["support_admin"],
+      items: [],
+    };
+    expect(canAccessRoleAnyZone(s, "platform")).toBe(true);
+  });
+  it("denies a non-super-admin with no platform-role binding and no zones", () => {
+    const s = { isSuperAdmin: false, platformRoles: [], items: [] };
+    expect(canAccessRoleAnyZone(s, "platform")).toBe(false);
+  });
+  it("denies a non-super-admin when platformRoles is missing (legacy wire shape)", () => {
+    const s = { isSuperAdmin: false, items: [] };
+    expect(canAccessRoleAnyZone(s, "platform")).toBe(false);
   });
 });
 

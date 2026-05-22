@@ -78,6 +78,12 @@ export type SessionState =
       zones: Zone[];
       activeZoneSlug: string | null;
       isSuperAdmin: boolean;
+      /**
+       * Platform-role bindings the user holds. Empty array for plain
+       * tenant users. The web shell uses this to decide whether to
+       * admit non-super-admins into `/admin/*` surfaces.
+       */
+      platformRoles: string[];
       user: SessionUser;
     }
   | { status: "error"; zones: never[]; activeZoneSlug: null; reason: string };
@@ -144,6 +150,7 @@ export function hydrateSession(snapshot: ServerSession | null): void {
   }
 
   const isSuperAdminFlag = snapshot.isSuperAdmin === true;
+  const platformRoles = snapshot.platformRoles ?? [];
   // Mirror the `loadSession()` shim: render a placeholder identity when the
   // API build pre-dates the `user` field rather than blanking the profile.
   const user: SessionUser = snapshot.user
@@ -172,12 +179,15 @@ export function hydrateSession(snapshot: ServerSession | null): void {
   }));
 
   if (items.length === 0) {
-    if (isSuperAdminFlag) {
+    if (isSuperAdminFlag || platformRoles.length > 0) {
+      // Super-admins and platform-role holders may have zero zone
+      // bindings. Treat them as authenticated so /admin is reachable.
       session.current = {
         status: "authenticated",
         zones: [],
         activeZoneSlug: null,
-        isSuperAdmin: true,
+        isSuperAdmin: isSuperAdminFlag,
+        platformRoles,
         user,
       };
       return;
@@ -195,6 +205,7 @@ export function hydrateSession(snapshot: ServerSession | null): void {
     zones: items,
     activeZoneSlug,
     isSuperAdmin: isSuperAdminFlag,
+    platformRoles,
     user,
   };
 }
@@ -250,6 +261,7 @@ export function loadSession(opts: { force?: boolean } = {}): Promise<void> {
       const body = (await res.json()) as {
         items: WireZone[];
         isSuperAdmin?: boolean;
+        platformRoles?: string[];
         user?: {
           id: string;
           email: string;
@@ -259,6 +271,7 @@ export function loadSession(opts: { force?: boolean } = {}): Promise<void> {
       };
       if (epoch !== sessionEpoch) return; // superseded between fetch + parse
       const isSuperAdminFlag = body.isSuperAdmin === true;
+      const platformRoles = body.platformRoles ?? [];
       // The endpoint always returns a `user` when the request is authenticated.
       // The empty-string fallback is a transitional shim for the brief window
       // where the web build can be ahead of the deployed API: rather than
@@ -289,14 +302,16 @@ export function loadSession(opts: { force?: boolean } = {}): Promise<void> {
       }));
 
       if (items.length === 0) {
-        // Super-admins may legitimately have zero zone bindings (platform-only
-        // users). Treat them as authenticated so /admin is reachable.
-        if (isSuperAdminFlag) {
+        // Super-admins and platform-role holders may legitimately have
+        // zero zone bindings (platform-only users). Treat them as
+        // authenticated so /admin is reachable.
+        if (isSuperAdminFlag || platformRoles.length > 0) {
           session.current = {
             status: "authenticated",
             zones: [],
             activeZoneSlug: null,
-            isSuperAdmin: true,
+            isSuperAdmin: isSuperAdminFlag,
+            platformRoles,
             user,
           };
           return;
@@ -317,6 +332,7 @@ export function loadSession(opts: { force?: boolean } = {}): Promise<void> {
         zones: items,
         activeZoneSlug,
         isSuperAdmin: isSuperAdminFlag,
+        platformRoles,
         user,
       };
     } catch (err) {
