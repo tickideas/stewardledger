@@ -25,6 +25,7 @@ type WireSessionZones = {
     name: string;
     zoneRoles?: string[];
     chapterRoles?: Array<{ chapterId: string; chapterName?: string; roleCode: string }>;
+    groupRoles?: Array<{ groupId: string; groupName?: string; roleCode: string }>;
     mfaRequired?: boolean;
   }>;
   isSuperAdmin: boolean;
@@ -154,6 +155,11 @@ async function loadSession(
         chapterRoles: (z.chapterRoles ?? []).map((r) => ({
           chapterId: r.chapterId,
           chapterName: r.chapterName,
+          roleCode: r.roleCode,
+        })),
+        groupRoles: (z.groupRoles ?? []).map((r) => ({
+          groupId: r.groupId,
+          groupName: r.groupName,
           roleCode: r.roleCode,
         })),
         mfaRequired: z.mfaRequired === true,

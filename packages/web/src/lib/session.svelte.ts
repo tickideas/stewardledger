@@ -23,12 +23,14 @@ import {
  * binding.
  */
 export type ChapterRole = { chapterId: string; chapterName: string; roleCode: string };
+export type GroupRole = { groupId: string; groupName: string; roleCode: string };
 export type Zone = {
   id: string;
   slug: string;
   name: string;
   zoneRoles: string[];
   chapterRoles: ChapterRole[];
+  groupRoles: GroupRole[];
   /**
    * True when the user holds a role in this zone whose code is on
    * the zone's `mfa_required_role_codes` list AND the user has not
@@ -109,6 +111,7 @@ export function landingInputFor(state: SessionState):
       platformRoles: string[];
       activeZoneRoles: string[];
       activeZoneChapterRoles: Array<{ chapterId: string; roleCode: string }>;
+      activeZoneGroupRoles: Array<{ groupId: string; roleCode: string }>;
     }
   | null {
   if (state.status !== "authenticated") return null;
@@ -123,6 +126,8 @@ export function landingInputFor(state: SessionState):
     activeZoneRoles: zone?.zoneRoles ?? [],
     activeZoneChapterRoles:
       zone?.chapterRoles.map((r) => ({ chapterId: r.chapterId, roleCode: r.roleCode })) ?? [],
+    activeZoneGroupRoles:
+      zone?.groupRoles.map((r) => ({ groupId: r.groupId, roleCode: r.roleCode })) ?? [],
   };
 }
 
@@ -175,6 +180,11 @@ export function hydrateSession(snapshot: ServerSession | null): void {
     chapterRoles: (z.chapterRoles ?? []).map((r) => ({
       chapterId: r.chapterId,
       chapterName: r.chapterName ?? "",
+      roleCode: r.roleCode,
+    })),
+    groupRoles: (z.groupRoles ?? []).map((r) => ({
+      groupId: r.groupId,
+      groupName: r.groupName ?? "",
       roleCode: r.roleCode,
     })),
     // The API reports `mfaRequired` as the pure role intersection.
@@ -261,6 +271,11 @@ export function loadSession(opts: { force?: boolean } = {}): Promise<void> {
           chapterName?: string;
           roleCode: string;
         }>;
+        groupRoles?: Array<{
+          groupId: string;
+          groupName?: string;
+          roleCode: string;
+        }>;
         mfaRequired?: boolean;
       };
       const body = (await res.json()) as {
@@ -301,6 +316,11 @@ export function loadSession(opts: { force?: boolean } = {}): Promise<void> {
         chapterRoles: (z.chapterRoles ?? []).map((r) => ({
           chapterId: r.chapterId,
           chapterName: r.chapterName ?? "",
+          roleCode: r.roleCode,
+        })),
+        groupRoles: (z.groupRoles ?? []).map((r) => ({
+          groupId: r.groupId,
+          groupName: r.groupName ?? "",
           roleCode: r.roleCode,
         })),
         mfaRequired: z.mfaRequired === true && user.twoFactorEnabled !== true,
