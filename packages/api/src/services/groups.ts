@@ -13,6 +13,13 @@ import type { Db } from "@stewardledger/db";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { writeAudit } from "./audit";
 
+export class GroupNotFoundError extends Error {
+  readonly code = "group_not_found";
+  constructor(msg = "Group not found.") {
+    super(msg);
+  }
+}
+
 export class GroupNameTakenError extends Error {
   readonly code = "group_name_taken";
   constructor(name: string) {
@@ -328,7 +335,7 @@ export async function softDeleteGroup(
       .set({ deletedAt: new Date(), updatedAt: new Date() })
       .where(and(eq(groups.id, args.groupId), eq(groups.zoneId, args.zoneId), isNull(groups.deletedAt)))
       .returning({ id: groups.id });
-    if (!updated) throw new Error("Group not found or already deleted");
+    if (!updated) throw new GroupNotFoundError();
 
     await writeAudit(tx, {
       zoneId: args.zoneId,
