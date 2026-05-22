@@ -310,6 +310,7 @@ Exit checklist:
 
 Deliverables:
 
+- Platform-admin management UI at `/admin/administrators`. *(Landed: super-admin can invite a new platform admin (POST `/api/admin/administrators/invite` → email with magic link → POST `/api/public/platform-invitations/accept` to set a password), grant a role to an existing user by email, revoke individual roles, and promote/demote the super-admin bit. Refuses demoting the only remaining super-admin (`last_super_admin` 409). New schema: `platform_invitations` and a nullable `audit_events.zone_id` with a CHECK that `platform.*` actions have NULL zone_id while everything else stays tenant-scoped.)*
 - Per-zone audit search. *(UI landed at `/zone/audit`; reuses `/api/tenant/reports/audit-log/data` so search + Excel/PDF export stay aligned. Admin-only — zone owner / admin / finance admin; viewer + chapter roles denied. See `packages/web/src/routes/zone/audit/+page.svelte` and the access predicate at `packages/web/src/lib/audit/access.ts`.)*
 - Per-zone data export bundle (Postgres dump + uploaded files + reports archive).
 - Retention configuration.
