@@ -6,7 +6,11 @@ import { auditEvents } from "@stewardledger/db/schema";
 import type { Db } from "@stewardledger/db";
 
 export interface AuditWrite {
-  zoneId: string;
+  /**
+   * Null for platform-scope events (action prefixed with `platform.`).
+   * The DB CHECK on `audit_events` enforces this invariant.
+   */
+  zoneId: string | null;
   actorUserId?: string | null;
   actorRoleCode?: string | null;
   action: string;
@@ -24,7 +28,7 @@ const AUDIT_INSERT_CHUNK = 1_000;
 
 function toRow(evt: AuditWrite) {
   return {
-    zoneId: evt.zoneId,
+    zoneId: evt.zoneId ?? null,
     actorUserId: evt.actorUserId ?? null,
     actorRoleCode: evt.actorRoleCode ?? null,
     action: evt.action,

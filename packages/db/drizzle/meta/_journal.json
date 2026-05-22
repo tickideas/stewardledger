@@ -92,6 +92,13 @@
       "when": 1779458500000,
       "tag": "0012_report_jobs_checks",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1779461235571,
+      "tag": "0013_platform_admin_management",
+      "breakpoints": true
     }
   ]
 }

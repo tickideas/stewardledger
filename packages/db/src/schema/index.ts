@@ -21,4 +21,5 @@ export * from "./targets";
 export * from "./paying-in-books";
 export * from "./saved-report-filters";
 export * from "./report-jobs";
+export * from "./platform-invitations";
 export * from "./audit";
