@@ -396,10 +396,15 @@ describe("platformInviteLandingPath", () => {
       platformInviteLandingPath({ roleCode: "support_admin", superAdmin: true }),
     ).toBe("/admin/zones");
   });
-  it("routes support_admin to /admin/zones (read-only surface they can reach)", () => {
+  it("routes support_admin to /account until SSR carries platform-role bindings", () => {
+    // The API gate admits support_admin to /admin/zones, but the web
+    // root layout still treats /admin/zones as super-admin-only (the
+    // session shape does not yet carry platformRoles). Land them on
+    // /account so onboarding does not 303 them off a freshly-accepted
+    // invitation. See the comment on platformInviteLandingPath().
     expect(
       platformInviteLandingPath({ roleCode: "support_admin", superAdmin: false }),
-    ).toBe("/admin/zones");
+    ).toBe("/account");
   });
   it("routes region_curator to /admin/regions", () => {
     expect(

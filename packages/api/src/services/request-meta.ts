@@ -27,11 +27,29 @@ export function parseForwardedIp(header: string | null | undefined): string | nu
   if (!header) return null;
   const first = header.split(",")[0]?.trim();
   if (!first) return null;
-  // Strip an optional surrounding `[…]` from a bracketed IPv6 + port form.
-  const cleaned = first.replace(/^\[(.+)\]$/, "$1");
+  // Strip an optional surrounding `[…]:port` from the bracketed
+  // IPv6 form (`[2001:db8::1]:41237`). After this, anything inside the
+  // brackets is the bare address; if there is no port we still strip
+  // any leading/trailing brackets via the second replace below.
+  let cleaned = first;
+  const bracketPort = /^\[([^\]]+)\](?::\d+)?$/.exec(cleaned);
+  if (bracketPort) {
+    cleaned = bracketPort[1];
+  }
+  // IPv4 + port: 203.0.113.7:41237 — strip the trailing :port. We only
+  // do this when the value contains exactly one `:` so an IPv6 literal
+  // (which always has at least two `:`) is not mangled.
+  if ((cleaned.match(/:/g)?.length ?? 0) === 1 && /^\d{1,3}(\.\d{1,3}){3}:\d+$/.test(cleaned)) {
+    cleaned = cleaned.split(":")[0]!;
+  }
   // Cheap shape check — anything that doesn't look like an IP at all
-  // (e.g. "unknown" — yes, some load balancers really do that) is
-  // dropped so the inet insert doesn't blow up.
+  // (e.g. "unknown" — yes, some load balancers really do that, or any
+  // residual port that slipped past the rules above) is dropped so the
+  // inet insert doesn't blow up.
   if (!/^[0-9a-fA-F:.]+$/.test(cleaned)) return null;
+  // Reject any value that still contains exactly one `:` (a bare
+  // IPv4:port that didn't match the strict IPv4 pattern above, or some
+  // other host:port string the regex would otherwise let through).
+  if ((cleaned.match(/:/g)?.length ?? 0) === 1) return null;
   return cleaned;
 }

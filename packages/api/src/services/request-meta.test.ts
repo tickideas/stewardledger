@@ -30,6 +30,22 @@ describe("parseForwardedIp", () => {
     expect(parseForwardedIp("[2001:db8::1]")).toBe("2001:db8::1");
   });
 
+  it("strips trailing :port from IPv4 host:port values", () => {
+    expect(parseForwardedIp("203.0.113.7:41237")).toBe("203.0.113.7");
+    expect(parseForwardedIp("203.0.113.7:41237, 10.0.0.1")).toBe("203.0.113.7");
+  });
+
+  it("strips :port from bracketed IPv6 host:port values", () => {
+    expect(parseForwardedIp("[2001:db8::1]:41237")).toBe("2001:db8::1");
+  });
+
+  it("rejects ambiguous single-colon strings that are not IPv4 hosts", () => {
+    // Some random "host:port" that is not a valid IPv4 should not pass
+    // through to the inet column. IPv6 always has at least two colons,
+    // so a single colon is the giveaway.
+    expect(parseForwardedIp("example.com:8080")).toBeNull();
+  });
+
   it("refuses obvious non-IP tokens that would break inet inserts", () => {
     expect(parseForwardedIp("unknown")).toBeNull();
     expect(parseForwardedIp("not-an-ip!")).toBeNull();
