@@ -69,6 +69,10 @@ export const chapterGroupHistory = pgTable(
   (table) => [
     index("chapter_group_history_chapter_idx").on(table.chapterId, table.dateFrom),
     index("chapter_group_history_group_idx").on(table.groupId, table.dateFrom),
+    /** Only one open history segment per chapter at any time. */
+    uniqueIndex("chapter_group_history_one_open_per_chapter_idx")
+      .on(table.zoneId, table.chapterId)
+      .where(sql`date_to is null`),
     foreignKey({
       name: "chapter_group_history_chapter_zone_fk",
       columns: [table.zoneId, table.chapterId],
