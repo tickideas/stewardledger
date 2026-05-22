@@ -10,7 +10,6 @@
     id: string;
     name: string;
     shortCode: string | null;
-    countryCode: string | null;
     isActive: boolean;
     createdAt: string;
   };
@@ -20,7 +19,6 @@
 
   let name = $state("");
   let shortCode = $state("");
-  let countryCode = $state("");
   let creating = $state(false);
   let createError = $state<string | null>(null);
 
@@ -45,11 +43,9 @@
       await api.post("/api/admin/regions", {
         name,
         shortCode: shortCode || undefined,
-        countryCode: countryCode || undefined,
       });
       name = "";
       shortCode = "";
-      countryCode = "";
       await refresh();
     } catch (err) {
       createError = err instanceof ApiError ? err.message : "Could not create region.";
@@ -87,17 +83,13 @@
       <span class="h-px flex-1 bg-[var(--rule)]"></span>
     </div>
     <form class="grid grid-cols-12 gap-3" onsubmit={create}>
-      <label class="col-span-12 sm:col-span-6">
+      <label class="col-span-12 sm:col-span-8">
         <span class="sl-eyebrow" style="font-size:10.5px">Name</span>
         <input type="text" required minlength="2" maxlength="120" bind:value={name} placeholder="Region name" class="sl-input mt-1.5" />
       </label>
       <label class="col-span-6 sm:col-span-2">
         <span class="sl-eyebrow" style="font-size:10.5px">Short</span>
         <input type="text" maxlength="16" bind:value={shortCode} placeholder="UK-N" class="sl-input mt-1.5" />
-      </label>
-      <label class="col-span-6 sm:col-span-2">
-        <span class="sl-eyebrow" style="font-size:10.5px">Country</span>
-        <input type="text" maxlength="2" bind:value={countryCode} placeholder="GB" class="sl-input mt-1.5 uppercase" />
       </label>
       <div class="col-span-12 flex items-end sm:col-span-2">
         <button type="submit" disabled={creating} class="sl-btn sl-btn-primary w-full justify-center">
@@ -129,7 +121,6 @@
             <tr>
               <th>Name</th>
               <th>Short code</th>
-              <th>Country</th>
               <th>Status</th>
               <th class="!text-right">Action</th>
             </tr>
@@ -139,7 +130,6 @@
               <tr>
                 <td class="sl-display text-[15px] text-[var(--ink)]">{r.name}</td>
                 <td class="sl-mono text-[12px] text-[var(--ink-soft)]">{r.shortCode ?? "—"}</td>
-                <td class="sl-mono text-[12px] text-[var(--ink-soft)] uppercase">{r.countryCode ?? "—"}</td>
                 <td>
                   {#if r.isActive}
                     <span class="sl-badge sl-badge-ok">active</span>
@@ -155,7 +145,7 @@
               </tr>
             {/each}
             {#if regions.length === 0}
-              <tr><td colspan="5" class="py-10 text-center text-[13px] text-[var(--ink-mute)]">No regions yet.</td></tr>
+              <tr><td colspan="4" class="py-10 text-center text-[13px] text-[var(--ink-mute)]">No regions yet.</td></tr>
             {/if}
           </tbody>
         </table>
