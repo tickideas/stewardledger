@@ -22,7 +22,7 @@ import {
   userRoleBindings,
   zones,
 } from "@stewardledger/db/schema";
-import { CHAPTER_ROLES, ZONE_ROLES } from "@stewardledger/shared";
+import { CHAPTER_ROLES, GROUP_ROLES, ZONE_ROLES } from "@stewardledger/shared";
 import { db } from "../db";
 import { applyAcceptedInvitation, findInvitationByToken } from "./invitations";
 import { deriveGivingPeriodForDate } from "./period-seed";
@@ -79,9 +79,12 @@ describe("signupZone", () => {
       .select({ code: roles.code })
       .from(roles)
       .where(sql`${roles.zoneId} = ${result.zoneId}`);
-    expect(seededRoles.length).toBe(9);
+    expect(seededRoles.length).toBe(11);
     expect(seededRoles.map((r) => r.code)).toContain(ZONE_ROLES.ZONE_OWNER);
     expect(seededRoles.map((r) => r.code)).toContain(CHAPTER_ROLES.CHAPTER_TREASURER);
+    expect(seededRoles.map((r) => r.code)).toEqual(
+      expect.arrayContaining([GROUP_ROLES.GROUP_ADMIN, GROUP_ROLES.GROUP_PASTOR_VIEWER]),
+    );
 
     const [givingCategoryCount] = await db
       .select({ count: sql<number>`count(*)::int` })
