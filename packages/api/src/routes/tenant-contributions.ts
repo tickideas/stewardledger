@@ -152,7 +152,9 @@ tenantContributionsRouter.get(
       }
     }
     const scope = await visibleChapterIds(ctx, CONTRIB_ZONE_READ_ROLES);
-    if (scope.kind === "list" && scope.ids.length === 0) return forbidden(c);
+    if (scope.kind === "list" && scope.ids.length === 0) {
+      return c.json({ items: [], total: 0, limit: q.limit, offset: q.offset });
+    }
     const result = await listContributions(db, ctx.zoneId, q, {
       chapterIds: scope.kind === "all" ? undefined : scope.ids,
     });
@@ -317,7 +319,9 @@ tenantContributionsRouter.get(
       }
     }
     const scope = await visibleChapterIds(ctx, CONTRIB_ZONE_READ_ROLES);
-    if (scope.kind === "list" && scope.ids.length === 0) return forbidden(c);
+    if (scope.kind === "list" && scope.ids.length === 0) {
+      return c.json({ items: [], total: 0, limit: q.limit, offset: q.offset });
+    }
     const result = await listBatches(db, ctx.zoneId, q, {
       chapterIds: scope.kind === "all" ? undefined : scope.ids,
     });
