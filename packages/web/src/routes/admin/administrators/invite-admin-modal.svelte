@@ -20,6 +20,11 @@
   let submitting = $state(false);
   let errorMsg = $state<string | null>(null);
 
+  function close() {
+    if (submitting) return;
+    open = false;
+  }
+
   $effect(() => {
     if (!open) {
       name = "";
@@ -30,6 +35,10 @@
       errorMsg = null;
     }
   });
+
+  function onKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape" && open) close();
+  }
 
   async function submit(e: SubmitEvent): Promise<void> {
     e.preventDefault();
@@ -50,76 +59,101 @@
   }
 </script>
 
+<svelte:window onkeydown={onKeydown} />
+
 {#if open}
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
-    <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
-      <div class="flex items-start justify-between">
-        <h2 class="text-lg font-semibold text-slate-900">Invite administrator</h2>
+  <div
+    class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8"
+    style="background: rgba(21,22,26,0.45); backdrop-filter: blur(2px)"
+    role="presentation"
+    onclick={(e) => {
+      if (e.target === e.currentTarget) close();
+    }}
+  >
+    <div
+      class="sl-card w-full max-w-xl"
+      style="box-shadow: var(--shadow-lift)"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="invite-admin-title"
+    >
+      <div class="flex items-start justify-between border-b border-[var(--rule)] px-7 py-5">
+        <div>
+          <span class="sl-eyebrow">New administrator</span>
+          <h2 id="invite-admin-title" class="mt-2 sl-display text-[24px] text-[var(--ink)]">
+            Invite an <span class="sl-serif-italic text-[var(--brass-deep)]">administrator</span>
+          </h2>
+          <p class="mt-2 max-w-md text-[12px] text-[var(--ink-mute)]">
+            Sends an email with a magic link. The invitee sets their password and accepts the
+            role; the link expires in 7 days.
+          </p>
+        </div>
         <button
           type="button"
-          class="text-slate-400 hover:text-slate-700"
+          onclick={close}
+          class="ml-4 text-[var(--ink-mute)] hover:text-[var(--ink)] text-lg leading-none"
           aria-label="Close"
-          onclick={() => (open = false)}
-        >×</button>
+        >
+          ✕
+        </button>
       </div>
-      <p class="mt-1 text-sm text-slate-500">
-        The invitee will receive a link to set their password and accept the role.
-      </p>
-      <form class="mt-4 space-y-3" onsubmit={submit}>
+
+      <form class="space-y-5 px-7 py-6" onsubmit={submit}>
         <label class="block">
-          <span class="text-sm font-medium text-slate-700">Name</span>
+          <span class="sl-eyebrow" style="font-size:10.5px">Name</span>
           <input
-            class="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
             type="text"
             required
             minlength="2"
             maxlength="120"
             bind:value={name}
+            placeholder="e.g. Pat Treasurer"
+            class="sl-input mt-2"
           />
         </label>
+
         <label class="block">
-          <span class="text-sm font-medium text-slate-700">Email</span>
+          <span class="sl-eyebrow" style="font-size:10.5px">Email</span>
           <input
-            class="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
             type="email"
             required
             maxlength="254"
             bind:value={email}
+            placeholder="pat@example.org"
+            class="sl-input mt-2"
           />
         </label>
+
         <label class="block">
-          <span class="text-sm font-medium text-slate-700">Role</span>
-          <select
-            class="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
-            bind:value={roleCode}
-          >
-            <option value="support_admin">support_admin (read-only across tenants)</option>
-            <option value="billing_admin">billing_admin (Stripe / subscriptions — Phase 10)</option>
-            <option value="region_curator">region_curator (regions reference list)</option>
+          <span class="sl-eyebrow" style="font-size:10.5px">Role</span>
+          <select bind:value={roleCode} class="sl-select mt-2">
+            <option value="support_admin">support_admin — read-only across tenants</option>
+            <option value="billing_admin">billing_admin — Stripe / subscriptions (Phase 10)</option>
+            <option value="region_curator">region_curator — regions reference list</option>
           </select>
         </label>
-        <label class="flex items-center gap-2 text-sm">
-          <input type="checkbox" bind:checked={superAdmin} />
-          <span>Also promote to <strong>super-admin</strong> on accept</span>
+
+        <label class="flex items-start gap-3 rounded-md border border-[var(--rule)] bg-[var(--paper-soft)] px-3 py-2.5">
+          <input type="checkbox" bind:checked={superAdmin} class="mt-0.5" />
+          <span class="text-[13px] text-[var(--ink-soft)]">
+            Also promote to <strong class="text-[var(--ink)]">super-admin</strong> on accept.
+            <span class="block text-[11.5px] text-[var(--ink-mute)]">
+              Use sparingly — super-admin sees everything across every tenant.
+            </span>
+          </span>
         </label>
+
         {#if errorMsg}
-          <p class="rounded border border-rose-200 bg-rose-50 px-2 py-1 text-sm text-rose-700">
+          <p class="border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">
             {errorMsg}
           </p>
         {/if}
-        <div class="mt-2 flex justify-end gap-2">
-          <button
-            type="button"
-            class="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
-            onclick={() => (open = false)}
-          >
+
+        <div class="flex justify-end gap-2 border-t border-[var(--rule)] pt-5">
+          <button type="button" onclick={close} disabled={submitting} class="sl-btn sl-btn-ghost">
             Cancel
           </button>
-          <button
-            type="submit"
-            class="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-            disabled={submitting}
-          >
+          <button type="submit" disabled={submitting} class="sl-btn sl-btn-primary">
             {submitting ? "Sending…" : "Send invitation"}
           </button>
         </div>

@@ -18,6 +18,11 @@
   let submitting = $state(false);
   let errorMsg = $state<string | null>(null);
 
+  function close() {
+    if (submitting) return;
+    open = false;
+  }
+
   $effect(() => {
     if (!open) {
       email = "";
@@ -26,6 +31,10 @@
       errorMsg = null;
     }
   });
+
+  function onKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape" && open) close();
+  }
 
   async function submit(e: SubmitEvent): Promise<void> {
     e.preventDefault();
@@ -43,62 +52,78 @@
   }
 </script>
 
+<svelte:window onkeydown={onKeydown} />
+
 {#if open}
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
-    <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
-      <div class="flex items-start justify-between">
-        <h2 class="text-lg font-semibold text-slate-900">Grant role to existing user</h2>
+  <div
+    class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8"
+    style="background: rgba(21,22,26,0.45); backdrop-filter: blur(2px)"
+    role="presentation"
+    onclick={(e) => {
+      if (e.target === e.currentTarget) close();
+    }}
+  >
+    <div
+      class="sl-card w-full max-w-lg"
+      style="box-shadow: var(--shadow-lift)"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="grant-admin-title"
+    >
+      <div class="flex items-start justify-between border-b border-[var(--rule)] px-7 py-5">
+        <div>
+          <span class="sl-eyebrow">Grant role</span>
+          <h2 id="grant-admin-title" class="mt-2 sl-display text-[24px] text-[var(--ink)]">
+            Grant to <span class="sl-serif-italic text-[var(--brass-deep)]">existing user</span>
+          </h2>
+          <p class="mt-2 max-w-md text-[12px] text-[var(--ink-mute)]">
+            Adds a platform role to a user who already has an account. The change takes effect
+            at their next sign-in.
+          </p>
+        </div>
         <button
           type="button"
-          class="text-slate-400 hover:text-slate-700"
+          onclick={close}
+          class="ml-4 text-[var(--ink-mute)] hover:text-[var(--ink)] text-lg leading-none"
           aria-label="Close"
-          onclick={() => (open = false)}
-        >×</button>
+        >
+          ✕
+        </button>
       </div>
-      <p class="mt-1 text-sm text-slate-500">
-        Adds a platform role to a user who already has an account. The change takes effect at
-        their next sign-in.
-      </p>
-      <form class="mt-4 space-y-3" onsubmit={submit}>
+
+      <form class="space-y-5 px-7 py-6" onsubmit={submit}>
         <label class="block">
-          <span class="text-sm font-medium text-slate-700">User email</span>
+          <span class="sl-eyebrow" style="font-size:10.5px">User email</span>
           <input
-            class="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
             type="email"
             required
             maxlength="254"
             bind:value={email}
+            placeholder="user@example.org"
+            class="sl-input mt-2"
           />
         </label>
+
         <label class="block">
-          <span class="text-sm font-medium text-slate-700">Role</span>
-          <select
-            class="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
-            bind:value={roleCode}
-          >
-            <option value="support_admin">support_admin (read-only across tenants)</option>
-            <option value="billing_admin">billing_admin (Stripe / subscriptions — Phase 10)</option>
-            <option value="region_curator">region_curator (regions reference list)</option>
+          <span class="sl-eyebrow" style="font-size:10.5px">Role</span>
+          <select bind:value={roleCode} class="sl-select mt-2">
+            <option value="support_admin">support_admin — read-only across tenants</option>
+            <option value="billing_admin">billing_admin — Stripe / subscriptions (Phase 10)</option>
+            <option value="region_curator">region_curator — regions reference list</option>
           </select>
         </label>
+
         {#if errorMsg}
-          <p class="rounded border border-rose-200 bg-rose-50 px-2 py-1 text-sm text-rose-700">
+          <p class="border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">
             {errorMsg}
           </p>
         {/if}
-        <div class="mt-2 flex justify-end gap-2">
-          <button
-            type="button"
-            class="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
-            onclick={() => (open = false)}
-          >
+
+        <div class="flex justify-end gap-2 border-t border-[var(--rule)] pt-5">
+          <button type="button" onclick={close} disabled={submitting} class="sl-btn sl-btn-ghost">
             Cancel
           </button>
-          <button
-            type="submit"
-            class="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-            disabled={submitting}
-          >
+          <button type="submit" disabled={submitting} class="sl-btn sl-btn-primary">
             {submitting ? "Granting…" : "Grant role"}
           </button>
         </div>

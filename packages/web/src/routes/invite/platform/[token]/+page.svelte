@@ -1,7 +1,7 @@
 <!-- packages/web/src/routes/invite/platform/[token]/+page.svelte -->
 <!-- Public accept page for platform-admin invitations. -->
-<!-- Sibling of /invite/[token] (zone-scope); distinct so the copy reflects platform scope. -->
-<!-- RELEVANT FILES: packages/web/src/routes/invite/platform/[token]/+page.ts, packages/api/src/routes/public.ts -->
+<!-- Sibling of /invite/[token] (zone-scope); same visual treatment, distinct copy. -->
+<!-- RELEVANT FILES: packages/web/src/routes/invite/platform/[token]/+page.ts, packages/web/src/routes/invite/[token]/+page.svelte -->
 
 <script lang="ts">
   import { goto } from "$app/navigation";
@@ -31,7 +31,6 @@
         "/api/public/platform-invitations/accept",
         { token: data.token, name: data.invitation.name, password },
       );
-      // Land on the platform-admin shell.
       await goto("/admin/zones");
     } catch (err) {
       errorMsg = err instanceof ApiError ? err.message : "Could not accept the invitation.";
@@ -68,19 +67,17 @@
           maxlength="200"
           autocomplete="new-password"
           bind:value={password}
-          class="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
+          class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
         />
-        <span class="mt-1 block text-xs text-slate-500">At least 12 characters.</span>
+        <p class="mt-1 text-xs text-slate-500">At least 12 characters.</p>
       </label>
       {#if errorMsg}
-        <p class="rounded border border-rose-200 bg-rose-50 px-2 py-1 text-sm text-rose-700">
-          {errorMsg}
-        </p>
+        <p class="text-sm text-red-600">{errorMsg}</p>
       {/if}
       <button
         type="submit"
-        class="w-full rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
         disabled={submitting}
+        class="w-full inline-flex items-center justify-center px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-700 disabled:opacity-50"
       >
         {submitting ? "Setting up…" : "Accept invitation"}
       </button>

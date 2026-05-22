@@ -143,7 +143,13 @@
   }
 
   function fmtDate(iso: string): string {
-    return new Date(iso).toLocaleString();
+    return new Date(iso).toLocaleString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   }
 
   onMount(() => {
@@ -154,131 +160,179 @@
   });
 </script>
 
-<div class="space-y-6">
-  <header class="flex items-end justify-between">
+<div class="pt-2 pb-10 lg:pt-0">
+  <!-- Title block -->
+  <div class="sl-reveal sl-reveal-1 flex flex-wrap items-end justify-between gap-6">
     <div>
-      <h1 class="text-2xl font-semibold tracking-tight text-slate-900">Administrators</h1>
-      <p class="mt-1 text-sm text-slate-500">
+      <span class="sl-eyebrow">§ Section III · Access</span>
+      <h1 class="mt-3 sl-display text-[44px] leading-[1] text-[var(--ink)]">
+        Administrators <span class="sl-serif-italic font-light text-[var(--brass-deep)]">register</span>
+      </h1>
+      <p class="mt-2 max-w-xl text-[14px] text-[var(--ink-mute)]">
         Platform-scope identities. Super-admins manage everything; support and billing admins
         get the read-only or finance surfaces they need.
       </p>
     </div>
-    <div class="flex items-center gap-2">
+    <div class="flex items-center gap-3">
       <button
         type="button"
-        class="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
         onclick={() => (grantOpen = true)}
+        class="sl-btn sl-btn-ghost"
       >
-        Grant role to existing user
+        Grant to existing user
       </button>
-      <button
-        type="button"
-        class="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800"
-        onclick={() => (inviteOpen = true)}
-      >
-        + Invite admin
+      <button type="button" onclick={() => (inviteOpen = true)} class="sl-btn sl-btn-primary">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <path d="M7 3v8M3 7h8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+        </svg>
+        Invite admin
       </button>
     </div>
-  </header>
+  </div>
 
   {#if flash}
-    <div class="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+    <p class="sl-reveal mt-6 border-l-2 border-[var(--ok)] bg-[var(--ok-soft)] px-4 py-3 text-[13px] text-[var(--ink-soft)]">
       {flash}
-    </div>
+    </p>
   {/if}
   {#if loadError}
-    <div class="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+    <p class="mt-6 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-4 py-3 text-[13px] text-[var(--bad)]">
       {loadError}
-    </div>
+    </p>
   {/if}
 
-  <section>
-    <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">Active administrators</h2>
-    <div class="mt-2 overflow-hidden rounded-lg border border-slate-200 bg-white">
-      <table class="min-w-full divide-y divide-slate-200 text-sm">
-        <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-          <tr>
-            <th class="px-3 py-2 font-medium">Email</th>
-            <th class="px-3 py-2 font-medium">Name</th>
-            <th class="px-3 py-2 font-medium">Roles</th>
-            <th class="px-3 py-2 font-medium text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-slate-100">
-          {#if loading && admins.length === 0}
-            <tr><td class="px-3 py-4 text-slate-400" colspan="4">Loading…</td></tr>
-          {:else if admins.length === 0}
-            <tr><td class="px-3 py-4 text-slate-400" colspan="4">No administrators yet.</td></tr>
-          {:else}
+  <InviteAdminModal bind:open={inviteOpen} oninvited={onInvited} />
+  <GrantExistingModal bind:open={grantOpen} ongranted={onGranted} />
+
+  <!-- Active administrators -->
+  <div class="sl-reveal sl-reveal-2 mt-10">
+    <div class="mb-3 flex items-center justify-between">
+      <span class="sl-eyebrow">Ledger of administrators</span>
+      <span class="sl-mono text-[10.5px] text-[var(--ink-mute)]" style="letter-spacing:0.06em">
+        {admins.length} {admins.length === 1 ? "entry" : "entries"}
+      </span>
+    </div>
+
+    {#if loading && admins.length === 0}
+      <div class="sl-card p-12 text-center text-[13px] text-[var(--ink-mute)]">
+        <span class="sl-mono" style="letter-spacing:0.16em">LOADING…</span>
+      </div>
+    {:else if admins.length === 0}
+      <div class="sl-card p-12 text-center text-[14px] text-[var(--ink-mute)]">
+        No administrators yet.
+      </div>
+    {:else}
+      <div class="sl-card overflow-hidden">
+        <table class="sl-table">
+          <thead>
+            <tr>
+              <th>Administrator</th>
+              <th>Roles</th>
+              <th>Joined</th>
+              <th class="!text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
             {#each admins as admin (admin.userId)}
               <tr>
-                <td class="px-3 py-2 font-mono text-[12px]">{admin.email}</td>
-                <td class="px-3 py-2">{admin.name ?? "—"}</td>
-                <td class="px-3 py-2">
-                  <div class="flex flex-wrap gap-1">
-                    {#if admin.isSuperAdmin}
-                      <span class="rounded-full bg-slate-900 px-2 py-[1px] text-[11px] font-medium text-white">super_admin</span>
-                    {/if}
-                    {#each admin.platformRoles as roleCode (roleCode)}
-                      <span class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-[1px] text-[11px] text-slate-700">
-                        {roleCode}
-                        <button
-                          type="button"
-                          class="text-slate-400 hover:text-rose-700"
-                          aria-label="Remove {roleCode}"
-                          onclick={() => revokeRole(admin, roleCode)}
-                        >×</button>
-                      </span>
-                    {/each}
+                <td>
+                  <div class="sl-display text-[15px] text-[var(--ink)]">{admin.name ?? "—"}</div>
+                  <div class="mt-1 sl-mono text-[10.5px] text-[var(--ink-mute)]" style="letter-spacing:0.04em">
+                    {admin.email}
                   </div>
                 </td>
-                <td class="px-3 py-2 text-right text-[12px]">
+                <td>
+                  <div class="flex flex-wrap items-center gap-1.5">
+                    {#if admin.isSuperAdmin}
+                      <span class="sl-badge sl-badge-accent">super_admin</span>
+                    {/if}
+                    {#each admin.platformRoles as roleCode (roleCode)}
+                      <span class="inline-flex items-center gap-1">
+                        <span class="sl-badge sl-badge-info">{roleCode}</span>
+                        <button
+                          type="button"
+                          class="sl-link text-[12px]"
+                          aria-label="Remove {roleCode}"
+                          onclick={() => revokeRole(admin, roleCode)}
+                        >revoke</button>
+                      </span>
+                    {/each}
+                    {#if !admin.isSuperAdmin && admin.platformRoles.length === 0}
+                      <span class="text-[var(--ink-faint)] text-[12px]">—</span>
+                    {/if}
+                  </div>
+                </td>
+                <td class="sl-mono text-[11.5px] text-[var(--ink-mute)]">
+                  {new Date(admin.createdAt).toLocaleDateString("en-GB", {
+                    day: "2-digit",
+                    month: "short",
+                    year: "numeric",
+                  })}
+                </td>
+                <td class="text-right">
                   {#if admin.isSuperAdmin}
-                    <button class="text-slate-600 hover:text-rose-700" onclick={() => demote(admin)}>
-                      Demote
+                    <button class="sl-link text-[12px]" onclick={() => demote(admin)}>
+                      demote
                     </button>
                   {:else}
-                    <button class="text-slate-600 hover:text-slate-900" onclick={() => elevate(admin)}>
-                      Promote to super-admin
+                    <button class="sl-link text-[12px]" onclick={() => elevate(admin)}>
+                      promote to super-admin
                     </button>
                   {/if}
                 </td>
               </tr>
             {/each}
-          {/if}
-        </tbody>
-      </table>
-    </div>
-  </section>
+          </tbody>
+        </table>
+      </div>
+    {/if}
+  </div>
 
+  <!-- Pending invitations -->
   {#if invitations.length > 0}
-    <section>
-      <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">Pending invitations</h2>
-      <div class="mt-2 overflow-hidden rounded-lg border border-slate-200 bg-white">
-        <table class="min-w-full divide-y divide-slate-200 text-sm">
-          <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+    <div class="sl-reveal sl-reveal-3 mt-10">
+      <div class="mb-3 flex items-center justify-between">
+        <span class="sl-eyebrow">Pending invitations</span>
+        <span class="sl-mono text-[10.5px] text-[var(--ink-mute)]" style="letter-spacing:0.06em">
+          {invitations.length} {invitations.length === 1 ? "open" : "open"}
+        </span>
+      </div>
+
+      <div class="sl-card overflow-hidden">
+        <table class="sl-table">
+          <thead>
             <tr>
-              <th class="px-3 py-2 font-medium">Email</th>
-              <th class="px-3 py-2 font-medium">Name</th>
-              <th class="px-3 py-2 font-medium">Role</th>
-              <th class="px-3 py-2 font-medium">Sent</th>
-              <th class="px-3 py-2 font-medium">Expires</th>
-              <th class="px-3 py-2 font-medium text-right">Actions</th>
+              <th>Invitee</th>
+              <th>Role</th>
+              <th>Sent</th>
+              <th>Expires</th>
+              <th class="!text-right">Action</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-slate-100">
+          <tbody>
             {#each invitations as inv (inv.id)}
               <tr>
-                <td class="px-3 py-2 font-mono text-[12px]">{inv.email}</td>
-                <td class="px-3 py-2">{inv.name}</td>
-                <td class="px-3 py-2">
-                  {inv.roleCode}{#if inv.superAdmin} + super_admin{/if}
+                <td>
+                  <div class="sl-display text-[15px] text-[var(--ink)]">{inv.name}</div>
+                  <div class="mt-1 sl-mono text-[10.5px] text-[var(--ink-mute)]" style="letter-spacing:0.04em">
+                    {inv.email}
+                  </div>
                 </td>
-                <td class="px-3 py-2 text-slate-500 text-[12px]">{fmtDate(inv.createdAt)}</td>
-                <td class="px-3 py-2 text-slate-500 text-[12px]">{fmtDate(inv.expiresAt)}</td>
-                <td class="px-3 py-2 text-right text-[12px]">
-                  <button class="text-rose-700 hover:underline" onclick={() => revokeInvitation(inv)}>
-                    Revoke
+                <td>
+                  <span class="sl-badge sl-badge-info">{inv.roleCode}</span>
+                  {#if inv.superAdmin}
+                    <span class="ml-1 sl-badge sl-badge-accent">+ super_admin</span>
+                  {/if}
+                </td>
+                <td class="sl-mono text-[11.5px] text-[var(--ink-mute)]">
+                  {fmtDate(inv.createdAt)}
+                </td>
+                <td class="sl-mono text-[11.5px] text-[var(--ink-mute)]">
+                  {fmtDate(inv.expiresAt)}
+                </td>
+                <td class="text-right">
+                  <button class="sl-link text-[12px]" onclick={() => revokeInvitation(inv)}>
+                    revoke
                   </button>
                 </td>
               </tr>
@@ -286,9 +340,6 @@
           </tbody>
         </table>
       </div>
-    </section>
+    </div>
   {/if}
 </div>
-
-<InviteAdminModal bind:open={inviteOpen} oninvited={onInvited} />
-<GrantExistingModal bind:open={grantOpen} ongranted={onGranted} />
