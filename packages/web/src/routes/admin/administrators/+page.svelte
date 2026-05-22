@@ -40,6 +40,7 @@
   let loading = $state(false);
   let loadError = $state<string | null>(null);
   let flash = $state<string | null>(null);
+  let flashTone = $state<"ok" | "warn">("ok");
   let flashTimer: ReturnType<typeof setTimeout> | null = null;
 
   let inviteOpen = $state(false);
@@ -59,17 +60,32 @@
     }
   }
 
-  function showFlash(msg: string) {
+  function showFlash(msg: string, tone: "ok" | "warn" = "ok") {
     flash = msg;
+    flashTone = tone;
     if (flashTimer) clearTimeout(flashTimer);
+    // Warnings linger longer so the operator has time to read the
+    // email-transport failure detail before it disappears.
+    const ttl = tone === "warn" ? 12_000 : 5_000;
     flashTimer = setTimeout(() => {
       flash = null;
       flashTimer = null;
-    }, 5_000);
+    }, ttl);
   }
 
-  function onInvited() {
-    showFlash("Invitation sent. The invitee can accept via the link in their email.");
+  function onInvited(result: { invitationId: string; emailSent: boolean; emailError: string | null }) {
+    if (result.emailSent) {
+      showFlash(
+        "Invitation created and emailed. The invitee can accept via the link in their inbox.",
+      );
+    } else {
+      showFlash(
+        "Invitation created, but the email failed to send" +
+          (result.emailError ? `: ${result.emailError}.` : ".") +
+          " The invitation row stands — in dev, copy the magic URL from the API log; in prod, fix the email transport and revoke + re-invite.",
+        "warn",
+      );
+    }
     refresh();
   }
   function onGranted() {
@@ -191,7 +207,13 @@
   </div>
 
   {#if flash}
-    <p class="sl-reveal mt-6 border-l-2 border-[var(--ok)] bg-[var(--ok-soft)] px-4 py-3 text-[13px] text-[var(--ink-soft)]">
+    <p
+      class="sl-reveal mt-6 border-l-2 px-4 py-3 text-[13px] text-[var(--ink-soft)]"
+      class:border-[var(--ok)]={flashTone === "ok"}
+      class:bg-[var(--ok-soft)]={flashTone === "ok"}
+      class:border-[var(--warn)]={flashTone === "warn"}
+      class:bg-[var(--warn-soft)]={flashTone === "warn"}
+    >
       {flash}
     </p>
   {/if}

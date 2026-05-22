@@ -155,8 +155,13 @@ adminAdministratorsRouter.post(
       );
       // Side-effect: send the invitation email. We send AFTER the
       // service returns so a 5xx out of the email transport doesn't
-      // leak a half-created invitation. The token is still surfaced in
-      // the API response for dev/CLI flows.
+      // leak a half-created invitation. The token is intentionally
+      // NOT returned in the API response — only the email carries it.
+      // We DO surface the email-send outcome so the operator UI can
+      // tell the admin to copy a fresh URL out of the dev log (in dev)
+      // or to fix the transport (in prod) instead of silently failing.
+      let emailSent = true;
+      let emailError: string | null = null;
       try {
         await sendPlatformAdminInviteEmail({
           to: input.email,
@@ -166,6 +171,8 @@ adminAdministratorsRouter.post(
           token: result.token,
         });
       } catch (err) {
+        emailSent = false;
+        emailError = err instanceof Error ? err.message : "unknown_error";
         log.warn(
           { err, invitationId: result.id },
           "platform invite email failed to send; invitation row stands",
@@ -176,6 +183,8 @@ adminAdministratorsRouter.post(
           status: "invited",
           invitationId: result.id,
           expiresAt: result.expiresAt.toISOString(),
+          emailSent,
+          emailError,
         },
         201,
       );

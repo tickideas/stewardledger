@@ -8,7 +8,7 @@
 
   let { open = $bindable(false), oninvited } = $props<{
     open?: boolean;
-    oninvited?: (invitationId: string) => void;
+    oninvited?: (result: { invitationId: string; emailSent: boolean; emailError: string | null }) => void;
   }>();
 
   type RoleCode = "support_admin" | "billing_admin" | "region_curator";
@@ -45,12 +45,17 @@
     submitting = true;
     errorMsg = null;
     try {
-      const res = await api.post<{ invitationId: string }>(
-        "/api/admin/administrators/invite",
-        { name, email, roleCode, superAdmin },
-      );
+      const res = await api.post<{
+        invitationId: string;
+        emailSent: boolean;
+        emailError: string | null;
+      }>("/api/admin/administrators/invite", { name, email, roleCode, superAdmin });
       open = false;
-      oninvited?.(res.invitationId);
+      oninvited?.({
+        invitationId: res.invitationId,
+        emailSent: res.emailSent,
+        emailError: res.emailError,
+      });
     } catch (err) {
       errorMsg = err instanceof ApiError ? err.message : "Could not send the invitation.";
     } finally {

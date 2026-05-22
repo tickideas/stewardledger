@@ -18,6 +18,7 @@ import { PLATFORM_ROLES } from "@stewardledger/shared";
 import { createApp } from "../app";
 import { auth } from "../auth";
 import { db } from "../db";
+import * as platformEmails from "../services/admin/platform-admin-emails";
 
 function unique(): string {
   return Math.random().toString(36).slice(2, 10);
@@ -134,9 +135,17 @@ describe("admin administrators routes", () => {
       },
     });
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { invitationId: string };
+    const body = (await res.json()) as {
+      invitationId: string;
+      emailSent: boolean;
+      emailError: string | null;
+    };
     createdInvitationIds.push(body.invitationId);
     expect(body.invitationId).toBeTruthy();
+    // Dev email transport always reports success (it just logs the
+    // body), so the happy path returns emailSent=true here.
+    expect(body.emailSent).toBe(true);
+    expect(body.emailError).toBeNull();
 
     // Audit row landed under platform.*.
     const audit = await db
@@ -270,6 +279,43 @@ describe("admin administrators routes", () => {
       .from(platformInvitations)
       .where(sql`id = ${invitationId}`);
     expect(row.revokedAt).not.toBeNull();
+  });
+
+  it("invite surfaces emailSent=false when the email transport fails", async () => {
+    asAdmin();
+    // Make ONLY the next sendPlatformAdminInviteEmail call throw, so we
+    // do not poison sibling tests if vi.restoreAllMocks misses afterEach.
+    const spy = vi
+      .spyOn(platformEmails, "sendPlatformAdminInviteEmail")
+      .mockRejectedValueOnce(new Error("transport down"));
+    try {
+      const res = await call("/api/admin/administrators/invite", {
+        method: "POST",
+        body: {
+          name: "Email Fail",
+          email: `email-fail-${unique()}@example.test`,
+          roleCode: PLATFORM_ROLES.SUPPORT_ADMIN,
+        },
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as {
+        invitationId: string;
+        emailSent: boolean;
+        emailError: string | null;
+      };
+      createdInvitationIds.push(body.invitationId);
+      expect(body.emailSent).toBe(false);
+      expect(body.emailError).toBe("transport down");
+      // The invitation row itself still exists — the operator can
+      // resend or revoke it, but the system did not silently drop it.
+      const open = await db
+        .select()
+        .from(platformInvitations)
+        .where(sql`id = ${body.invitationId}`);
+      expect(open.length).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("validates input via zod (400 on bad role code)", async () => {
