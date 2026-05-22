@@ -28,7 +28,7 @@ import { chapters, payingInBooks } from "@stewardledger/db/schema";
 import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
-import { hasAnyRole } from "../middleware/auth";
+import { hasAnyRole, visibleChapterIds } from "../middleware/auth";
 import { writeAudit } from "../services/audit";
 import {
   CHAPTER_GIVING_READ_ROLES,
@@ -84,18 +84,19 @@ tenantPayingInBooksRouter.get(
     const query = c.req.valid("query");
     const conditions = [eq(payingInBooks.zoneId, ctx.zoneId)];
 
-    if (hasZoneRead(ctx)) {
+    const scope = await visibleChapterIds(ctx, ZONE_GIVING_READ_ROLES);
+    if (scope.kind === "all") {
       if (query.chapterId) conditions.push(eq(payingInBooks.chapterId, query.chapterId));
     } else {
-      if (query.chapterId && !ctx.chapterIds.includes(query.chapterId)) {
+      if (query.chapterId && !scope.ids.includes(query.chapterId)) {
         return forbidden(c);
       }
       if (query.chapterId) {
         conditions.push(eq(payingInBooks.chapterId, query.chapterId));
-      } else if (ctx.chapterIds.length === 0) {
+      } else if (scope.ids.length === 0) {
         return c.json({ items: [], limit: query.limit, offset: query.offset });
       } else {
-        conditions.push(inArray(payingInBooks.chapterId, ctx.chapterIds));
+        conditions.push(inArray(payingInBooks.chapterId, scope.ids));
       }
     }
     if (query.activeOn) {
