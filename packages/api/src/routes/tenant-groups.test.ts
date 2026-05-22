@@ -334,6 +334,28 @@ describe("tenant-groups router", () => {
       const body = (await res.json()) as { items: Array<{ id: string }> };
       expect(body.items.some((g) => g.id === gid)).toBe(false);
     });
+
+    it("group_admin sees only their bound group(s)", async () => {
+      const mine = await seedGroup(zoneA.id, `Mine ${unique()}`, `mine-${unique()}`);
+      const other = await seedGroup(zoneA.id, `Other ${unique()}`, `other-${unique()}`);
+      await ensureGroupAdminBinding(mine);
+      asUser(groupAdminA, "gadm@example.com");
+      const res = await call(zoneA.slug, "/api/tenant/groups");
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { items: Array<{ id: string }> };
+      const ids = body.items.map((g) => g.id);
+      expect(ids).toContain(mine);
+      expect(ids).not.toContain(other);
+    });
+
+    it("chapter_admin without any group binding sees empty list", async () => {
+      await seedGroup(zoneA.id, `Foo ${unique()}`, `foo-${unique()}`);
+      asUser(chapterAdminA, "chadm@example.com");
+      const res = await call(zoneA.slug, "/api/tenant/groups");
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { items: unknown[] };
+      expect(body.items).toEqual([]);
+    });
   });
 
   describe("GET /api/tenant/groups/:id", () => {
@@ -351,6 +373,15 @@ describe("tenant-groups router", () => {
       asUser(ownerA, "owner@example.com");
       const gid = await seedGroup(zoneB.id, `B ${unique()}`, `b-${unique()}`);
       const res = await call(zoneA.slug, `/api/tenant/groups/${gid}`);
+      expect(res.status).toBe(404);
+    });
+
+    it("group_admin gets 404 for a group they're not bound to", async () => {
+      const mine = await seedGroup(zoneA.id, `MineD ${unique()}`, `mined-${unique()}`);
+      const other = await seedGroup(zoneA.id, `OtherD ${unique()}`, `otherd-${unique()}`);
+      await ensureGroupAdminBinding(mine);
+      asUser(groupAdminA, "gadm@example.com");
+      const res = await call(zoneA.slug, `/api/tenant/groups/${other}`);
       expect(res.status).toBe(404);
     });
   });

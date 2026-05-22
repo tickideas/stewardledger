@@ -18,7 +18,7 @@ import {
   groupUpdateSchema,
   ZONE_ROLES,
 } from "@stewardledger/shared";
-import { and, asc, count, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
 import { hasAnyRole } from "../middleware/auth";
@@ -40,6 +40,14 @@ export const tenantGroupsRouter = new Hono();
 
 const ZONE_WRITE = [ZONE_ROLES.ZONE_OWNER, ZONE_ROLES.ZONE_ADMIN] as const;
 
+const ZONE_GROUP_READ_ROLES = [
+  ZONE_ROLES.ZONE_OWNER,
+  ZONE_ROLES.ZONE_ADMIN,
+  ZONE_ROLES.ZONE_FINANCE_ADMIN,
+  ZONE_ROLES.ZONE_AUDITOR,
+  ZONE_ROLES.ZONE_PASTOR_VIEWER,
+] as const;
+
 function isUniqueViolation(err: unknown, constraintName?: string): boolean {
   if (!err || typeof err !== "object") return false;
   const direct = err as { code?: unknown; constraint_name?: unknown; cause?: unknown };
@@ -56,6 +64,12 @@ function forbidden(c: Context) {
 
 tenantGroupsRouter.get("/groups", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
+  const zoneWide = hasAnyRole(ctx, ...ZONE_GROUP_READ_ROLES);
+  const conditions = [eq(groups.zoneId, ctx.zoneId), isNull(groups.deletedAt)];
+  if (!zoneWide) {
+    if (ctx.groupIds.length === 0) return c.json({ items: [] });
+    conditions.push(inArray(groups.id, ctx.groupIds));
+  }
   const rows = await db
     .select({
       id: groups.id,
@@ -70,7 +84,7 @@ tenantGroupsRouter.get("/groups", async (c) => {
       )`,
     })
     .from(groups)
-    .where(and(eq(groups.zoneId, ctx.zoneId), isNull(groups.deletedAt)))
+    .where(and(...conditions))
     .orderBy(asc(groups.name));
   return c.json({ items: rows });
 });
@@ -130,6 +144,10 @@ tenantGroupsRouter.post("/groups", zValidator("json", groupCreateSchema), async 
 tenantGroupsRouter.get("/groups/:id", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
   const id = c.req.param("id");
+  const zoneWide = hasAnyRole(ctx, ...ZONE_GROUP_READ_ROLES);
+  if (!zoneWide && !ctx.groupIds.includes(id)) {
+    return c.json({ error: { code: "not_found", message: "Group not found" } }, 404);
+  }
   const [row] = await db
     .select({
       id: groups.id,
