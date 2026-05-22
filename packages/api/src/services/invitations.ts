@@ -204,6 +204,12 @@ export async function applyAcceptedInvitation(
           eq(userRoleBindings.userId, args.userId),
           eq(userRoleBindings.zoneId, inv.zoneId),
           eq(userRoleBindings.roleId, role.id),
+          inv.chapterId
+            ? eq(userRoleBindings.chapterId, inv.chapterId)
+            : isNull(userRoleBindings.chapterId),
+          inv.groupId
+            ? eq(userRoleBindings.groupId, inv.groupId)
+            : isNull(userRoleBindings.groupId),
           isNull(userRoleBindings.revokedAt),
         ),
       )

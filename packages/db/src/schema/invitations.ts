@@ -18,8 +18,9 @@ export const invitations = pgTable(
     zoneId: text("zone_id")
       .notNull()
       .references(() => zones.id, { onDelete: "cascade" }),
-    /** Null = zone-wide binding. Set = chapter-scoped binding. */
+    /** Null when binding is zone- or group-scoped; set for chapter bindings. */
     chapterId: text("chapter_id").references(() => chapters.id, { onDelete: "cascade" }),
+    /** Null when binding is zone- or chapter-scoped; set for group bindings. */
     groupId: text("group_id"),
     /** Always stored lowercase. */
     email: text("email").notNull(),

@@ -31,7 +31,7 @@ export const roles = pgTable(
     zoneId: text("zone_id").references(() => zones.id, { onDelete: "cascade" }),
     code: text("code").notNull(),
     name: text("name").notNull(),
-    /** platform | zone | chapter */
+    /** platform | zone | group | chapter */
     scope: text("scope").notNull(),
     permissions: jsonb("permissions").$type<string[]>().notNull().default([]),
     isSystem: boolean("is_system").notNull().default(true),
