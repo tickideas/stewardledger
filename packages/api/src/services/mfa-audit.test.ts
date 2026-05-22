@@ -65,7 +65,7 @@ async function bind(userId: string, zoneId: string, roleId: string): Promise<voi
 }
 
 async function readMfaEvents(userId: string): Promise<
-  Array<{ zoneId: string; action: string; after: unknown }>
+  Array<{ zoneId: string | null; action: string; after: unknown }>
 > {
   return db
     .select({
