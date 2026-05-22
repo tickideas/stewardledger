@@ -281,11 +281,11 @@ Exit checklist:
 
 Deliverables:
 
-- Financial target setup per chapter + giving type + ministry year. *(Schema + CRUD API landed; UI + partnership-progress report follow.)*
+- Financial target setup per chapter + giving type + ministry year. *(Schema, CRUD API, and `/zone/targets` UI landed.)*
 - Optional zone-wide targets that aggregate across chapters. *(Supported by the partial unique indexes on `financial_targets`; `chapter_id IS NULL` = zone-wide.)*
-- Paying-in book reference ranges. *(queued)*
-- Partnership progress dashboard. *(queued; consumes financial_targets)*
-- Top partners by category and by month. *(queued; partnership-progress report covers the breakdown)*
+- Paying-in book reference ranges. *(Schema, tenant API, validation hook, and `/zone/paying-in-books` UI landed.)*
+- Partnership progress dashboard. *(Standalone `/zone/partnership-progress` dashboard landed; zone/chapter dashboard cards now summarize current ministry-year target progress by currency.)*
+- Top partners by category and by month. *(Partnership-progress report covers target progress by partnership-tagged giving type; member-level monthly/category pivots remain queued.)*
 
 Audited implementation status:
 
@@ -294,11 +294,14 @@ Audited implementation status:
 - [x] Partnership-progress report (REPORTS.md §2.10, `services/reports/partnership-progress.ts`) — consumes `financial_targets` joined with partnership-tagged giving types; Excel + PDF auto-render via the established renderers.
 - [x] `paying_in_books` schema + Drizzle migration (`0005_shiny_micromacro.sql`); tenant API `/api/tenant/paying-in-books` with role-aware read/write.
 - [x] Reference-code range validation at contribution-batch create + update (`services/paying-in-books/validate.ts`); rejects with `reference_code_not_in_book` → 422.
-- [x] UI: paying-in book setup at `/zone/paying-in-books` (list + filter + create + edit + delete with role-aware write gating). Target setup screen + partnership-progress dashboard remain queued.
+- [x] UI: paying-in book setup at `/zone/paying-in-books` (list + filter + create + edit + delete with role-aware write gating).
+- [x] UI: target setup at `/zone/targets` (filters, pagination, create / edit / delete with role-aware write gating).
+- [x] UI: standalone partnership progress dashboard at `/zone/partnership-progress` (ministry-year / chapter / giving-type filters, progress bars, Excel export link).
+- [x] Zone and chapter dashboard cards consume target progress via `services/dashboards/partnership-progress.ts`, with zone cards summarizing zone-wide targets when present (otherwise chapter-scoped targets) and chapter cards summarizing that chapter only.
 
 Exit checklist:
 
-- [x] Targets feed into reports and dashboards. *(Partnership-progress report consumes `financial_targets`.)*
+- [x] Targets feed into reports and dashboards. *(Partnership-progress report, standalone partnership dashboard, and main zone/chapter dashboard cards consume `financial_targets`.)*
 - [x] Reference-code ranges validate during contribution entry. *(Validator fires from `createBatch` + `updateDraftBatch` when a `referenceCode` is supplied.)*
 
 ---

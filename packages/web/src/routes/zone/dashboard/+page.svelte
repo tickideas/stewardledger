@@ -5,6 +5,7 @@
 
   import { api, ApiError, isAbortError } from "$lib/api";
   import { formatMoney, money } from "@stewardledger/shared";
+  import { percentWidth, type PartnershipProgress } from "$lib/dashboard-progress";
 
   type CurrencyTotal = { currencyCode: string; total: string };
   type DashboardPeriod = {
@@ -35,7 +36,6 @@
     postedCount: number;
     perCurrency: CurrencyTotal[];
   };
-  type PartnershipProgress = { available: false; reason: string };
   type Payload = {
     asOf: string;
     timeZone: string;
@@ -74,6 +74,7 @@
   function fmt(t: CurrencyTotal): string {
     return formatMoney(money(t.total, t.currencyCode));
   }
+
 
   /**
    * Format a UTC ISO datetime in the zone's timezone with a stable
@@ -266,8 +267,45 @@
       </div>
     </div>
 
-    <!-- Recent imports. -->
+
+    <!-- Partnership target progress. -->
     <div class="sl-reveal sl-reveal-4 mt-10 sl-card p-5">
+      <div class="flex items-baseline justify-between">
+        <h2 class="sl-display text-[18px] text-[var(--ink)]">Partnership progress</h2>
+        <a href="/zone/partnership-progress" class="text-[12px] text-[var(--ink-mute)] hover:text-[var(--brass-deep)]">
+          Open dashboard →
+        </a>
+      </div>
+      <div class="mt-4 h-px w-10 bg-[var(--brass)]"></div>
+      {#if !data.partnershipProgress.available}
+        <p class="mt-6 text-[13px] text-[var(--ink-faint)]">{data.partnershipProgress.reason}</p>
+      {:else}
+        <p class="mt-3 text-[12px] text-[var(--ink-mute)]">
+          {data.partnershipProgress.ministryYearLabel} · {data.partnershipProgress.periodStart} to {data.partnershipProgress.periodEnd}
+        </p>
+        <div class="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+          {#each data.partnershipProgress.perCurrency as row (row.currencyCode)}
+            <div class="rounded-2xl border border-[var(--rule)] bg-[var(--paper-soft)] p-4">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <span class="sl-eyebrow">{row.currencyCode} · {row.targetCount} target{row.targetCount === 1 ? "" : "s"}</span>
+                  <p class="mt-2 text-[13px] text-[var(--ink-mute)]">
+                    {formatMoney(money(row.achieved, row.currencyCode))} achieved of {formatMoney(money(row.target, row.currencyCode))}
+                  </p>
+                </div>
+                <div class="sl-display sl-num text-[28px] leading-none text-[var(--brass-deep)]">{row.percentProgress}%</div>
+              </div>
+              <div class="mt-4 h-2 overflow-hidden rounded-full bg-[var(--rule)]">
+                <div class="h-full rounded-full bg-[var(--brass)]" style={`width: ${percentWidth(row.percentProgress)}`}></div>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+
+    <!-- Recent imports. -->
+    <div class="sl-reveal sl-reveal-5 mt-10 sl-card p-5">
       <div class="flex items-baseline justify-between">
         <h2 class="sl-display text-[18px] text-[var(--ink)]">Recent imports</h2>
         <a href="/zone/imports" class="text-[12px] text-[var(--ink-mute)] hover:text-[var(--brass-deep)]">
@@ -317,7 +355,7 @@
       {/if}
     </div>
 
-    <p class="sl-reveal sl-reveal-5 mt-10 text-[11px] text-[var(--ink-faint)]">
+    <p class="sl-reveal sl-reveal-6 mt-10 text-[11px] text-[var(--ink-faint)]">
       Generated {fmtDateTime(data.asOf, data.timeZone)} · {data.timeZone}
     </p>
   {/if}

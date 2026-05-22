@@ -37,7 +37,7 @@ export interface DateBounds {
  * constrains, but a stale or hand-edited value would surface here
  * loudly instead of producing a phantom window.
  */
-function partsInZone(
+export function partsInZone(
   at: Date,
   timeZone: string,
 ): { year: number; month: number; day: number } {
