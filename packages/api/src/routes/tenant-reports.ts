@@ -27,6 +27,7 @@ import {
 import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db";
+import { log } from "../logger";
 import {
   canExportReports,
   canReadReports,
@@ -537,7 +538,22 @@ tenantReportsRouter.get("/reports/jobs/:jobId/download", async (c) => {
       404,
     );
   }
-  const bytes = await storage().get(job.storageKey);
+  let bytes: Uint8Array;
+  try {
+    bytes = await storage().get(job.storageKey);
+  } catch (err) {
+    // Artefact gone from storage even though the row is `completed`.
+    // Most likely cause: an out-of-band cleanup ran ahead of the row
+    // expiry. Treat it the same way as expiry rather than 500-ing.
+    log.warn(
+      { err, jobId: job.id, storageKey: job.storageKey, zoneId: ctx.zoneId },
+      "report job artefact missing from storage",
+    );
+    return c.json(
+      { error: { code: "artefact_missing", message: "Artefact is no longer available" } },
+      404,
+    );
+  }
   const branding = await loadReportBranding(db, ctx.zoneId);
   const filename = buildExportFilename(
     job.reportId,
