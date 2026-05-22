@@ -30,9 +30,9 @@ import {
 import { rankByCurrency } from "./ranking";
 import type {
   CurrencyTotal,
-  DashboardPartnershipProgress,
   DashboardPeriodTotals,
 } from "./zone-dashboard";
+import { buildPartnershipProgressSummary, type DashboardPartnershipProgress } from "./partnership-progress";
 
 export interface ChapterDashboardChapter {
   id: string;
@@ -121,6 +121,7 @@ export async function buildChapterDashboard(
     topGivingTypesList,
     topPartnersList,
     recentContributionsList,
+    partnershipProgress,
   ] = await Promise.all([
     countMembers(database, zoneId, { chapterId }),
     sumPostedByCurrency(database, zoneId, week, { chapterId }),
@@ -130,6 +131,7 @@ export async function buildChapterDashboard(
     fetchTopGivingTypes(database, zoneId, chapterId, month),
     fetchTopPartners(database, zoneId, chapterId, month),
     fetchRecentContributions(database, zoneId, chapterId),
+    buildPartnershipProgressSummary(database, zoneId, { chapterId, timeZone }),
   ]);
 
   return {
@@ -144,10 +146,7 @@ export async function buildChapterDashboard(
     topGivingTypes: topGivingTypesList,
     topPartners: topPartnersList,
     recentContributions: recentContributionsList,
-    partnershipProgress: {
-      available: false,
-      reason: "Pending Phase 8 financial targets.",
-    },
+    partnershipProgress,
   };
 }
 

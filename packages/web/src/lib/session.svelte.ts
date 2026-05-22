@@ -10,7 +10,6 @@
 import { setActiveChapter } from "$lib/active-chapter.svelte";
 import { PUBLIC_API_URL } from "$lib/env";
 import {
-  ACTIVE_CHAPTER_KEY,
   ACTIVE_ZONE_KEY,
   type ServerSession,
 } from "$lib/session-paths";

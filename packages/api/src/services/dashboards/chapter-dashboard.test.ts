@@ -11,8 +11,10 @@ import {
   applyContributionTriggers,
   chapters,
   contributionBatches,
+  financialTargets,
   givingTypes,
   members,
+  ministryYears,
   paymentMethods,
   user as userTable,
   zones,
@@ -41,6 +43,9 @@ interface SeededZone {
   userId: string;
   titheGivingTypeId: string;
   offeringGivingTypeId: string;
+  partnershipGivingTypeId: string;
+  missionsGivingTypeId: string;
+  ministryYearId: string;
   cashPaymentMethodId: string;
 }
 
@@ -115,6 +120,31 @@ async function seedZone(): Promise<SeededZone> {
     .from(givingTypes)
     .where(sql`${givingTypes.zoneId} = ${zone.id} and ${givingTypes.shortCode} = 'OFFERING'`)
     .limit(1);
+  const [partner] = await db
+    .select({ id: givingTypes.id })
+    .from(givingTypes)
+    .where(sql`${givingTypes.zoneId} = ${zone.id} and ${givingTypes.shortCode} = 'PARTNER'`)
+    .limit(1);
+  const [missions] = await db
+    .insert(givingTypes)
+    .values({
+      zoneId: zone.id,
+      categoryId: sql`(select category_id from giving_types where id = ${partner.id})`,
+      name: `Missions Partnership ${unique()}`,
+      shortCode: `MISSION${unique()}`.slice(0, 16).toUpperCase(),
+      hasPartnershipTarget: true,
+      ordinal: 99,
+    })
+    .returning({ id: givingTypes.id });
+  const [ministryYear] = await db
+    .select({ id: ministryYears.id })
+    .from(ministryYears)
+    .where(
+      sql`${ministryYears.zoneId} = ${zone.id}
+        and ${ministryYears.startDate} <= ${TODAY}::date
+        and ${ministryYears.endDate} >= ${TODAY}::date`,
+    )
+    .limit(1);
   const [cash] = await db
     .select({ id: paymentMethods.id })
     .from(paymentMethods)
@@ -138,6 +168,9 @@ async function seedZone(): Promise<SeededZone> {
     userId,
     titheGivingTypeId: tithe.id,
     offeringGivingTypeId: offering.id,
+    partnershipGivingTypeId: partner.id,
+    missionsGivingTypeId: missions.id,
+    ministryYearId: ministryYear.id,
     cashPaymentMethodId: cash.id,
   };
 }
@@ -173,6 +206,7 @@ afterAll(async () => {
       await tx.execute(sql`delete from contribution_members where zone_id = ${id}`);
       await tx.execute(sql`delete from contributions where zone_id = ${id}`);
       await tx.execute(sql`delete from contribution_batches where zone_id = ${id}`);
+      await tx.execute(sql`delete from financial_targets where zone_id = ${id}`);
       await tx.execute(sql`delete from members where zone_id = ${id}`);
       await tx.execute(sql`delete from chapters where zone_id = ${id}`);
       await tx.execute(sql`delete from zones where id = ${id}`);
@@ -202,7 +236,7 @@ describe("chapter dashboard service", () => {
     expect(payload.timeZone).toBe("Europe/London");
     expect(payload.partnershipProgress).toEqual({
       available: false,
-      reason: "Pending Phase 8 financial targets.",
+      reason: "No chapter partnership targets are configured for the current ministry year.",
     });
   });
 
@@ -415,6 +449,69 @@ describe("chapter dashboard service", () => {
     expect(payload.pendingBatches.perCurrency).toEqual([
       { currencyCode: "GBP", total: "85.0000" },
     ]);
+  });
+
+  it("summarizes chapter partnership target progress without leaking other chapters", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+
+    await db.insert(financialTargets).values([
+      {
+        zoneId: zone.id,
+        chapterId: zone.chapterAId,
+        givingTypeId: zone.partnershipGivingTypeId,
+        ministryYearId: zone.ministryYearId,
+        fullTarget: "400.00",
+        currencyCode: "GBP",
+      },
+      {
+        zoneId: zone.id,
+        chapterId: zone.chapterBId,
+        givingTypeId: zone.partnershipGivingTypeId,
+        ministryYearId: zone.ministryYearId,
+        fullTarget: "900.00",
+        currencyCode: "GBP",
+      },
+    ]);
+
+    for (const [memberId, chapterId, amount] of [
+      [zone.memberIds[0], zone.chapterAId, "100.00"],
+      [zone.memberIds[2], zone.chapterBId, "900.00"],
+    ] as const) {
+      const contribution = await createContribution(
+        db,
+        { zoneId: zone.id, userId: zone.userId },
+        {
+          chapterId,
+          memberId,
+          sourceType: "manual",
+          paymentMethodId: zone.cashPaymentMethodId,
+          contributionDate: TODAY,
+          lines: [{ givingTypeId: zone.partnershipGivingTypeId, amount }],
+        },
+      );
+      await postContribution(
+        db,
+        { zoneId: zone.id, userId: zone.userId },
+        contribution.contribution.id,
+      );
+    }
+
+    const payload = await buildChapterDashboard(db, zone.id, zone.chapterAId);
+    expect(payload.partnershipProgress).toMatchObject({
+      available: true,
+      ministryYearId: zone.ministryYearId,
+      scope: "chapter",
+      perCurrency: [
+        {
+          currencyCode: "GBP",
+          target: "400.0000",
+          achieved: "100.0000",
+          percentProgress: "25.0",
+          targetCount: 1,
+        },
+      ],
+    });
   });
 
   it("throws ChapterDashboardError for an unknown chapter", async () => {

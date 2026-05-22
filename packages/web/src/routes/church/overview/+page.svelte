@@ -10,6 +10,7 @@
   import { api, ApiError, isAbortError } from "$lib/api";
   import { session } from "$lib/session.svelte";
   import { formatMoney, money } from "@stewardledger/shared";
+  import { percentWidth, type PartnershipProgress } from "$lib/dashboard-progress";
 
   type CurrencyTotal = { currencyCode: string; total: string };
   type DashboardPeriod = {
@@ -41,7 +42,6 @@
     sourceType: string;
   };
   type PendingBatches = { count: number; perCurrency: CurrencyTotal[] };
-  type PartnershipProgress = { available: false; reason: string };
   type Payload = {
     asOf: string;
     timeZone: string;
@@ -103,6 +103,7 @@
   function fmt(t: CurrencyTotal): string {
     return formatMoney(money(t.total, t.currencyCode));
   }
+
 
   /**
    * Format a UTC ISO date / datetime in the zone's timezone with a
@@ -326,8 +327,45 @@
       </div>
     </div>
 
-    <!-- Recent contributions. -->
+
+    <!-- Partnership target progress. -->
     <div class="sl-reveal sl-reveal-4 mt-10 sl-card p-5">
+      <div class="flex items-baseline justify-between">
+        <h2 class="sl-display text-[18px] text-[var(--ink)]">Partnership progress</h2>
+        <a href="/church/reports" class="text-[12px] text-[var(--ink-mute)] hover:text-[var(--brass-deep)]">
+          Reports →
+        </a>
+      </div>
+      <div class="mt-4 h-px w-10 bg-[var(--brass)]"></div>
+      {#if !data.partnershipProgress.available}
+        <p class="mt-6 text-[13px] text-[var(--ink-faint)]">{data.partnershipProgress.reason}</p>
+      {:else}
+        <p class="mt-3 text-[12px] text-[var(--ink-mute)]">
+          {data.partnershipProgress.ministryYearLabel} · {data.partnershipProgress.periodStart} to {data.partnershipProgress.periodEnd}
+        </p>
+        <div class="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+          {#each data.partnershipProgress.perCurrency as row (row.currencyCode)}
+            <div class="rounded-2xl border border-[var(--rule)] bg-[var(--paper-soft)] p-4">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <span class="sl-eyebrow">{row.currencyCode} · {row.targetCount} target{row.targetCount === 1 ? "" : "s"}</span>
+                  <p class="mt-2 text-[13px] text-[var(--ink-mute)]">
+                    {formatMoney(money(row.achieved, row.currencyCode))} achieved of {formatMoney(money(row.target, row.currencyCode))}
+                  </p>
+                </div>
+                <div class="sl-display sl-num text-[28px] leading-none text-[var(--brass-deep)]">{row.percentProgress}%</div>
+              </div>
+              <div class="mt-4 h-2 overflow-hidden rounded-full bg-[var(--rule)]">
+                <div class="h-full rounded-full bg-[var(--brass)]" style={`width: ${percentWidth(row.percentProgress)}`}></div>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+
+    <!-- Recent contributions. -->
+    <div class="sl-reveal sl-reveal-5 mt-10 sl-card p-5">
       <div class="flex items-baseline justify-between">
         <h2 class="sl-display text-[18px] text-[var(--ink)]">Recent contributions</h2>
         <a href="/church/contributions" class="text-[12px] text-[var(--ink-mute)] hover:text-[var(--brass-deep)]">
@@ -364,7 +402,7 @@
     </div>
 
     <!-- Quick links into the rest of the chapter surface. -->
-    <div class="sl-reveal sl-reveal-5 mt-10 grid grid-cols-1 gap-4 sm:grid-cols-3">
+    <div class="sl-reveal sl-reveal-6 mt-10 grid grid-cols-1 gap-4 sm:grid-cols-3">
       <a href="/church/members" class="sl-card group block p-5 transition-colors hover:bg-[var(--paper-soft)]">
         <span class="sl-eyebrow">People</span>
         <h2 class="mt-2 sl-display text-[18px] text-[var(--ink)] group-hover:text-[var(--brass-deep)]">Members directory</h2>
@@ -382,7 +420,7 @@
       </a>
     </div>
 
-    <p class="sl-reveal sl-reveal-6 mt-10 text-[11px] text-[var(--ink-faint)]">
+    <p class="sl-reveal sl-reveal-7 mt-10 text-[11px] text-[var(--ink-faint)]">
       Generated {fmtDateTime(data.asOf, data.timeZone)} · {data.timeZone}
     </p>
   {/if}

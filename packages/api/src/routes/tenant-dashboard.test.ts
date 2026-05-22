@@ -179,7 +179,7 @@ describe("tenant dashboard routes", () => {
     expect(Array.isArray(body.topChapters)).toBe(true);
     expect(Array.isArray(body.topPartners)).toBe(true);
     expect(Array.isArray(body.recentImports)).toBe(true);
-    // Phase-8 placeholder lands as `{ available: false, reason }`.
+    // No targets configured in this route fixture, so target progress is unavailable.
     expect(body.partnershipProgress).toMatchObject({ available: false });
     // The endpoint must never be cached: payload includes member-level
     // totals that are PII-adjacent.

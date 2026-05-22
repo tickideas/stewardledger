@@ -10,10 +10,12 @@ import { sql } from "drizzle-orm";
 import {
   applyContributionTriggers,
   chapters,
+  financialTargets,
   givingTypes,
   importFiles,
   importJobs,
   members,
+  ministryYears,
   paymentMethods,
   user as userTable,
   zones,
@@ -41,6 +43,9 @@ interface SeededZone {
   memberRefs: string[];
   userId: string;
   givingTypeId: string;
+  partnershipGivingTypeId: string;
+  missionsGivingTypeId: string;
+  ministryYearId: string;
   cashPaymentMethodId: string;
 }
 
@@ -120,6 +125,31 @@ async function seedZone(
     .from(givingTypes)
     .where(sql`${givingTypes.zoneId} = ${zone.id} and ${givingTypes.shortCode} = 'TITHE'`)
     .limit(1);
+  const [partner] = await db
+    .select({ id: givingTypes.id })
+    .from(givingTypes)
+    .where(sql`${givingTypes.zoneId} = ${zone.id} and ${givingTypes.shortCode} = 'PARTNER'`)
+    .limit(1);
+  const [missions] = await db
+    .insert(givingTypes)
+    .values({
+      zoneId: zone.id,
+      categoryId: sql`(select category_id from giving_types where id = ${partner.id})`,
+      name: `Missions Partnership ${unique()}`,
+      shortCode: `MISSION${unique()}`.slice(0, 16).toUpperCase(),
+      hasPartnershipTarget: true,
+      ordinal: 99,
+    })
+    .returning({ id: givingTypes.id });
+  const [ministryYear] = await db
+    .select({ id: ministryYears.id })
+    .from(ministryYears)
+    .where(
+      sql`${ministryYears.zoneId} = ${zone.id}
+        and ${ministryYears.startDate} <= ${TODAY}::date
+        and ${ministryYears.endDate} >= ${TODAY}::date`,
+    )
+    .limit(1);
   const [cash] = await db
     .select({ id: paymentMethods.id })
     .from(paymentMethods)
@@ -143,6 +173,9 @@ async function seedZone(
     memberRefs,
     userId,
     givingTypeId: gt.id,
+    partnershipGivingTypeId: partner.id,
+    missionsGivingTypeId: missions.id,
+    ministryYearId: ministryYear.id,
     cashPaymentMethodId: cash.id,
   };
 }
@@ -200,6 +233,7 @@ afterAll(async () => {
       await tx.execute(sql`delete from import_files where zone_id = ${id}`);
       await tx.execute(sql`delete from contributions where zone_id = ${id}`);
       await tx.execute(sql`delete from contribution_batches where zone_id = ${id}`);
+      await tx.execute(sql`delete from financial_targets where zone_id = ${id}`);
       await tx.execute(sql`delete from members where zone_id = ${id}`);
       await tx.execute(sql`delete from chapters where zone_id = ${id}`);
       await tx.execute(sql`delete from zones where id = ${id}`);
@@ -230,10 +264,9 @@ describe("zone dashboard service", () => {
     // The zone seeds with `defaultTimeZone: "Europe/London"`; the
     // payload echoes that for the UI's footer.
     expect(payload.timeZone).toBe("Europe/London");
-    // Phase-8 placeholder remains in the response shape.
     expect(payload.partnershipProgress).toEqual({
       available: false,
-      reason: "Pending Phase 8 financial targets.",
+      reason: "No partnership targets are configured for the current ministry year.",
     });
   });
 
@@ -434,6 +467,195 @@ describe("zone dashboard service", () => {
     const expectedYear = yearBoundsInZone(new Date(payload.asOf), "Pacific/Auckland");
     expect(payload.yearToDateGiving.periodStart).toBe(expectedYear.start);
     expect(payload.yearToDateGiving.periodEnd).toBe(expectedYear.end);
+  });
+
+  it("summarizes current ministry-year partnership target progress", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+
+    await db.insert(financialTargets).values([
+      {
+        zoneId: zone.id,
+        chapterId: zone.chapterAId,
+        givingTypeId: zone.partnershipGivingTypeId,
+        ministryYearId: zone.ministryYearId,
+        fullTarget: "1000.00",
+        currencyCode: "GBP",
+      },
+      {
+        zoneId: zone.id,
+        chapterId: zone.chapterBId,
+        givingTypeId: zone.partnershipGivingTypeId,
+        ministryYearId: zone.ministryYearId,
+        fullTarget: "500.00",
+        currencyCode: "GBP",
+      },
+    ]);
+
+    for (const [memberId, chapterId, amount] of [
+      [zone.memberIds[0], zone.chapterAId, "250.00"],
+      [zone.memberIds[2], zone.chapterBId, "100.00"],
+    ] as const) {
+      const contribution = await createContribution(
+        db,
+        { zoneId: zone.id, userId: zone.userId },
+        {
+          chapterId,
+          memberId,
+          sourceType: "manual",
+          paymentMethodId: zone.cashPaymentMethodId,
+          contributionDate: TODAY,
+          lines: [{ givingTypeId: zone.partnershipGivingTypeId, amount }],
+        },
+      );
+      await postContribution(
+        db,
+        { zoneId: zone.id, userId: zone.userId },
+        contribution.contribution.id,
+      );
+    }
+
+    const payload = await buildZoneDashboard(db, zoneCtx(zone));
+    expect(payload.partnershipProgress).toMatchObject({
+      available: true,
+      ministryYearId: zone.ministryYearId,
+      scope: "zone",
+      perCurrency: [
+        {
+          currencyCode: "GBP",
+          target: "1500.0000",
+          achieved: "350.0000",
+          percentProgress: "23.3",
+          targetCount: 2,
+        },
+      ],
+    });
+  });
+
+  it("uses zone-wide targets per giving-type tuple without hiding other chapter-scoped targets", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+
+    await db.insert(financialTargets).values([
+      {
+        zoneId: zone.id,
+        chapterId: null,
+        givingTypeId: zone.partnershipGivingTypeId,
+        ministryYearId: zone.ministryYearId,
+        fullTarget: "1000.00",
+        currencyCode: "GBP",
+      },
+      {
+        zoneId: zone.id,
+        chapterId: zone.chapterAId,
+        givingTypeId: zone.partnershipGivingTypeId,
+        ministryYearId: zone.ministryYearId,
+        fullTarget: "700.00",
+        currencyCode: "GBP",
+      },
+      {
+        zoneId: zone.id,
+        chapterId: zone.chapterAId,
+        givingTypeId: zone.missionsGivingTypeId,
+        ministryYearId: zone.ministryYearId,
+        fullTarget: "300.00",
+        currencyCode: "GBP",
+      },
+    ]);
+
+    for (const [givingTypeId, amount] of [
+      [zone.partnershipGivingTypeId, "200.00"],
+      [zone.missionsGivingTypeId, "60.00"],
+    ] as const) {
+      const contribution = await createContribution(
+        db,
+        { zoneId: zone.id, userId: zone.userId },
+        {
+          chapterId: zone.chapterAId,
+          memberId: zone.memberIds[0],
+          sourceType: "manual",
+          paymentMethodId: zone.cashPaymentMethodId,
+          contributionDate: TODAY,
+          lines: [{ givingTypeId, amount }],
+        },
+      );
+      await postContribution(
+        db,
+        { zoneId: zone.id, userId: zone.userId },
+        contribution.contribution.id,
+      );
+    }
+
+    const payload = await buildZoneDashboard(db, zoneCtx(zone));
+    expect(payload.partnershipProgress).toMatchObject({
+      available: true,
+      perCurrency: [
+        {
+          currencyCode: "GBP",
+          target: "1300.0000",
+          achieved: "260.0000",
+          percentProgress: "20.0",
+          targetCount: 2,
+        },
+      ],
+    });
+  });
+
+  it("keeps partnership progress currencies separate", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+
+    await db.insert(financialTargets).values([
+      {
+        zoneId: zone.id,
+        chapterId: zone.chapterAId,
+        givingTypeId: zone.partnershipGivingTypeId,
+        ministryYearId: zone.ministryYearId,
+        fullTarget: "1000.00",
+        currencyCode: "GBP",
+      },
+      {
+        zoneId: zone.id,
+        chapterId: zone.chapterAId,
+        givingTypeId: zone.missionsGivingTypeId,
+        ministryYearId: zone.ministryYearId,
+        fullTarget: "800.00",
+        currencyCode: "USD",
+      },
+    ]);
+
+    for (const [currencyCode, givingTypeId, amount] of [
+      ["GBP", zone.partnershipGivingTypeId, "250.00"],
+      ["USD", zone.missionsGivingTypeId, "80.00"],
+    ] as const) {
+      const contribution = await createContribution(
+        db,
+        { zoneId: zone.id, userId: zone.userId },
+        {
+          chapterId: zone.chapterAId,
+          memberId: zone.memberIds[0],
+          sourceType: "manual",
+          paymentMethodId: zone.cashPaymentMethodId,
+          contributionDate: TODAY,
+          currencyCode,
+          lines: [{ givingTypeId, amount }],
+        },
+      );
+      await postContribution(
+        db,
+        { zoneId: zone.id, userId: zone.userId },
+        contribution.contribution.id,
+      );
+    }
+
+    const payload = await buildZoneDashboard(db, zoneCtx(zone));
+    expect(payload.partnershipProgress).toMatchObject({
+      available: true,
+      perCurrency: [
+        { currencyCode: "GBP", target: "1000.0000", achieved: "250.0000" },
+        { currencyCode: "USD", target: "800.0000", achieved: "80.0000" },
+      ],
+    });
   });
 
   it("lists the 5 most recent imports newest-first", async () => {

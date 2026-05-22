@@ -27,6 +27,7 @@ import {
   sumPostedByCurrency,
 } from "./queries";
 import { rankByCurrency } from "./ranking";
+import { buildPartnershipProgressSummary, type DashboardPartnershipProgress } from "./partnership-progress";
 
 const IMPORT_JOB_STATUS_SET = new Set<string>(IMPORT_JOB_STATUSES);
 
@@ -84,18 +85,6 @@ export interface DashboardRecentImport {
   perCurrency: CurrencyTotal[];
 }
 
-/**
- * Placeholder card for partnership progress (REPORTS.md §2.10). The
- * card depends on Phase 8 financial targets; until those land, the
- * dashboard ships the slot but flags it as unavailable. Keeping the
- * shape stable now means the chapter-dashboard PR (and the eventual
- * Phase 8 cut-over) don't have to evolve the response envelope.
- */
-export interface DashboardPartnershipProgress {
-  available: false;
-  reason: string;
-}
-
 export interface ZoneDashboardPayload {
   asOf: string; // ISO datetime
   timeZone: string;
@@ -151,6 +140,7 @@ export async function buildZoneDashboard(
     topChaptersList,
     topPartnersList,
     recentImportsList,
+    partnershipProgress,
   ] = await Promise.all([
     countChapters(database, ctx.zoneId),
     countMembers(database, ctx.zoneId),
@@ -159,8 +149,8 @@ export async function buildZoneDashboard(
     fetchTopChapters(database, ctx.zoneId, month),
     fetchTopPartners(database, ctx.zoneId, month),
     fetchRecentImports(database, ctx.zoneId),
+    buildPartnershipProgressSummary(database, ctx.zoneId, { timeZone }),
   ]);
-
 
   return {
     asOf: now.toISOString(),
@@ -180,10 +170,7 @@ export async function buildZoneDashboard(
     topChapters: topChaptersList,
     topPartners: topPartnersList,
     recentImports: recentImportsList,
-    partnershipProgress: {
-      available: false,
-      reason: "Pending Phase 8 financial targets.",
-    },
+    partnershipProgress,
   };
 }
 
