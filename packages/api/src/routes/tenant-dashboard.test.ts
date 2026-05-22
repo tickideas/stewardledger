@@ -129,12 +129,15 @@ describe("tenant dashboard routes", () => {
     cleanupUserIds.push(ownerA, treasurerA);
 
     await db.insert(userRoleBindings).values([
-      { userId: ownerA, zoneId: zoneA.id, roleId: zoneA.ownerRoleId },
+      { userId: ownerA, zoneId: zoneA.id, roleId: zoneA.ownerRoleId,
+  roleScope: "zone",
+},
       {
         userId: treasurerA,
         zoneId: zoneA.id,
         chapterId: zoneA.chapterId,
         roleId: zoneA.treasurerRoleId,
+        roleScope: "chapter",
       },
     ]);
   });

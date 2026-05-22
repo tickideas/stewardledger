@@ -170,6 +170,7 @@ export async function applyAcceptedInvitation(
         zoneId: invitations.zoneId,
         roleCode: invitations.roleCode,
         chapterId: invitations.chapterId,
+        groupId: invitations.groupId,
         expiresAt: invitations.expiresAt,
         acceptedAt: invitations.acceptedAt,
         revokedAt: invitations.revokedAt,
@@ -187,7 +188,7 @@ export async function applyAcceptedInvitation(
       throw new InvitationError("invitation_expired", "Invitation has expired.");
 
     const [role] = await tx
-      .select({ id: roles.id })
+      .select({ id: roles.id, scope: roles.scope })
       .from(roles)
       .where(and(eq(roles.zoneId, inv.zoneId), eq(roles.code, inv.roleCode)))
       .limit(1);
@@ -212,7 +213,9 @@ export async function applyAcceptedInvitation(
         userId: args.userId,
         zoneId: inv.zoneId,
         chapterId: inv.chapterId,
+        groupId: inv.groupId,
         roleId: role.id,
+        roleScope: role.scope,
       });
     }
 

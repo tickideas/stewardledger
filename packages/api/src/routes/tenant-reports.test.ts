@@ -162,13 +162,18 @@ describe("tenant reports routes", () => {
     // session but no role in zoneA, so the requireTenantAuth middleware
     // surfaces a 403 before the route handler ever runs.
     await db.insert(userRoleBindings).values([
-      { userId: ownerA, zoneId: zoneA.id, roleId: zoneA.ownerRoleId },
-      { userId: auditorA, zoneId: zoneA.id, roleId: zoneA.auditorRoleId },
+      { userId: ownerA, zoneId: zoneA.id, roleId: zoneA.ownerRoleId,
+  roleScope: "zone",
+},
+      { userId: auditorA, zoneId: zoneA.id, roleId: zoneA.auditorRoleId,
+  roleScope: "zone",
+},
       {
         userId: treasurerB,
         zoneId: zoneA.id,
         chapterId: zoneA.chapterIdB,
         roleId: zoneA.treasurerRoleId,
+        roleScope: "chapter",
       },
     ]);
   });

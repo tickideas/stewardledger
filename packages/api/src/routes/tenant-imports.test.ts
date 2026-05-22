@@ -199,18 +199,22 @@ describe("tenant import routes", () => {
     cleanupUserIds.push(ownerA, treasurerA, bookkeeperA);
 
     await db.insert(userRoleBindings).values([
-      { userId: ownerA, zoneId: zoneA.id, roleId: zoneA.ownerRoleId },
+      { userId: ownerA, zoneId: zoneA.id, roleId: zoneA.ownerRoleId,
+  roleScope: "zone",
+},
       {
         userId: treasurerA,
         zoneId: zoneA.id,
         chapterId: zoneA.chapterIdA,
         roleId: zoneA.treasurerRoleId,
+        roleScope: "chapter",
       },
       {
         userId: bookkeeperA,
         zoneId: zoneA.id,
         chapterId: zoneA.chapterIdA,
         roleId: zoneA.bookkeeperRoleId,
+        roleScope: "chapter",
       },
     ]);
   });

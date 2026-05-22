@@ -174,25 +174,32 @@ describe("tenant contribution routes", () => {
     cleanupUserIds.push(ownerA, financeA, treasurerA, bookkeeperA, pastorA);
 
     await db.insert(userRoleBindings).values([
-      { userId: ownerA, zoneId: zoneA.id, roleId: zoneA.ownerRoleId },
-      { userId: financeA, zoneId: zoneA.id, roleId: zoneA.financeAdminRoleId },
+      { userId: ownerA, zoneId: zoneA.id, roleId: zoneA.ownerRoleId,
+  roleScope: "zone",
+},
+      { userId: financeA, zoneId: zoneA.id, roleId: zoneA.financeAdminRoleId,
+  roleScope: "zone",
+},
       {
         userId: treasurerA,
         zoneId: zoneA.id,
         chapterId: zoneA.chapterId,
         roleId: zoneA.chapterTreasurerRoleId,
+        roleScope: "chapter",
       },
       {
         userId: bookkeeperA,
         zoneId: zoneA.id,
         chapterId: zoneA.chapterId,
         roleId: zoneA.chapterBookkeeperRoleId,
+        roleScope: "chapter",
       },
       {
         userId: pastorA,
         zoneId: zoneA.id,
         chapterId: zoneA.chapterId,
         roleId: zoneA.chapterPastorRoleId,
+        roleScope: "chapter",
       },
     ]);
   });

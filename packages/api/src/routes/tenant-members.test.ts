@@ -152,11 +152,13 @@ describe("tenant member routes — cross-tenant fuzz", () => {
       userId: userA,
       zoneId: zoneA.id,
       roleId: zoneA.ownerRoleId,
+      roleScope: "zone",
     });
     await db.insert(userRoleBindings).values({
       userId: userBOwner,
       zoneId: zoneB.id,
       roleId: zoneB.ownerRoleId,
+      roleScope: "zone",
     });
 
     chapterA = await seedChapter(zoneA.id, "Chapter A");
@@ -171,6 +173,7 @@ describe("tenant member routes — cross-tenant fuzz", () => {
       zoneId: zoneA.id,
       chapterId: chapterA,
       roleId: zoneA.chapterAdminRoleId,
+      roleScope: "chapter",
     });
   });
 

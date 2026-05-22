@@ -156,12 +156,14 @@ describe("tenant routes — cross-tenant fuzz", () => {
       userId: userA,
       zoneId: zoneA.id,
       roleId: zoneA.ownerRoleId,
+      roleScope: "zone",
     });
     // Bind userBOwner as owner of zone B (so we can verify zone B has its own data).
     await db.insert(userRoleBindings).values({
       userId: userBOwner,
       zoneId: zoneB.id,
       roleId: zoneB.ownerRoleId,
+      roleScope: "zone",
     });
 
     chapterA = await seedChapter(zoneA.id, "Chapter A");
@@ -286,6 +288,7 @@ describe("tenant routes — cross-tenant fuzz", () => {
       zoneId: zoneA.id,
       chapterId: chapterA,
       roleId: zoneA.chapterAdminRoleId,
+      roleScope: "chapter",
     });
 
     vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
@@ -323,6 +326,7 @@ describe("tenant routes — cross-tenant fuzz", () => {
         zoneId: zoneA.id,
         chapterId: chapterA,
         roleId: zoneA.chapterAdminRoleId,
+        roleScope: "chapter",
       })
       .returning({ id: userRoleBindings.id });
     const [zoneAdminRole] = await db
@@ -334,6 +338,7 @@ describe("tenant routes — cross-tenant fuzz", () => {
       userId: zoneAdmin,
       zoneId: zoneA.id,
       roleId: zoneAdminRole.id,
+      roleScope: "zone",
     });
 
     vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
@@ -653,12 +658,14 @@ describe("tenant routes — cross-tenant fuzz", () => {
         zoneId: zoneA.id,
         chapterId: chapterA,
         roleId: zoneA.chapterAdminRoleId,
+        roleScope: "chapter",
       },
       {
         userId: mixedRoleUser,
         zoneId: zoneA.id,
         chapterId: otherChapter,
         roleId: zoneA.chapterTreasurerRoleId,
+        roleScope: "chapter",
       },
     ]);
     vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(mixedRoleUser, "mixed@x"));
@@ -688,6 +695,7 @@ describe("tenant routes — cross-tenant fuzz", () => {
       zoneId: zoneA.id,
       chapterId: chapterA,
       roleId: zoneA.chapterAdminRoleId,
+      roleScope: "chapter",
     });
     vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(chapAdmin, "ca@x"));
 
@@ -713,6 +721,7 @@ describe("tenant routes — cross-tenant fuzz", () => {
       zoneId: zoneA.id,
       chapterId: chapterA,
       roleId: zoneA.chapterAdminRoleId,
+      roleScope: "chapter",
     });
     vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
     const res = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}/roster`);
@@ -732,6 +741,7 @@ describe("tenant routes — cross-tenant fuzz", () => {
       zoneId: zoneA.id,
       chapterId: chapterA,
       roleId: zoneA.chapterAdminRoleId,
+      roleScope: "chapter",
     });
     vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(chapAdmin, "ca@x"));
 
@@ -865,8 +875,12 @@ describe("tenant routes — cross-tenant fuzz", () => {
       )
       .limit(1);
     await db.insert(userRoleBindings).values([
-      { userId: chapAdmin, zoneId: zoneA.id, chapterId: chapterA, roleId: zoneA.chapterAdminRoleId },
-      { userId: bookkeeper, zoneId: zoneA.id, chapterId: chapterA, roleId: bkRole.id },
+      { userId: chapAdmin, zoneId: zoneA.id, chapterId: chapterA, roleId: zoneA.chapterAdminRoleId,
+  roleScope: "chapter",
+},
+      { userId: bookkeeper, zoneId: zoneA.id, chapterId: chapterA, roleId: bkRole.id,
+  roleScope: "chapter",
+},
     ]);
 
     vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(chapAdmin, "ca@x"));

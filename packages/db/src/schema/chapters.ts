@@ -1,7 +1,8 @@
 // packages/db/src/schema/chapters.ts
 // A chapter is a single local church/congregation. Many chapters per zone.
 
-import { date, index, jsonb, pgTable, text, timestamp, unique, uniqueIndex } from "drizzle-orm/pg-core";
+import { date, foreignKey, index, jsonb, pgTable, text, timestamp, unique, uniqueIndex } from "drizzle-orm/pg-core";
+import { groups } from "./groups";
 import { regions } from "./regions";
 import { zones } from "./zones";
 
@@ -16,6 +17,7 @@ export const chapters = pgTable(
       .references(() => zones.id, { onDelete: "restrict" }),
     /** Denormalized from zones.region_id for fast region-aware reports. */
     regionId: text("region_id").references(() => regions.id, { onDelete: "set null" }),
+    groupId: text("group_id"),
     /** Reference code, e.g. "C0000001". Format configurable per zone. */
     referenceCode: text("reference_code").notNull(),
     name: text("name").notNull(),
@@ -32,6 +34,12 @@ export const chapters = pgTable(
     uniqueIndex("chapters_zone_reference_idx").on(table.zoneId, table.referenceCode),
     index("chapters_zone_id_idx").on(table.zoneId),
     index("chapters_region_id_idx").on(table.regionId),
+    index("chapters_zone_group_idx").on(table.zoneId, table.groupId),
+    foreignKey({
+      name: "chapters_zone_group_fk",
+      columns: [table.zoneId, table.groupId],
+      foreignColumns: [groups.zoneId, groups.id],
+    }).onDelete("restrict"),
   ],
 );
 
