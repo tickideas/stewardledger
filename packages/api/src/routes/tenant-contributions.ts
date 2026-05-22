@@ -19,7 +19,7 @@ import {
   type AuthorizedContext,
 } from "@stewardledger/shared";
 import { Hono } from "hono";
-import { hasAnyRole, requireChapterScope } from "../middleware/auth";
+import { hasAnyRole, requireChapterScope, visibleChapterIds } from "../middleware/auth";
 import {
   ContributionError,
   createContribution,
@@ -151,11 +151,10 @@ tenantContributionsRouter.get(
         return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
       }
     }
-    if (!hasZoneRead(ctx)) {
-      if (ctx.chapterIds.length === 0) return forbidden(c);
-    }
+    const scope = await visibleChapterIds(ctx, CONTRIB_ZONE_READ_ROLES);
+    if (scope.kind === "list" && scope.ids.length === 0) return forbidden(c);
     const result = await listContributions(db, ctx.zoneId, q, {
-      chapterIds: hasZoneRead(ctx) ? undefined : ctx.chapterIds,
+      chapterIds: scope.kind === "all" ? undefined : scope.ids,
     });
     return c.json(result);
   },
@@ -317,11 +316,10 @@ tenantContributionsRouter.get(
         return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
       }
     }
-    if (!hasZoneRead(ctx)) {
-      if (ctx.chapterIds.length === 0) return forbidden(c);
-    }
+    const scope = await visibleChapterIds(ctx, CONTRIB_ZONE_READ_ROLES);
+    if (scope.kind === "list" && scope.ids.length === 0) return forbidden(c);
     const result = await listBatches(db, ctx.zoneId, q, {
-      chapterIds: hasZoneRead(ctx) ? undefined : ctx.chapterIds,
+      chapterIds: scope.kind === "all" ? undefined : scope.ids,
     });
     return c.json(result);
   },
