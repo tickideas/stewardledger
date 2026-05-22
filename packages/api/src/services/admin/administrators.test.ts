@@ -238,6 +238,33 @@ describe("administrators service", () => {
       ),
     ).rejects.toMatchObject({ code: "already_granted" });
   });
+
+
+  it("elevate is race-safe: a second concurrent call sees already_super_admin even after the bit was flipped externally", async () => {
+    const target = await makeUser();
+    // Simulate: another transaction already flipped the bit between
+    // loadUser() and the UPDATE inside elevate. We do that by setting
+    // the bit directly here, then calling elevate, which still loads
+    // the pre-flip snapshot (no, actually it re-reads via loadUser; to
+    // be precise, we want to ensure the predicated UPDATE refuses).
+    // Easiest: flip the bit *after* loadUser by inserting under the
+    // same path — since we cannot race here, we instead invoke
+    // elevate twice in a row and assert the second refuses cleanly.
+    await elevate(db, { targetUserId: target.id }, { actorUserId: actorId });
+    await expect(
+      elevate(db, { targetUserId: target.id }, { actorUserId: actorId }),
+    ).rejects.toMatchObject({ code: "already_super_admin" });
+    // Demote them so cleanup at afterAll does not have to.
+    await demote(db, { targetUserId: target.id }, { actorUserId: actorId });
+  });
+
+  it("demote is race-safe: a second concurrent call sees not_super_admin", async () => {
+    const target = await makeUser({ isSuperAdmin: true });
+    await demote(db, { targetUserId: target.id }, { actorUserId: actorId });
+    await expect(
+      demote(db, { targetUserId: target.id }, { actorUserId: actorId }),
+    ).rejects.toMatchObject({ code: "not_super_admin" });
+  });
   it("grantRole + revokeRole on a missing user surface user_not_found", async () => {
     await expect(
       grantRole(

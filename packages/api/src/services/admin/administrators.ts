@@ -265,10 +265,18 @@ export async function elevate(
     throw new AdminError("already_super_admin", "User is already a super-admin.");
   }
   await database.transaction(async (tx) => {
-    await tx
+    // Predicate on the current bit so a concurrent elevate that
+    // already flipped the user to super-admin makes this UPDATE
+    // affect zero rows; we then refuse with already_super_admin and
+    // do NOT write a duplicate audit row.
+    const updated = await tx
       .update(userTable)
       .set({ isSuperAdmin: true })
-      .where(eq(userTable.id, target.id));
+      .where(and(eq(userTable.id, target.id), eq(userTable.isSuperAdmin, false)))
+      .returning({ id: userTable.id });
+    if (updated.length === 0) {
+      throw new AdminError("already_super_admin", "User is already a super-admin.");
+    }
     await writeAudit(tx, {
       zoneId: null,
       actorUserId: actor.actorUserId,
@@ -312,10 +320,17 @@ export async function demote(
         "Cannot demote the only remaining super-admin.",
       );
     }
-    await tx
+    // Predicate on the current bit so a concurrent demote that already
+    // flipped this user does not double-fire the audit row or report a
+    // success that did nothing.
+    const updated = await tx
       .update(userTable)
       .set({ isSuperAdmin: false })
-      .where(eq(userTable.id, target.id));
+      .where(and(eq(userTable.id, target.id), eq(userTable.isSuperAdmin, true)))
+      .returning({ id: userTable.id });
+    if (updated.length === 0) {
+      throw new AdminError("not_super_admin", "User is not a super-admin.");
+    }
     await writeAudit(tx, {
       zoneId: null,
       actorUserId: actor.actorUserId,
