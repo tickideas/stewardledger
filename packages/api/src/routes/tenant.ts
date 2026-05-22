@@ -818,6 +818,9 @@ tenantRouter.get("/administrators", async (c) => {
       chapterId: userRoleBindings.chapterId,
       chapterName: chapters.name,
       chapterReferenceCode: chapters.referenceCode,
+      groupId: userRoleBindings.groupId,
+      groupName: groups.name,
+      groupSlug: groups.slug,
       grantedAt: userRoleBindings.grantedAt,
     })
     .from(userRoleBindings)
@@ -827,11 +830,15 @@ tenantRouter.get("/administrators", async (c) => {
       chapters,
       and(eq(chapters.zoneId, userRoleBindings.zoneId), eq(chapters.id, userRoleBindings.chapterId)),
     )
+    .leftJoin(
+      groups,
+      and(eq(groups.zoneId, userRoleBindings.zoneId), eq(groups.id, userRoleBindings.groupId)),
+    )
     .where(
       and(
         eq(userRoleBindings.zoneId, ctx.zoneId),
         isNull(userRoleBindings.revokedAt),
-        inArray(rolesTable.scope, ["zone", "chapter"]),
+        inArray(rolesTable.scope, ["zone", "group", "chapter"]),
       ),
     )
     .orderBy(asc(userTable.email), asc(rolesTable.scope), asc(rolesTable.code));
@@ -850,6 +857,7 @@ tenantRouter.delete("/administrators/:bindingId", async (c) => {
         id: userRoleBindings.id,
         userId: userRoleBindings.userId,
         chapterId: userRoleBindings.chapterId,
+        groupId: userRoleBindings.groupId,
         roleCode: rolesTable.code,
         roleScope: rolesTable.scope,
       })
@@ -864,7 +872,11 @@ tenantRouter.delete("/administrators/:bindingId", async (c) => {
       )
       .limit(1);
     if (!binding) return { kind: "not_found" as const };
-    if (binding.roleScope !== "zone" && binding.roleScope !== "chapter") {
+    if (
+      binding.roleScope !== "zone" &&
+      binding.roleScope !== "group" &&
+      binding.roleScope !== "chapter"
+    ) {
       return { kind: "forbidden" as const };
     }
     if (
@@ -901,6 +913,7 @@ tenantRouter.delete("/administrators/:bindingId", async (c) => {
       before: {
         userId: binding.userId,
         chapterId: binding.chapterId,
+        groupId: binding.groupId,
         roleCode: binding.roleCode,
       },
     });
