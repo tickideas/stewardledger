@@ -65,7 +65,10 @@ export function isSafeInternalPath(p: string): boolean {
 }
 
 export function isSuperAdminOnlyPath(pathname: string): boolean {
-  return pathname === "/admin/zones" || pathname.startsWith("/admin/zones/");
+  if (pathname === "/admin/zones" || pathname.startsWith("/admin/zones/")) return true;
+  if (pathname === "/admin/administrators" || pathname.startsWith("/admin/administrators/"))
+    return true;
+  return false;
 }
 
 /**

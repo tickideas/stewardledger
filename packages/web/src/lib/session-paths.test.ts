@@ -65,11 +65,16 @@ describe("isSafeInternalPath", () => {
 });
 
 describe("isSuperAdminOnlyPath", () => {
-  it("matches only the zones admin surface", () => {
+  it("matches the zones admin surface", () => {
     expect(isSuperAdminOnlyPath("/admin/zones")).toBe(true);
     expect(isSuperAdminOnlyPath("/admin/zones/demo-grace-uk")).toBe(true);
     expect(isSuperAdminOnlyPath("/admin/regions")).toBe(false);
     expect(isSuperAdminOnlyPath("/admin/zonesish")).toBe(false);
+  });
+  it("matches the administrators admin surface", () => {
+    expect(isSuperAdminOnlyPath("/admin/administrators")).toBe(true);
+    expect(isSuperAdminOnlyPath("/admin/administrators/u-123")).toBe(true);
+    expect(isSuperAdminOnlyPath("/admin/administratorsish")).toBe(false);
   });
 });
 

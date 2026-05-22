@@ -46,6 +46,12 @@ export const PLATFORM_NAV: NavGroup[] = [
       { href: "/admin/regions/inbox", label: "Inbox" },
     ],
   },
+  {
+    label: "Access",
+    items: [
+      { href: "/admin/administrators", label: "Administrators" },
+    ],
+  },
 ];
 
 /**
