@@ -296,6 +296,16 @@
 
   <InviteAdminModal bind:open={inviteOpen} oninvited={onInvited} />
   <GrantExistingModal bind:open={grantOpen} ongranted={onGranted} />
+  <ConfirmDialog
+    bind:open={confirmOpen}
+    title={confirmCopy.title}
+    body={confirmCopy.body}
+    confirmLabel={confirmCopy.confirmLabel}
+    tone={confirmCopy.tone}
+    submitting={confirmSubmitting}
+    onconfirm={runConfirm}
+    oncancel={cancelConfirm}
+  />
 
   <!-- Active administrators -->
   <div class="sl-reveal sl-reveal-2 mt-10">
