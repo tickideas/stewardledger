@@ -174,24 +174,102 @@ describe("admin administrators routes", () => {
     expect(body.error.code).toBe("email_already_user");
   });
 
-  it("grant-by-email adds a platform role to an existing user", async () => {
+  it("grant-by-email adds a platform role to an existing user and notifies by default", async () => {
     const target = await makeUser();
+    const spy = vi
+      .spyOn(platformEmails, "sendPlatformAdminGrantNoticeEmail")
+      .mockResolvedValue();
     asAdmin();
-    const res = await call("/api/admin/administrators/grant", {
-      method: "POST",
-      body: {
-        email: target.email,
-        roleCode: PLATFORM_ROLES.BILLING_ADMIN,
-      },
-    });
-    expect(res.status).toBe(201);
-    const bindings = await db
-      .select({ roleCode: platformRoleBindings.roleCode })
-      .from(platformRoleBindings)
-      .where(sql`user_id = ${target.id} and revoked_at is null`);
-    expect(bindings.map((b) => b.roleCode)).toContain(
-      PLATFORM_ROLES.BILLING_ADMIN,
-    );
+    try {
+      const res = await call("/api/admin/administrators/grant", {
+        method: "POST",
+        body: {
+          email: target.email,
+          roleCode: PLATFORM_ROLES.BILLING_ADMIN,
+        },
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as {
+        bindingId: string;
+        notified: boolean;
+        emailSent: boolean;
+      };
+      expect(body.notified).toBe(true);
+      expect(body.emailSent).toBe(true);
+      const bindings = await db
+        .select({ roleCode: platformRoleBindings.roleCode })
+        .from(platformRoleBindings)
+        .where(sql`user_id = ${target.id} and revoked_at is null`);
+      expect(bindings.map((b) => b.roleCode)).toContain(
+        PLATFORM_ROLES.BILLING_ADMIN,
+      );
+      expect(spy).toHaveBeenCalledWith(
+        expect.objectContaining({ to: target.email, roleCode: PLATFORM_ROLES.BILLING_ADMIN }),
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("grant-by-email respects notify=false (no email sent, notified=false in response)", async () => {
+    const target = await makeUser();
+    const spy = vi
+      .spyOn(platformEmails, "sendPlatformAdminGrantNoticeEmail")
+      .mockResolvedValue();
+    asAdmin();
+    try {
+      const res = await call("/api/admin/administrators/grant", {
+        method: "POST",
+        body: {
+          email: target.email,
+          roleCode: PLATFORM_ROLES.SUPPORT_ADMIN,
+          notify: false,
+        },
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as { notified: boolean; emailSent: boolean };
+      expect(body.notified).toBe(false);
+      expect(body.emailSent).toBe(false);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("grant-by-email surfaces emailSent=false when the transport fails (binding still landed)", async () => {
+    const target = await makeUser();
+    const spy = vi
+      .spyOn(platformEmails, "sendPlatformAdminGrantNoticeEmail")
+      .mockRejectedValueOnce(new Error("transport down"));
+    asAdmin();
+    try {
+      const res = await call("/api/admin/administrators/grant", {
+        method: "POST",
+        body: {
+          email: target.email,
+          roleCode: PLATFORM_ROLES.REGION_CURATOR,
+        },
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as {
+        notified: boolean;
+        emailSent: boolean;
+        emailError: string | null;
+      };
+      expect(body.notified).toBe(true);
+      expect(body.emailSent).toBe(false);
+      expect(body.emailError).toBe("transport down");
+      // Binding still landed.
+      const bindings = await db
+        .select({ roleCode: platformRoleBindings.roleCode })
+        .from(platformRoleBindings)
+        .where(sql`user_id = ${target.id} and revoked_at is null`);
+      expect(bindings.map((b) => b.roleCode)).toContain(
+        PLATFORM_ROLES.REGION_CURATOR,
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("grant-by-id + revoke role round-trip", async () => {

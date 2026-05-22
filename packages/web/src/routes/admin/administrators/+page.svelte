@@ -88,8 +88,23 @@
     }
     refresh();
   }
-  function onGranted() {
-    showFlash("Role granted. The change takes effect at the user's next sign-in.");
+  function onGranted(result: { notified: boolean; emailSent: boolean; emailError: string | null }) {
+    if (!result.notified) {
+      showFlash(
+        "Role granted (silent). The change takes effect at the user's next sign-in.",
+      );
+    } else if (result.emailSent) {
+      showFlash(
+        "Role granted and the user has been emailed. The change takes effect at their next sign-in.",
+      );
+    } else {
+      showFlash(
+        "Role granted, but the notification email failed to send" +
+          (result.emailError ? `: ${result.emailError}.` : ".") +
+          " The binding is in place; consider re-running with notify or fixing the email transport.",
+        "warn",
+      );
+    }
     refresh();
   }
 
