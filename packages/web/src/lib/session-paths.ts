@@ -64,6 +64,32 @@ export function isSafeInternalPath(p: string): boolean {
   return true;
 }
 
+/**
+ * Landing path for a freshly-accepted platform-admin invitation.
+ * Each role goes to a surface it can actually use — without this, a
+ * region_curator or billing_admin invitee bounces off the default
+ * /admin/zones (super_admin / support_admin only) and onboarding looks
+ * broken.
+ */
+export function platformInviteLandingPath(args: {
+  roleCode: string;
+  superAdmin: boolean;
+}): string {
+  if (args.superAdmin) return "/admin/zones";
+  switch (args.roleCode) {
+    case "support_admin":
+      return "/admin/zones";
+    case "region_curator":
+      return "/admin/regions";
+    case "billing_admin":
+      // No platform surface yet — subscriptions ship in Phase 10.
+      // Land on /account so the invitee at least sees their session.
+      return "/account";
+    default:
+      return "/account";
+  }
+}
+
 export function isSuperAdminOnlyPath(pathname: string): boolean {
   if (pathname === "/admin/zones" || pathname.startsWith("/admin/zones/")) return true;
   if (pathname === "/admin/administrators" || pathname.startsWith("/admin/administrators/"))

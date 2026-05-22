@@ -6,6 +6,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { api, ApiError } from "$lib/api";
+  import { platformInviteLandingPath } from "$lib/session-paths";
   import type { PageData } from "./$types";
 
   let { data }: { data: PageData } = $props();
@@ -27,11 +28,20 @@
     errorMsg = null;
     submitting = true;
     try {
-      await api.post<{ status: string }>(
+      const res = await api.post<{
+        status: string;
+        roleCode: string;
+        superAdmin: boolean;
+      }>(
         "/api/public/platform-invitations/accept",
         { token: data.token, name: data.invitation.name, password },
       );
-      await goto("/admin/zones");
+      await goto(
+        platformInviteLandingPath({
+          roleCode: res.roleCode,
+          superAdmin: res.superAdmin,
+        }),
+      );
     } catch (err) {
       errorMsg = err instanceof ApiError ? err.message : "Could not accept the invitation.";
     } finally {

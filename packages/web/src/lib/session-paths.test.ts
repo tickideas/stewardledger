@@ -11,6 +11,7 @@ import {
   isSafeInternalPath,
   isSuperAdminOnlyPath,
   landingInputFromServerSession,
+  platformInviteLandingPath,
   primaryRole,
   PROTECTED_PREFIXES,
   PUBLIC_PREFIXES,
@@ -388,3 +389,32 @@ describe("route partitioning", () => {
     expect(unclassified).toEqual([]);
   });
 });
+
+describe("platformInviteLandingPath", () => {
+  it("routes super-admin invitees to /admin/zones", () => {
+    expect(
+      platformInviteLandingPath({ roleCode: "support_admin", superAdmin: true }),
+    ).toBe("/admin/zones");
+  });
+  it("routes support_admin to /admin/zones (read-only surface they can reach)", () => {
+    expect(
+      platformInviteLandingPath({ roleCode: "support_admin", superAdmin: false }),
+    ).toBe("/admin/zones");
+  });
+  it("routes region_curator to /admin/regions", () => {
+    expect(
+      platformInviteLandingPath({ roleCode: "region_curator", superAdmin: false }),
+    ).toBe("/admin/regions");
+  });
+  it("routes billing_admin to /account until subscriptions ship", () => {
+    expect(
+      platformInviteLandingPath({ roleCode: "billing_admin", superAdmin: false }),
+    ).toBe("/account");
+  });
+  it("falls back to /account on an unknown role", () => {
+    expect(
+      platformInviteLandingPath({ roleCode: "future_role", superAdmin: false }),
+    ).toBe("/account");
+  });
+});
+
