@@ -459,6 +459,16 @@ export async function finalizeJob(
   job: ReportJob,
   outcome: RunOutcome,
 ): Promise<JobSummary> {
+  // Anchor the retention window to *completion* time, not queue
+  // time. Jobs that sit in the queue for hours would otherwise burn
+  // through most of their 7-day window before the artefact even
+  // exists. Failed rows keep their original expiresAt — there is no
+  // artefact to retain, and the row itself stays for audit.
+  const completedAt = new Date();
+  const expiresAt =
+    outcome.status === "completed"
+      ? new Date(completedAt.getTime() + DEFAULT_EXPIRY_MS)
+      : job.expiresAt;
   const result = await database.transaction(async (tx) => {
     const [row] = await tx
       .update(reportJobs)
@@ -469,8 +479,9 @@ export async function finalizeJob(
         byteCount: outcome.byteCount ?? null,
         errorCode: outcome.errorCode ?? null,
         errorMessage: outcome.errorMessage ?? null,
-        completedAt: new Date(),
-        updatedAt: new Date(),
+        completedAt,
+        expiresAt,
+        updatedAt: completedAt,
       })
       .where(eq(reportJobs.id, job.id))
       .returning();
