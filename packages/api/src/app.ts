@@ -32,7 +32,7 @@ export function createApp() {
   app.route("/health", healthRouter);
   app.route("/api/public", publicRouter);
   app.route("/api/tenant", tenantRouter);
-  app.route("/api/admin", adminAdministratorsRouter);
+  app.route("/api/admin/administrators", adminAdministratorsRouter);
   app.route("/api/admin", adminRouter);
 
   app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));

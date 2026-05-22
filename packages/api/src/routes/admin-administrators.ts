@@ -124,7 +124,7 @@ function inviteErrorToResponse(c: Context, err: PlatformInvitationError): Respon
   return c.json({ error: { code: err.code, message: err.message } }, status);
 }
 
-adminAdministratorsRouter.get("/administrators", async (c) => {
+adminAdministratorsRouter.get("/", async (c) => {
   logAdmin(c, "admin.administrators.list");
   const items = await listAdministrators(db);
   const invitations = await listOpenPlatformInvitations(db);
@@ -132,7 +132,7 @@ adminAdministratorsRouter.get("/administrators", async (c) => {
 });
 
 adminAdministratorsRouter.post(
-  "/administrators/invite",
+  "/invite",
   zValidator("json", inviteSchema),
   async (c) => {
     const input = c.req.valid("json");
@@ -187,7 +187,7 @@ adminAdministratorsRouter.post(
 );
 
 adminAdministratorsRouter.post(
-  "/administrators/grant",
+  "/grant",
   zValidator("json", grantByEmailSchema),
   async (c) => {
     const input = c.req.valid("json");
@@ -217,7 +217,7 @@ adminAdministratorsRouter.post(
 );
 
 adminAdministratorsRouter.post(
-  "/administrators/:userId/roles",
+  "/:userId/roles",
   zValidator("json", grantSchema),
   async (c) => {
     const userId = c.req.param("userId");
@@ -241,7 +241,7 @@ adminAdministratorsRouter.post(
 );
 
 adminAdministratorsRouter.delete(
-  "/administrators/:userId/roles/:roleCode",
+  "/:userId/roles/:roleCode",
   async (c) => {
     const userId = c.req.param("userId");
     const roleCode = c.req.param("roleCode");
@@ -257,7 +257,7 @@ adminAdministratorsRouter.delete(
 );
 
 adminAdministratorsRouter.post(
-  "/administrators/:userId/super-admin",
+  "/:userId/super-admin",
   async (c) => {
     const userId = c.req.param("userId");
     logAdmin(c, "admin.administrators.elevate", { targetUserId: userId });
@@ -272,7 +272,7 @@ adminAdministratorsRouter.post(
 );
 
 adminAdministratorsRouter.delete(
-  "/administrators/:userId/super-admin",
+  "/:userId/super-admin",
   async (c) => {
     const userId = c.req.param("userId");
     logAdmin(c, "admin.administrators.demote", { targetUserId: userId });
@@ -287,7 +287,7 @@ adminAdministratorsRouter.delete(
 );
 
 adminAdministratorsRouter.delete(
-  "/administrators/invitations/:invitationId",
+  "/invitations/:invitationId",
   async (c) => {
     const invitationId = c.req.param("invitationId");
     logAdmin(c, "admin.administrators.invite_revoke", { invitationId });

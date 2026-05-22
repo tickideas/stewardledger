@@ -9,6 +9,7 @@ import {
   contributions,
   invitations,
   members,
+  platformRoleBindings,
   regions,
   zones,
 } from "@stewardledger/db/schema";
@@ -46,7 +47,11 @@ export const adminRouter = new Hono();
 adminRouter.use(
   "*",
   requireSession,
-  requirePlatformRole(PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.REGION_CURATOR),
+  requirePlatformRole(
+    PLATFORM_ROLES.SUPER_ADMIN,
+    PLATFORM_ROLES.REGION_CURATOR,
+    PLATFORM_ROLES.SUPPORT_ADMIN,
+  ),
 );
 
 /**
@@ -61,6 +66,33 @@ function superAdminGate(c: Context): Response | null {
     return c.json({ error: { code: "forbidden", message: "Super-admin required" } }, 403);
   }
   return null;
+}
+
+/**
+ * Allow super-admin or any caller holding the named platform role binding.
+ * Used to widen specific endpoints (e.g. read-only listings to support-admin)
+ * without giving the role full router-level powers. The router-level gate
+ * already filtered out everyone outside the allowlist, so we only need to
+ * re-check the requested role here.
+ */
+async function platformRoleGate(
+  c: Context,
+  ...allowed: string[]
+): Promise<Response | null> {
+  const user = c.get("user") as SessionUser;
+  if (user.isSuperAdmin) return null;
+  const rows = await db
+    .select({ roleCode: platformRoleBindings.roleCode })
+    .from(platformRoleBindings)
+    .where(
+      and(
+        eq(platformRoleBindings.userId, user.id),
+        isNull(platformRoleBindings.revokedAt),
+      ),
+    );
+  const held = new Set(rows.map((r) => r.roleCode));
+  if (allowed.some((code) => held.has(code))) return null;
+  return c.json({ error: { code: "forbidden", message: "Insufficient platform role" } }, 403);
 }
 
 function logAdminAccess(c: Context, event: string, extra: Record<string, unknown> = {}): void {
@@ -192,7 +224,7 @@ adminRouter.get(
   "/zones",
   zValidator("query", zonesListQuerySchema),
   async (c) => {
-    const denied = superAdminGate(c);
+    const denied = await platformRoleGate(c, PLATFORM_ROLES.SUPPORT_ADMIN);
     if (denied) return denied;
     const { limit, cursor, q } = c.req.valid("query");
     logAdminAccess(c, "admin.zones.list", { limit, hasCursor: !!cursor, hasQuery: !!q });
@@ -323,7 +355,7 @@ adminRouter.get(
 
 /** Zone detail: zone row + chapters + members snapshot. */
 adminRouter.get("/zones/:slug", async (c) => {
-  const denied = superAdminGate(c);
+  const denied = await platformRoleGate(c, PLATFORM_ROLES.SUPPORT_ADMIN);
   if (denied) return denied;
   const slug = c.req.param("slug");
   logAdminAccess(c, "admin.zones.detail", { zoneSlug: slug });
@@ -758,6 +790,8 @@ adminRouter.get("/regions", async (c) => {
 });
 
 adminRouter.post("/regions", zValidator("json", regionCreateSchema), async (c) => {
+  const denied = await platformRoleGate(c, PLATFORM_ROLES.REGION_CURATOR);
+  if (denied) return denied;
   const user = c.get("user") as SessionUser;
   const input = c.req.valid("json");
   try {
@@ -779,6 +813,8 @@ adminRouter.post("/regions", zValidator("json", regionCreateSchema), async (c) =
 });
 
 adminRouter.patch("/regions/:id", zValidator("json", regionUpdateSchema), async (c) => {
+  const denied = await platformRoleGate(c, PLATFORM_ROLES.REGION_CURATOR);
+  if (denied) return denied;
   const id = c.req.param("id");
   const input = c.req.valid("json");
   if (input.name) {
@@ -839,6 +875,8 @@ adminRouter.get("/regions/inbox", async (c) => {
  * chapter row in those zones, and emits one audit event per zone.
  */
 adminRouter.post("/regions/promote", zValidator("json", regionPromoteSchema), async (c) => {
+  const denied = await platformRoleGate(c, PLATFORM_ROLES.REGION_CURATOR);
+  if (denied) return denied;
   const user = c.get("user") as SessionUser;
   const input = c.req.valid("json");
 
