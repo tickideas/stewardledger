@@ -187,7 +187,7 @@ export async function requireChapterScope(
   zoneReadRoles: readonly string[],
 ): Promise<ChapterScopeResult> {
   const [row] = await db
-    .select({ id: chapters.id })
+    .select({ id: chapters.id, groupId: chapters.groupId })
     .from(chapters)
     .where(
       and(
@@ -207,6 +207,7 @@ export async function requireChapterScope(
   }
   if (hasAnyRole(ctx, ...zoneReadRoles)) return { ok: true };
   if (ctx.chapterIds.includes(chapterId)) return { ok: true };
+  if (row.groupId && ctx.groupIds.includes(row.groupId)) return { ok: true };
   return {
     ok: false,
     status: 403,

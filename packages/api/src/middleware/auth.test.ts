@@ -16,7 +16,7 @@ import {
   type AuthorizedContext,
 } from "@stewardledger/shared";
 import { db } from "../db";
-import { visibleChapterIds } from "./auth";
+import { requireChapterScope, visibleChapterIds } from "./auth";
 
 const ZONE_WIDE = [
   ZONE_ROLES.ZONE_OWNER,
@@ -133,6 +133,34 @@ describe("visibleChapterIds", () => {
     expect(out.kind).toBe("list");
     if (out.kind !== "list") throw new Error();
     expect(out.ids.sort()).toEqual([z.chap1, z.chap2, z.chap3].sort());
+  });
+
+  it("requireChapterScope allows a chapter whose group_id is in ctx.groupIds", async () => {
+    const res = await requireChapterScope(
+      ctxFor({
+        zoneId: z.zoneId,
+        roleCodes: [GROUP_ROLES.GROUP_ADMIN],
+        groupIds: [z.groupAId],
+      }),
+      z.chap1,
+      ZONE_WIDE,
+    );
+    expect(res).toEqual({ ok: true });
+  });
+
+  it("requireChapterScope forbids a chapter outside the caller's groups and chapters", async () => {
+    const res = await requireChapterScope(
+      ctxFor({
+        zoneId: z.zoneId,
+        roleCodes: [GROUP_ROLES.GROUP_ADMIN],
+        groupIds: [z.groupAId],
+      }),
+      z.chap3,
+      ZONE_WIDE,
+    );
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error();
+    expect(res.status).toBe(403);
   });
 
   it("unions group + chapter bindings", async () => {
