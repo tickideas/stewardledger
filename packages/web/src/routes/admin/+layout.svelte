@@ -7,17 +7,28 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { PLATFORM_NAV, isNavActive } from "$lib/nav";
-  import { isSuperAdmin, isSuperAdminOnlyPath, session, signOut } from "$lib/session.svelte";
+  import { isSuperAdmin, session, signOut } from "$lib/session.svelte";
+  import { canEnterAdminPath } from "$lib/session-paths";
 
   let { children } = $props();
 
   $effect(() => {
     const s = session.current;
-    if (
-      s.status === "authenticated" &&
-      !s.isSuperAdmin &&
-      isSuperAdminOnlyPath(page.url.pathname)
-    ) {
+    if (s.status !== "authenticated") return;
+    const hasZoneBinding = s.zones.some(
+      (z) => z.zoneRoles.length > 0 || z.chapterRoles.length > 0,
+    );
+    const ok = canEnterAdminPath({
+      pathname: page.url.pathname,
+      isSuperAdmin: s.isSuperAdmin,
+      platformRoles: s.platformRoles ?? [],
+      hasZoneBinding,
+    });
+    if (!ok) {
+      // Bounce in-app navigations the same way SSR would. We don’t
+      // recompute the precise landing here — /zone/chapters is the
+      // safe fallback for the tenant-bound case that triggers this
+      // branch most often.
       goto("/zone/chapters", { replaceState: true });
     }
   });
@@ -26,24 +37,45 @@
     const s = session.current;
     if (s.status === "loading") return true;
     if (isSuperAdmin(s)) return true;
-    if (s.status === "authenticated") return !isSuperAdminOnlyPath(page.url.pathname);
-    return false;
+    if (s.status !== "authenticated") return false;
+    const hasZoneBinding = s.zones.some(
+      (z) => z.zoneRoles.length > 0 || z.chapterRoles.length > 0,
+    );
+    return canEnterAdminPath({
+      pathname: page.url.pathname,
+      isSuperAdmin: s.isSuperAdmin,
+      platformRoles: s.platformRoles ?? [],
+      hasZoneBinding,
+    });
   });
 
   const path = $derived(page.url.pathname);
-  const showZonesItem = $derived(isSuperAdmin(session.current));
-  // Hide /admin/zones from non-super-admins (regional moderators landing on
-  // /admin/regions still get a useful sidebar — just without the Zones link).
+
+  // What can the current user actually open?
+  //
+  //   - /admin/zones          super_admin OR support_admin
+  //   - /admin/administrators super_admin only
+  //   - everything else under /admin/* is implicitly admin-wide
+  //
+  // Filter the nav so we don't surface links the API would 403.
+  const sessionPlatformRoles = $derived.by(() => {
+    const s = session.current;
+    return s.status === "authenticated" ? (s.platformRoles ?? []) : [];
+  });
+  const canSeeZones = $derived(
+    isSuperAdmin(session.current) || sessionPlatformRoles.includes("support_admin"),
+  );
+  const canSeeAdministrators = $derived(isSuperAdmin(session.current));
+
   const groups = $derived(
-    showZonesItem
-      ? PLATFORM_NAV
-      : PLATFORM_NAV.map((g) => ({
-          ...g,
-          items: g.items.filter(
-            (it) =>
-              it.href !== "/admin/zones" && it.href !== "/admin/administrators",
-          ),
-        })),
+    PLATFORM_NAV.map((g) => ({
+      ...g,
+      items: g.items.filter((it) => {
+        if (it.href === "/admin/zones") return canSeeZones;
+        if (it.href === "/admin/administrators") return canSeeAdministrators;
+        return true;
+      }),
+    })).filter((g) => g.items.length > 0),
   );
 
   const sessionUser = $derived(

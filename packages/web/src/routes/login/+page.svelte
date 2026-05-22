@@ -68,12 +68,17 @@
         chapterRoles?: Array<{ chapterId: string; roleCode: string }>;
       }>;
       isSuperAdmin?: boolean;
+      platformRoles?: string[];
     };
     const firstZone = zonesBody.items[0];
     const zoneSlug = firstZone?.slug;
     const isSuperAdminFlag = zonesBody.isSuperAdmin === true;
+    const platformRoles = zonesBody.platformRoles ?? [];
 
-    if (!zoneSlug && !isSuperAdminFlag) {
+    // A user counts as "linked" if they hold ANY of: a zone binding,
+    // the super-admin bit, or a platform-role binding. Platform-role
+    // users without zones land on /admin/* via the routing below.
+    if (!zoneSlug && !isSuperAdminFlag && platformRoles.length === 0) {
       throw new Error("Your account is not linked to a zone.");
     }
     // Persist + refresh only once we know the session actually
@@ -90,6 +95,7 @@
         {
           activeZoneSlug: zoneSlug ?? null,
           isSuperAdmin: isSuperAdminFlag,
+          platformRoles,
           activeZoneRoles: firstZone?.zoneRoles ?? [],
           activeZoneChapterRoles: firstZone?.chapterRoles ?? [],
         },

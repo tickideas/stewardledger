@@ -13,6 +13,7 @@ import { sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ZONE_ROLES } from "@stewardledger/shared";
 import {
+  platformRoleBindings,
   user as userTable,
   userRoleBindings,
   zones,
@@ -156,3 +157,77 @@ describe("/api/public/session-zones — mfaRequired flag", () => {
     expect(z?.mfaRequired).toBe(false);
   });
 });
+
+async function callSessionZonesFull(): Promise<{
+  isSuperAdmin: boolean;
+  platformRoles: string[];
+}> {
+  const res = await app.fetch(
+    new Request(`${URL}/api/public/session-zones`, { method: "GET" }),
+  );
+  expect(res.status).toBe(200);
+  return (await res.json()) as { isSuperAdmin: boolean; platformRoles: string[] };
+}
+
+describe("/api/public/session-zones — platformRoles", () => {
+  const cleanupUserIds: string[] = [];
+
+  beforeAll(() => {
+    if (!process.env.DATABASE_URL?.includes("_test")) {
+      throw new Error("public-session-zones.test.ts requires a *_test DATABASE_URL");
+    }
+  });
+
+  afterAll(async () => {
+    if (cleanupUserIds.length > 0) {
+      // platform_role_bindings cascade-delete via user FK ON DELETE CASCADE.
+      for (const id of cleanupUserIds) {
+        await db.execute(sql`delete from "user" where id = ${id}`);
+      }
+    }
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("returns an empty platformRoles array for a user with no platform-role bindings", async () => {
+    const user = await seedUser();
+    cleanupUserIds.push(user.id);
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(
+      fakeSession(user.id, user.email),
+    );
+    const body = await callSessionZonesFull();
+    expect(body.platformRoles).toEqual([]);
+  });
+
+  it("returns each active platform-role binding once", async () => {
+    const user = await seedUser();
+    cleanupUserIds.push(user.id);
+    await db.insert(platformRoleBindings).values([
+      { userId: user.id, roleCode: "support_admin" },
+      { userId: user.id, roleCode: "region_curator" },
+    ]);
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(
+      fakeSession(user.id, user.email),
+    );
+    const body = await callSessionZonesFull();
+    expect(new Set(body.platformRoles)).toEqual(
+      new Set(["support_admin", "region_curator"]),
+    );
+  });
+
+  it("excludes revoked platform-role bindings", async () => {
+    const user = await seedUser();
+    cleanupUserIds.push(user.id);
+    await db.insert(platformRoleBindings).values({
+      userId: user.id,
+      roleCode: "billing_admin",
+      revokedAt: new Date(),
+    });
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(
+      fakeSession(user.id, user.email),
+    );
+    const body = await callSessionZonesFull();
+    expect(body.platformRoles).toEqual([]);
+  });
+});
+
