@@ -252,6 +252,10 @@ describe("tenant reports \u2014 async jobs", () => {
 
   it("rejects a payload that fails the spec's Zod schema", async () => {
     asUser(userA, "a@test");
+    const before = await db
+      .select()
+      .from(reportJobs)
+      .where(eq(reportJobs.zoneId, zoneA.id));
     const res = await call(zoneA.slug, `/api/tenant/reports/${reportId}/jobs`, {
       method: "POST",
       body: {
@@ -262,12 +266,14 @@ describe("tenant reports \u2014 async jobs", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("invalid_filters");
-    // No row written.
-    const rows = await db
+    // No row written — assert by row count, not by errorCode shape
+    // (a partially-persisted row could have errorCode = null and
+    //  still be a leak).
+    const after = await db
       .select()
       .from(reportJobs)
       .where(eq(reportJobs.zoneId, zoneA.id));
-    expect(rows.find((r) => r.errorCode === "invalid_filters")).toBeUndefined();
+    expect(after.length).toBe(before.length);
   });
 
   it("status endpoint returns the job; another user in the same zone gets 404", async () => {
