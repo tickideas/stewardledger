@@ -83,19 +83,18 @@ export function platformInviteLandingPath(args: {
   superAdmin: boolean;
 }): string {
   if (args.superAdmin) return "/admin/zones";
-  switch (args.roleCode) {
-    case "region_curator":
-      // Web layout already admits non-super-admins with any binding
-      // to `/admin/regions`; safe to deep-link.
-      return "/admin/regions";
-    case "support_admin":
-    case "billing_admin":
-    default:
-      // No admin surface they can reach without SSR plumbing for
-      // platform roles. `/account` is the universal authenticated
-      // landing page.
-      return "/account";
-  }
+  // The web ServerSession does not yet carry platformRoles[], so the
+  // `/admin/*` SSR gates fall back to "super_admin or hasAnyBinding"
+  // — which means a freshly-invited region_curator (or support /
+  // billing admin) with no tenant binding gets 303'd off the admin
+  // surface even though their API role is valid.
+  //
+  // Until the SSR session is widened to carry platform-role bindings,
+  // every non-super-admin invitee lands on /account, which is the
+  // universal authenticated page. Follow-up: plumb platformRoles into
+  // `/api/public/session-zones` and route each role to its admin
+  // surface here.
+  return "/account";
 }
 
 export function isSuperAdminOnlyPath(pathname: string): boolean {

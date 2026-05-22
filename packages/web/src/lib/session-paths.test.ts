@@ -406,10 +406,13 @@ describe("platformInviteLandingPath", () => {
       platformInviteLandingPath({ roleCode: "support_admin", superAdmin: false }),
     ).toBe("/account");
   });
-  it("routes region_curator to /admin/regions", () => {
+  it("routes region_curator to /account until SSR carries platform-role bindings", () => {
+    // Web /admin/* gates require super_admin OR a zone/chapter binding.
+    // A region_curator invitee may have neither, so /admin/regions
+    // would 303 them off. See the comment on platformInviteLandingPath().
     expect(
       platformInviteLandingPath({ roleCode: "region_curator", superAdmin: false }),
-    ).toBe("/admin/regions");
+    ).toBe("/account");
   });
   it("routes billing_admin to /account until subscriptions ship", () => {
     expect(

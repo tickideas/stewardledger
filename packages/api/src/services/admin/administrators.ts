@@ -17,6 +17,14 @@ import { and, eq, isNull, ne, or, sql } from "drizzle-orm";
 
 import { writeAudit } from "../audit";
 
+/**
+ * Advisory-lock key used by `demote()` to serialise concurrent demotes
+ * across the platform. The value is arbitrary; treat it as opaque.
+ * Lives at module scope so a future maintainer can grep for the key
+ * before adding another advisory lock that might collide.
+ */
+const ADVISORY_LOCK_DEMOTE_SUPER_ADMIN = 87234101938n;
+
 /** Platform roles that can be granted via `grantRole`. Super-admin is
  *  handled by `elevate` / `demote` so its audit action stays distinct. */
 const GRANTABLE_ROLES: readonly string[] = [
@@ -307,22 +315,30 @@ export async function demote(
   }
 
   await database.transaction(async (tx) => {
-    // Lock the candidate super-admin rows so a concurrent demote can't
-    // race past the count check.
+    // Globally serialise demote() across the platform via a constant
+    // advisory lock. Without this, two demotes against different
+    // targets would acquire row locks in opposite order (T1 locks B
+    // while demoting A; T2 locks A while demoting B) and deadlock.
+    // Demote is a rare admin action; the serialisation cost is
+    // negligible and held only for the duration of this transaction.
+    // The key is an arbitrary application-scoped constant; bigint to
+    // match Postgres pg_advisory_xact_lock(bigint) signature.
+    await tx.execute(sql`select pg_advisory_xact_lock(${ADVISORY_LOCK_DEMOTE_SUPER_ADMIN})`);
+
+    // Now that demotes are serialised we can count safely.
     const others = await tx
       .select({ id: userTable.id })
       .from(userTable)
-      .where(and(eq(userTable.isSuperAdmin, true), ne(userTable.id, target.id)))
-      .for("update");
+      .where(and(eq(userTable.isSuperAdmin, true), ne(userTable.id, target.id)));
     if (others.length === 0) {
       throw new AdminError(
         "last_super_admin",
         "Cannot demote the only remaining super-admin.",
       );
     }
-    // Predicate on the current bit so a concurrent demote that already
-    // flipped this user does not double-fire the audit row or report a
-    // success that did nothing.
+    // Predicate on the current bit so a stale snapshot (e.g. the
+    // target was already demoted between loadUser() and here) yields
+    // not_super_admin rather than silently doing nothing.
     const updated = await tx
       .update(userTable)
       .set({ isSuperAdmin: false })
