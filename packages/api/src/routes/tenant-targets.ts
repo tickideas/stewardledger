@@ -34,7 +34,7 @@ import {
 import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
-import { hasAnyRole } from "../middleware/auth";
+import { hasAnyRole, visibleChapterIds } from "../middleware/auth";
 import { writeAudit } from "../services/audit";
 import {
   CHAPTER_GIVING_READ_ROLES,
@@ -117,32 +117,33 @@ tenantTargetsRouter.get(
     const query = c.req.valid("query");
     const conditions = [eq(financialTargets.zoneId, ctx.zoneId)];
 
-    if (hasZoneTargetRead(ctx)) {
+    const scope = await visibleChapterIds(ctx, ZONE_GIVING_READ_ROLES);
+    if (scope.kind === "all") {
       if (query.chapterId) {
         conditions.push(eq(financialTargets.chapterId, query.chapterId));
       } else if (query.zoneWideOnly) {
         conditions.push(isNull(financialTargets.chapterId));
       }
     } else {
-      // Chapter readers see their chapters' rows + zone-wide rows
+      // Chapter/group readers see their chapters' rows + zone-wide rows
       // (chapter_id is null). An explicit out-of-scope chapter
       // filter is denied; an explicit in-scope chapter filter is
       // honoured.
-      if (query.chapterId && !ctx.chapterIds.includes(query.chapterId)) {
+      if (query.chapterId && !scope.ids.includes(query.chapterId)) {
         return forbidden(c);
       }
       if (query.chapterId) {
         conditions.push(eq(financialTargets.chapterId, query.chapterId));
       } else if (query.zoneWideOnly) {
         conditions.push(isNull(financialTargets.chapterId));
-      } else if (ctx.chapterIds.length === 0) {
+      } else if (scope.ids.length === 0) {
         // Bound to no chapters \u2014 only zone-wide rows are visible.
         conditions.push(isNull(financialTargets.chapterId));
       } else {
         conditions.push(
           or(
             isNull(financialTargets.chapterId),
-            inArray(financialTargets.chapterId, ctx.chapterIds),
+            inArray(financialTargets.chapterId, scope.ids),
           )!,
         );
       }
