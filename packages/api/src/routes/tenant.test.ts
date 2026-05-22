@@ -503,8 +503,8 @@ describe("tenant routes — cross-tenant fuzz", () => {
       .select({ code: roles.code })
       .from(roles)
       .where(sql`${roles.zoneId} = ${zoneB.id}`);
-    expect(aRoles.length).toBe(9);
-    expect(bRoles.length).toBe(9);
+    expect(aRoles.length).toBe(11);
+    expect(bRoles.length).toBe(11);
     // Same role codes, different ids.
     expect(new Set(aRoles.map((r) => r.code))).toEqual(new Set(bRoles.map((r) => r.code)));
   });
