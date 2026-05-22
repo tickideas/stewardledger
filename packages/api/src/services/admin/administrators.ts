@@ -236,14 +236,6 @@ export async function revokeRole(
   });
 }
 
-async function countSuperAdmins(database: Db): Promise<number> {
-  const [row] = await database
-    .select({ n: sql<number>`count(*)::int` })
-    .from(userTable)
-    .where(eq(userTable.isSuperAdmin, true));
-  return row?.n ?? 0;
-}
-
 /** Flip `user.is_super_admin` to true. Idempotent: refuses if already set. */
 export async function elevate(
   database: Database,
