@@ -20,6 +20,13 @@ export const ZONE_ROLES = {
 } as const;
 export type ZoneRoleCode = (typeof ZONE_ROLES)[keyof typeof ZONE_ROLES];
 
+/** Group-level roles — apply to all chapters within a single group. */
+export const GROUP_ROLES = {
+  GROUP_ADMIN: "group_admin",
+  GROUP_PASTOR_VIEWER: "group_pastor_viewer",
+} as const;
+export type GroupRoleCode = (typeof GROUP_ROLES)[keyof typeof GROUP_ROLES];
+
 /** Chapter-level roles — apply to a single chapter only. */
 export const CHAPTER_ROLES = {
   CHAPTER_ADMIN: "chapter_admin",
@@ -29,15 +36,16 @@ export const CHAPTER_ROLES = {
 } as const;
 export type ChapterRoleCode = (typeof CHAPTER_ROLES)[keyof typeof CHAPTER_ROLES];
 
-export type RoleCode = PlatformRoleCode | ZoneRoleCode | ChapterRoleCode;
+export type RoleCode = PlatformRoleCode | ZoneRoleCode | GroupRoleCode | ChapterRoleCode;
 
 /** Role scope — determines where a binding is valid. */
-export type RoleScope = "platform" | "zone" | "chapter";
+export type RoleScope = "platform" | "zone" | "group" | "chapter";
 
 /** Lookup the scope of a role code. */
 export function roleScope(code: string): RoleScope | null {
   if ((Object.values(PLATFORM_ROLES) as string[]).includes(code)) return "platform";
   if ((Object.values(ZONE_ROLES) as string[]).includes(code)) return "zone";
+  if ((Object.values(GROUP_ROLES) as string[]).includes(code)) return "group";
   if ((Object.values(CHAPTER_ROLES) as string[]).includes(code)) return "chapter";
   return null;
 }
@@ -46,4 +54,9 @@ export function roleScope(code: string): RoleScope | null {
 export function isZoneWideRole(code: string): boolean {
   const scope = roleScope(code);
   return scope === "platform" || scope === "zone";
+}
+
+/** True if the role can read across multiple chapters but not the whole zone. */
+export function isGroupScopedRole(code: string): boolean {
+  return roleScope(code) === "group";
 }
