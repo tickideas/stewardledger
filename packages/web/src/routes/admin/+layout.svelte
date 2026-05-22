@@ -55,7 +55,7 @@
   //
   //   - /admin/zones          super_admin OR support_admin
   //   - /admin/administrators super_admin only
-  //   - everything else under /admin/* is implicitly admin-wide
+  //   - /admin/audit          super_admin only
   //
   // Filter the nav so we don't surface links the API would 403.
   const sessionPlatformRoles = $derived.by(() => {
@@ -66,6 +66,7 @@
     isSuperAdmin(session.current) || sessionPlatformRoles.includes("support_admin"),
   );
   const canSeeAdministrators = $derived(isSuperAdmin(session.current));
+  const canSeeAudit = $derived(isSuperAdmin(session.current));
 
   const groups = $derived(
     PLATFORM_NAV.map((g) => ({
@@ -73,6 +74,7 @@
       items: g.items.filter((it) => {
         if (it.href === "/admin/zones") return canSeeZones;
         if (it.href === "/admin/administrators") return canSeeAdministrators;
+        if (it.href === "/admin/audit") return canSeeAudit;
         return true;
       }),
     })).filter((g) => g.items.length > 0),

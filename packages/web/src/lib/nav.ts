@@ -50,6 +50,7 @@ export const PLATFORM_NAV: NavGroup[] = [
     label: "Access",
     items: [
       { href: "/admin/administrators", label: "Administrators" },
+      { href: "/admin/audit", label: "Audit trail" },
     ],
   },
 ];
