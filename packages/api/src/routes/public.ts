@@ -23,6 +23,7 @@ import { db } from "../db";
 import { log } from "../logger";
 import {
   applyAcceptedInvitation,
+  discardOrphanedAuthUser,
   findInvitationByToken,
   InvitationError,
 } from "../services/invitations";
@@ -266,6 +267,12 @@ publicRouter.post("/invitations/accept", zValidator("json", invitationAcceptSche
   try {
     await applyAcceptedInvitation(db, { invitationId: inv.id, userId });
   } catch (err) {
+    // signUpEmail already created the auth user; if apply fails we
+    // must discard that user, otherwise the invitee's email is
+    // permanently bound to an account with no zone role and the same
+    // address cannot be re-invited (signUpEmail will refuse it as a
+    // duplicate). See PR #44 review thread for the original report.
+    await discardOrphanedAuthUser(db, userId);
     if (err instanceof InvitationError) {
       return c.json({ error: { code: err.code, message: err.message } }, 409);
     }
@@ -349,6 +356,10 @@ publicRouter.post(
         superAdmin: applied.superAdmin,
       });
     } catch (err) {
+      // Same cleanup as the zone-invite flow: discard the just-
+      // created auth user so a re-invite of the same email is
+      // possible. See PR #44 review thread.
+      await discardOrphanedAuthUser(db, userId);
       if (err instanceof PlatformInvitationError) {
         return c.json({ error: { code: err.code, message: err.message } }, 409);
       }

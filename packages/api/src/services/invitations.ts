@@ -21,6 +21,7 @@ import {
 } from "@stewardledger/shared";
 import { and, eq, isNull } from "drizzle-orm";
 
+import { log } from "../logger";
 import { env } from "../env";
 import { brandedEmailHtml, escapeHtml, sendEmail } from "./email";
 
@@ -237,6 +238,32 @@ export async function applyAcceptedInvitation(
 
     return { zoneId: inv.zoneId };
   });
+}
+
+/**
+ * Delete a Better Auth user row that was created by an invite-accept
+ * flow whose follow-on apply step then failed. Sessions and accounts
+ * cascade via ON DELETE CASCADE on the user FK, so a single DELETE
+ * cleans up the whole identity. Used by both `/invitations/accept` and
+ * `/platform-invitations/accept` to prevent orphan accounts that
+ * would otherwise block a re-invite of the same email.
+ *
+ * Errors are caught and logged — if the cleanup itself fails the
+ * caller still surfaces the original apply-failure to the client; we
+ * do not want a secondary fault to mask the primary cause.
+ */
+export async function discardOrphanedAuthUser(
+  database: Database,
+  userId: string,
+): Promise<void> {
+  try {
+    await database.delete(userTable).where(eq(userTable.id, userId));
+  } catch (err) {
+    log.warn(
+      { err, userId },
+      "discardOrphanedAuthUser failed; manual cleanup may be required",
+    );
+  }
 }
 
 export function isChapterRole(code: string): boolean {
