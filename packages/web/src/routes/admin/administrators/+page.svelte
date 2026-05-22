@@ -6,6 +6,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, ApiError } from "$lib/api";
+  import ConfirmDialog from "$lib/ConfirmDialog.svelte";
   import InviteAdminModal from "./invite-admin-modal.svelte";
   import GrantExistingModal from "./grant-existing-modal.svelte";
 
@@ -108,69 +109,124 @@
     refresh();
   }
 
-  async function revokeRole(admin: Administrator, roleCode: string): Promise<void> {
-    if (!confirm(`Remove the ${ROLE_LABELS[roleCode] ?? roleCode} role from ${admin.email}?`))
-      return;
+  // ─── Confirm-dialog state ──────────────────────────────────────────
+  //
+  // The four destructive actions on this page (revoke role, elevate,
+  // demote, revoke invitation) used to use window.confirm(). We now
+  // funnel them through a single sl-* styled ConfirmDialog. The
+  // pending action is modelled as a discriminated union so the dialog
+  // can render the right copy and dispatch the right network call.
+
+  type PendingAction =
+    | { kind: "revokeRole"; admin: Administrator; roleCode: string }
+    | { kind: "elevate"; admin: Administrator }
+    | { kind: "demote"; admin: Administrator }
+    | { kind: "revokeInvitation"; invitation: Invitation };
+
+  let pending = $state<PendingAction | null>(null);
+  let confirmOpen = $state(false);
+  let confirmSubmitting = $state(false);
+
+  function ask(action: PendingAction) {
+    pending = action;
+    confirmOpen = true;
+  }
+
+  function cancelConfirm() {
+    if (confirmSubmitting) return;
+    confirmOpen = false;
+    pending = null;
+  }
+
+  const confirmCopy = $derived.by(() => {
+    if (!pending) {
+      return { title: "", body: "", confirmLabel: "Confirm", tone: "danger" as const };
+    }
+    switch (pending.kind) {
+      case "revokeRole":
+        return {
+          title: `Remove the ${ROLE_LABELS[pending.roleCode] ?? pending.roleCode} role?`,
+          body: `${pending.admin.email} will lose this role at their next sign-in. The change is reversible by re-granting.`,
+          confirmLabel: "Revoke role",
+          tone: "danger" as const,
+        };
+      case "elevate":
+        return {
+          title: `Promote ${pending.admin.email} to super-admin?`,
+          body: "They will gain full platform access across every tenant and every administrative action. Use sparingly.",
+          confirmLabel: "Promote to super-admin",
+          tone: "warn" as const,
+        };
+      case "demote":
+        return {
+          title: `Demote ${pending.admin.email}?`,
+          body: "They will lose super-admin privileges. The system refuses if they are the only remaining super-admin.",
+          confirmLabel: "Demote",
+          tone: "danger" as const,
+        };
+      case "revokeInvitation":
+        return {
+          title: `Revoke the invitation to ${pending.invitation.email}?`,
+          body: "The magic link will stop working. You can re-invite the same email + role afterwards.",
+          confirmLabel: "Revoke invitation",
+          tone: "danger" as const,
+        };
+    }
+  });
+
+  async function runConfirm() {
+    if (!pending) return;
+    confirmSubmitting = true;
     try {
-      await api.delete(
-        `/api/admin/administrators/${encodeURIComponent(admin.userId)}/roles/${encodeURIComponent(roleCode)}`,
-      );
-      showFlash("Role revoked.");
+      if (pending.kind === "revokeRole") {
+        await api.delete(
+          `/api/admin/administrators/${encodeURIComponent(pending.admin.userId)}/roles/${encodeURIComponent(pending.roleCode)}`,
+        );
+        showFlash("Role revoked.");
+      } else if (pending.kind === "elevate") {
+        await api.post(
+          `/api/admin/administrators/${encodeURIComponent(pending.admin.userId)}/super-admin`,
+          {},
+        );
+        showFlash("Promoted to super-admin.");
+      } else if (pending.kind === "demote") {
+        await api.delete(
+          `/api/admin/administrators/${encodeURIComponent(pending.admin.userId)}/super-admin`,
+        );
+        showFlash("Demoted from super-admin.");
+      } else if (pending.kind === "revokeInvitation") {
+        await api.delete(
+          `/api/admin/administrators/invitations/${encodeURIComponent(pending.invitation.id)}`,
+        );
+        showFlash("Invitation revoked.");
+      }
+      confirmOpen = false;
+      pending = null;
       refresh();
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : "Could not revoke role.");
+      showFlash(
+        err instanceof ApiError ? err.message : "Could not complete the action.",
+        "warn",
+      );
+      confirmOpen = false;
+      pending = null;
+    } finally {
+      confirmSubmitting = false;
     }
   }
 
-  async function elevate(admin: Administrator): Promise<void> {
-    if (
-      !confirm(
-        `Promote ${admin.email} to super-admin? They will gain full platform access.`,
-      )
-    )
-      return;
-    try {
-      await api.post(
-        `/api/admin/administrators/${encodeURIComponent(admin.userId)}/super-admin`,
-        {},
-      );
-      showFlash("Promoted to super-admin.");
-      refresh();
-    } catch (err) {
-      alert(err instanceof ApiError ? err.message : "Could not promote.");
-    }
+  // Thin wrappers so the markup reads naturally.
+  function revokeRole(admin: Administrator, roleCode: string): void {
+    ask({ kind: "revokeRole", admin, roleCode });
   }
-
-  async function demote(admin: Administrator): Promise<void> {
-    if (
-      !confirm(
-        `Demote ${admin.email}? They will lose super-admin privileges. ` +
-          `The system refuses if they are the only remaining super-admin.`,
-      )
-    )
-      return;
-    try {
-      await api.delete(
-        `/api/admin/administrators/${encodeURIComponent(admin.userId)}/super-admin`,
-      );
-      showFlash("Demoted from super-admin.");
-      refresh();
-    } catch (err) {
-      alert(err instanceof ApiError ? err.message : "Could not demote.");
-    }
+  function elevate(admin: Administrator): void {
+    ask({ kind: "elevate", admin });
   }
-
-  async function revokeInvitation(inv: Invitation): Promise<void> {
-    if (!confirm(`Revoke the invitation to ${inv.email}?`)) return;
-    try {
-      await api.delete(
-        `/api/admin/administrators/invitations/${encodeURIComponent(inv.id)}`,
-      );
-      showFlash("Invitation revoked.");
-      refresh();
-    } catch (err) {
-      alert(err instanceof ApiError ? err.message : "Could not revoke invitation.");
-    }
+  function demote(admin: Administrator): void {
+    ask({ kind: "demote", admin });
+  }
+  function revokeInvitation(inv: Invitation): void {
+    ask({ kind: "revokeInvitation", invitation: inv });
   }
 
   function fmtDate(iso: string): string {
@@ -240,6 +296,16 @@
 
   <InviteAdminModal bind:open={inviteOpen} oninvited={onInvited} />
   <GrantExistingModal bind:open={grantOpen} ongranted={onGranted} />
+  <ConfirmDialog
+    bind:open={confirmOpen}
+    title={confirmCopy.title}
+    body={confirmCopy.body}
+    confirmLabel={confirmCopy.confirmLabel}
+    tone={confirmCopy.tone}
+    submitting={confirmSubmitting}
+    onconfirm={runConfirm}
+    oncancel={cancelConfirm}
+  />
 
   <!-- Active administrators -->
   <div class="sl-reveal sl-reveal-2 mt-10">
