@@ -586,24 +586,11 @@
     queueingFormat = format;
     queueError = null;
     try {
-      // Reuse the same filter payload the report would see at
-      // synchronous run time; coerce non-string fields the same
-      // way snapshotFilters() does for saved filters.
-      const params = currentParams();
-      const filters: Record<string, unknown> = {};
-      for (const [key, value] of params.entries()) {
-        if (key === "includeVoided" || key === "partnershipOnly") {
-          filters[key] = value === "true";
-        } else if (key === "topN") {
-          const n = Number(value);
-          filters[key] = Number.isFinite(n) ? n : value;
-        } else {
-          filters[key] = value;
-        }
-      }
+      // Same coercions as the saved-filters path; keep them in
+      // snapshotFilters() so queue + save can't drift.
       await api.post<{ job: JobSummary }>(
         `/api/tenant/reports/${reportId}/jobs`,
-        { format, filters },
+        { format, filters: snapshotFilters() },
       );
       await refreshJobs();
     } catch (err) {
@@ -613,8 +600,48 @@
     }
   }
 
-  function jobDownloadHref(job: JobSummary): string {
-    return `${PUBLIC_API_URL}/api/tenant/reports/jobs/${job.id}/download`;
+  let downloadingJobId = $state<string | null>(null);
+  let jobDownloadError = $state<string | null>(null);
+
+  /**
+   * Stream a queued-job artefact through `fetch` (with the tenant
+   * zone slug header) and save it as a blob. A plain `<a href>`
+   * would skip the `x-stewardledger-zone-slug` header that the
+   * tenant middleware needs on the dev box, so the download would
+   * 404 in environments where the zone is not resolved from Host.
+   */
+  async function downloadJobArtefact(job: JobSummary) {
+    if (downloadingJobId) return;
+    downloadingJobId = job.id;
+    jobDownloadError = null;
+    try {
+      const headers = new Headers();
+      const slug = localStorage.getItem("stewardledger.activeZoneSlug");
+      if (slug) headers.set("x-stewardledger-zone-slug", slug);
+      const res = await fetch(
+        `${PUBLIC_API_URL}/api/tenant/reports/jobs/${job.id}/download`,
+        { method: "GET", credentials: "include", headers },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error?.message ?? `Download failed (${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download =
+        parseFilename(res.headers.get("content-disposition")) ??
+        `${job.reportId}.${job.format}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5_000);
+    } catch (err) {
+      jobDownloadError = err instanceof Error ? err.message : "Download failed.";
+    } finally {
+      downloadingJobId = null;
+    }
   }
 
   function formatRelative(iso: string): string {
@@ -1119,6 +1146,9 @@
       {#if jobsError}
         <p class="mt-2 text-[13px] text-rose-700">{jobsError}</p>
       {/if}
+      {#if jobDownloadError}
+        <p class="mt-2 text-[13px] text-rose-700">{jobDownloadError}</p>
+      {/if}
       {#if jobs.length > 0}
         <ul class="mt-3 divide-y divide-slate-200">
           {#each jobs as job (job.id)}
@@ -1146,10 +1176,12 @@
               </div>
               <div class="flex items-center gap-3">
                 {#if job.status === "completed"}
-                  <a
-                    href={jobDownloadHref(job)}
-                    class="text-slate-700 underline hover:text-slate-900"
-                  >Download</a>
+                  <button
+                    type="button"
+                    onclick={() => downloadJobArtefact(job)}
+                    disabled={downloadingJobId === job.id}
+                    class="text-slate-700 underline hover:text-slate-900 disabled:opacity-60"
+                  >{downloadingJobId === job.id ? "Downloading…" : "Download"}</button>
                 {/if}
               </div>
             </li>
