@@ -144,7 +144,17 @@ export function canEnterAdminPath(args: {
     return roles.has("support_admin");
   }
   if (path === "/admin/regions" || path.startsWith("/admin/regions/")) {
-    return roles.has("region_curator") || args.hasZoneBinding;
+    // Read-only viewers admitted: region_curator can mutate;
+    // support_admin can read (per PRD §6.1 "read-only across
+    // tenants"); zone-bound users can curate their unverified region
+    // submission from the inbox. The mutate endpoints
+    // (`POST /admin/regions`, `PATCH /admin/regions/:id`,
+    // `POST /admin/regions/promote`) still gate on region_curator.
+    return (
+      roles.has("region_curator") ||
+      roles.has("support_admin") ||
+      args.hasZoneBinding
+    );
   }
   // /admin index + anything not enumerated: admit anyone with a
   // meaningful platform footprint so we do not render an empty

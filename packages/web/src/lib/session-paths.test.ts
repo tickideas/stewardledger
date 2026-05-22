@@ -556,10 +556,12 @@ describe("canEnterAdminPath", () => {
     expect(canEnterAdminPath({ pathname: "/admin/zones", ...nothing })).toBe(false);
   });
 
-  it("/admin/regions admits region_curator and any zone-bound user", () => {
+  it("/admin/regions admits region_curator + support_admin (read-only) + any zone-bound user", () => {
     expect(canEnterAdminPath({ pathname: "/admin/regions", ...regionOnly })).toBe(true);
     expect(canEnterAdminPath({ pathname: "/admin/regions/inbox", ...zoneOnly })).toBe(true);
-    expect(canEnterAdminPath({ pathname: "/admin/regions", ...supportOnly })).toBe(false);
+    // support_admin is read-only across tenants per PRD §6.1; the
+    // mutate endpoints still gate on region_curator at the API.
+    expect(canEnterAdminPath({ pathname: "/admin/regions", ...supportOnly })).toBe(true);
     expect(canEnterAdminPath({ pathname: "/admin/regions", ...billingOnly })).toBe(false);
     expect(canEnterAdminPath({ pathname: "/admin/regions", ...nothing })).toBe(false);
   });
