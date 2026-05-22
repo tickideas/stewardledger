@@ -85,6 +85,13 @@
       "when": 1779458000000,
       "tag": "0011_report_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1779458500000,
+      "tag": "0012_report_jobs_checks",
+      "breakpoints": true
     }
   ]
 }

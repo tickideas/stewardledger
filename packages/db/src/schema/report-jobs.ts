@@ -7,6 +7,7 @@
 
 import { sql } from "drizzle-orm";
 import {
+  check,
   index,
   integer,
   jsonb,
@@ -83,6 +84,16 @@ export const reportJobs = pgTable(
       table.zoneId,
       table.userId,
       table.createdAt.desc(),
+    ),
+    // Domain enums are enforced in the DB so a buggy queue path can't
+    // persist a value the worker would later refuse to handle.
+    check(
+      "report_jobs_format_check",
+      sql`${table.format} in ('xlsx', 'pdf')`,
+    ),
+    check(
+      "report_jobs_status_check",
+      sql`${table.status} in ('queued', 'running', 'completed', 'failed')`,
     ),
   ],
 );
