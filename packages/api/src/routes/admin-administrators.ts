@@ -35,6 +35,7 @@ import {
   revokePlatformInvitation,
 } from "../services/admin/platform-invitations";
 import { sendPlatformAdminInviteEmail } from "../services/admin/platform-admin-emails";
+import { parseForwardedIp } from "../services/request-meta";
 
 export const adminAdministratorsRouter = new Hono();
 
@@ -75,7 +76,7 @@ function actor(c: Context): {
   const user = c.get("user") as SessionUser;
   return {
     actorUserId: user.id,
-    ipAddress: c.req.header("x-forwarded-for") ?? null,
+    ipAddress: parseForwardedIp(c.req.header("x-forwarded-for")),
     userAgent: c.req.header("user-agent") ?? null,
     requestId: c.req.header("x-request-id") ?? null,
   };

@@ -10,6 +10,7 @@ import { APIError, createAuthMiddleware } from "better-auth/api";
 import { emailOTP, magicLink, twoFactor } from "better-auth/plugins";
 import { db } from "./db";
 import { env } from "./env";
+import { parseForwardedIp } from "./services/request-meta";
 import { log } from "./logger";
 import { brandedEmailHtml, escapeHtml, sendEmail } from "./services/email";
 import { recordMfaAudit, recordMfaBypassBlocked } from "./services/mfa-audit";
@@ -131,7 +132,7 @@ export const auth = betterAuth({
               userId,
               enabled: next,
               actorUserId: ctx.context?.session?.user?.id ?? userId,
-              ipAddress: ctx.request?.headers.get("x-forwarded-for") ?? null,
+              ipAddress: parseForwardedIp(ctx.request?.headers.get("x-forwarded-for")),
               userAgent: ctx.request?.headers.get("user-agent") ?? null,
             });
           } catch (err) {
@@ -268,8 +269,9 @@ export const auth = betterAuth({
                   await recordMfaBypassBlocked(db, {
                     email,
                     path,
-                    ipAddress:
-                      ctx.request?.headers.get("x-forwarded-for") ?? null,
+                    ipAddress: parseForwardedIp(
+                      ctx.request?.headers.get("x-forwarded-for"),
+                    ),
                     userAgent: ctx.request?.headers.get("user-agent") ?? null,
                   });
                 } catch (err) {
