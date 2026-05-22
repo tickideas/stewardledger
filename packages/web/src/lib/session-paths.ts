@@ -138,6 +138,14 @@ export type AuthenticatedLandingInput = {
   activeZoneSlug: string | null;
   isSuperAdmin: boolean;
   /**
+   * Platform-role bindings the user holds (e.g. `support_admin`,
+   * `region_curator`). Optional so legacy callers without role data
+   * keep the historical behaviour; when populated, the landing logic
+   * routes a platform-only user (no zone bindings) to the platform
+   * surface they can actually use.
+   */
+  platformRoles?: string[];
+  /**
    * Bindings within the currently-active zone. Optional so callers that
    * don't yet have role data (legacy tests, intermediate code paths) keep
    * working with the historical "any zone binding → zonal" behaviour.
@@ -159,6 +167,10 @@ export type AuthenticatedLandingInput = {
  */
 export function primaryRole(s: AuthenticatedLandingInput): PrimaryRole | null {
   if (s.isSuperAdmin) return "platform";
+  // Platform-role users land on the platform surface even with no zone
+  // binding — otherwise a freshly-invited support_admin clicking the
+  // brand link from /admin/* gets bounced to the no-zone login banner.
+  if ((s.platformRoles ?? []).length > 0) return "platform";
   if (s.activeZoneRoles && s.activeZoneRoles.length > 0) return "zonal";
   if (s.activeZoneChapterRoles && s.activeZoneChapterRoles.length > 0) return "church";
   // Tenant-bound user with no resolved role data — fall back to zonal so
@@ -246,6 +258,7 @@ export function landingInputFromServerSession(
   return {
     activeZoneSlug: picked?.slug ?? null,
     isSuperAdmin: s.isSuperAdmin,
+    platformRoles: s.platformRoles ?? [],
     activeZoneRoles: picked?.zoneRoles ?? [],
     activeZoneChapterRoles: picked?.chapterRoles ?? [],
   };
@@ -305,7 +318,17 @@ export function authenticatedLandingPath(
   if (next && isSafeInternalPath(next) && isProtectedPath(next)) return next;
 
   const role = primaryRole(session);
-  if (role === "platform") return "/admin/zones";
+  if (role === "platform") {
+    if (session.isSuperAdmin) return "/admin/zones";
+    const roles = session.platformRoles ?? [];
+    // Match `platformInviteLandingPath` so an invitee's first-render
+    // landing matches the post-accept landing.
+    if (roles.includes("support_admin")) return "/admin/zones";
+    if (roles.includes("region_curator")) return "/admin/regions";
+    // billing_admin (or any future platform role with no surface yet)
+    // falls back to /account so they aren’t dropped on a 403.
+    return "/account";
+  }
   if (role === null) return "/login?error=no_zone";
 
   const zoneQs = session.activeZoneSlug

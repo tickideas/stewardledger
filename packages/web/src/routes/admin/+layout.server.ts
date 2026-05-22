@@ -22,16 +22,23 @@ export const load: LayoutServerLoad = async ({ locals, url }) => {
 
   // Non-super-admins admitted to `/admin/*` if they hold either:
   //   - any zone or chapter binding (existing region-curator inbox use case), OR
-  //   - any platform-role binding (support_admin / billing_admin /
-  //     region_curator granted via /admin/administrators).
-  // The root layout has already bounced super-admin-only paths
-  // (`isSuperAdminOnlyPath`) for non-super-admins, so anything they land
-  // on here is implicitly within their allowed admin surface.
+  //   - a platform role that has an admin surface to use today.
+  //
+  // `billing_admin` is deliberately excluded — subscriptions ship in
+  // Phase 10 and they have no `/admin/*` page to land on. Letting them
+  // in would expose nav links that 403 on every API call. They land
+  // on /account via the post-accept routing instead.
   const hasZoneBinding = session.items.some(
     (z) => z.zoneRoles.length > 0 || z.chapterRoles.length > 0,
   );
-  const hasPlatformRole = (session.platformRoles ?? []).length > 0;
-  if (hasZoneBinding || hasPlatformRole) return {};
+  const ADMIN_SURFACE_PLATFORM_ROLES = new Set([
+    "support_admin",
+    "region_curator",
+  ]);
+  const hasAdminSurfaceRole = (session.platformRoles ?? []).some((r) =>
+    ADMIN_SURFACE_PLATFORM_ROLES.has(r),
+  );
+  if (hasZoneBinding || hasAdminSurfaceRole) return {};
 
   // Unbound, non-super-admin. They have no business under /admin.
   const input = landingInputFromServerSession(session, url.searchParams.get("zone"));

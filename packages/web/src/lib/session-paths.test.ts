@@ -459,3 +459,62 @@ describe("canAccessRoleAnyZone (platform surface, with platformRoles)", () => {
   });
 });
 
+describe("primaryRole + authenticatedLandingPath (platform-roles plumbed)", () => {
+  it("primaryRole returns 'platform' for a non-super-admin with any platformRoles entry", () => {
+    expect(
+      primaryRole({
+        activeZoneSlug: null,
+        isSuperAdmin: false,
+        platformRoles: ["support_admin"],
+      }),
+    ).toBe("platform");
+    expect(
+      primaryRole({
+        activeZoneSlug: null,
+        isSuperAdmin: false,
+        platformRoles: ["region_curator"],
+      }),
+    ).toBe("platform");
+  });
+
+  it("primaryRole still returns null for a user with neither super-admin, platform role, nor zone binding", () => {
+    expect(
+      primaryRole({
+        activeZoneSlug: null,
+        isSuperAdmin: false,
+        platformRoles: [],
+      }),
+    ).toBeNull();
+  });
+
+  it("authenticatedLandingPath routes support_admin (platform role only) to /admin/zones", () => {
+    expect(
+      authenticatedLandingPath({
+        activeZoneSlug: null,
+        isSuperAdmin: false,
+        platformRoles: ["support_admin"],
+      }),
+    ).toBe("/admin/zones");
+  });
+
+  it("authenticatedLandingPath routes region_curator (platform role only) to /admin/regions", () => {
+    expect(
+      authenticatedLandingPath({
+        activeZoneSlug: null,
+        isSuperAdmin: false,
+        platformRoles: ["region_curator"],
+      }),
+    ).toBe("/admin/regions");
+  });
+
+  it("authenticatedLandingPath routes billing_admin (platform role only) to /account until Phase 10", () => {
+    expect(
+      authenticatedLandingPath({
+        activeZoneSlug: null,
+        isSuperAdmin: false,
+        platformRoles: ["billing_admin"],
+      }),
+    ).toBe("/account");
+  });
+});
+
