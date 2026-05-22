@@ -37,9 +37,9 @@ export const platformInvitations = pgTable(
     superAdmin: boolean("super_admin").notNull().default(false),
     /** SHA-256 hex of the opaque token. Raw token only in the email URL. */
     tokenHash: text("token_hash").notNull(),
-    createdByUserId: text("created_by_user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "set null" }),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     acceptedAt: timestamp("accepted_at", { withTimezone: true }),

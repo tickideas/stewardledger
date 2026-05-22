@@ -5,7 +5,7 @@ CREATE TABLE "platform_invitations" (
 	"role_code" text NOT NULL,
 	"super_admin" boolean DEFAULT false NOT NULL,
 	"token_hash" text NOT NULL,
-	"created_by_user_id" text NOT NULL,
+	"created_by_user_id" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"expires_at" timestamp with time zone NOT NULL,
 	"accepted_at" timestamp with time zone,
