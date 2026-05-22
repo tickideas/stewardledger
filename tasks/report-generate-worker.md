@@ -162,7 +162,7 @@ v1 flow ("I asked for this report, did it finish?").
 
 New:
 - `packages/db/src/schema/report-jobs.ts`
-- `packages/db/drizzle/0010_*.sql`
+- `packages/db/drizzle/0011_*.sql`
 - `packages/api/src/services/reports/jobs.ts` (CRUD + run logic)
 - `packages/api/src/services/reports/jobs-worker.ts` (poll loop)
 - `packages/api/src/routes/tenant-reports-jobs.test.ts`
