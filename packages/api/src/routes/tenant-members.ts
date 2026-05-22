@@ -207,7 +207,9 @@ tenantMembersRouter.get(
     if (scope.kind === "all") {
       if (q.chapterId) conditions.push(eq(members.chapterId, q.chapterId));
     } else {
-      if (scope.ids.length === 0) return forbidden(c);
+      if (scope.ids.length === 0) {
+        return c.json({ items: [], total: 0, limit: q.limit, offset: q.offset });
+      }
       conditions.push(
         q.chapterId
           ? eq(members.chapterId, q.chapterId)
