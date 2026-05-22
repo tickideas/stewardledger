@@ -279,6 +279,8 @@ Not bound to any tenant.
 | `billing_admin` | Plans, subscriptions, invoices. |
 | `region_curator` | Maintains the regions reference list. Reviews unverified region submissions from new zones and approves/edits them. |
 
+Delegation lives in `/admin/administrators` (super-admin only). It exposes both *invite a new admin* and *grant a role to an existing user*; revoke is a soft-revoke (sets `revoked_at` on the `platform_role_bindings` row). The super-admin bit on `user.is_super_admin` is layered on top via a separate Promote / Demote action — the system refuses to demote the only remaining super-admin (`last_super_admin` 409).
+
 ### 6.2 Zone-level roles
 
 Apply across the whole tenant (every chapter in the zone).

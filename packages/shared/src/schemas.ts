@@ -227,6 +227,16 @@ export const invitationAcceptSchema = z.object({
 });
 export type InvitationAcceptInput = z.infer<typeof invitationAcceptSchema>;
 
+/** Accept a platform-admin invitation. Same shape as the zone variant. */
+export const platformInvitationAcceptSchema = z.object({
+  token: z.string().min(20).max(200),
+  name: z.string().min(2).max(120),
+  password: z.string().min(12).max(200),
+});
+export type PlatformInvitationAcceptInput = z.infer<
+  typeof platformInvitationAcceptSchema
+>;
+
 /**
  * Re-issue (resend) a zone-owner invitation. The admin may correct the
  * primary contact's email here — the service revokes the previous open

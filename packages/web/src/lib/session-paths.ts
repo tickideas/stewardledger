@@ -64,8 +64,44 @@ export function isSafeInternalPath(p: string): boolean {
   return true;
 }
 
+/**
+ * Landing path for a freshly-accepted platform-admin invitation.
+ * Each role goes to a surface it can actually use — the previous
+ * blanket redirect to `/admin/zones` left region_curator + billing_admin
+ * invitees on a 403’d page.
+ *
+ * Note on `support_admin`: the API admits them to `/admin/zones`, but
+ * the web session shape (`ServerSession`) does not yet carry
+ * platform-role bindings, so `isSuperAdminOnlyPath("/admin/zones")` in
+ * the root layout still bounces them. Until SSR knows about platform
+ * roles, we land support_admin on `/account` where they have a session
+ * but no admin nav. Follow-up: plumb `platformRoles: string[]` through
+ * `/api/public/session-zones` and revisit this routing.
+ */
+export function platformInviteLandingPath(args: {
+  roleCode: string;
+  superAdmin: boolean;
+}): string {
+  if (args.superAdmin) return "/admin/zones";
+  // The web ServerSession does not yet carry platformRoles[], so the
+  // `/admin/*` SSR gates fall back to "super_admin or hasAnyBinding"
+  // — which means a freshly-invited region_curator (or support /
+  // billing admin) with no tenant binding gets 303'd off the admin
+  // surface even though their API role is valid.
+  //
+  // Until the SSR session is widened to carry platform-role bindings,
+  // every non-super-admin invitee lands on /account, which is the
+  // universal authenticated page. Follow-up: plumb platformRoles into
+  // `/api/public/session-zones` and route each role to its admin
+  // surface here.
+  return "/account";
+}
+
 export function isSuperAdminOnlyPath(pathname: string): boolean {
-  return pathname === "/admin/zones" || pathname.startsWith("/admin/zones/");
+  if (pathname === "/admin/zones" || pathname.startsWith("/admin/zones/")) return true;
+  if (pathname === "/admin/administrators" || pathname.startsWith("/admin/administrators/"))
+    return true;
+  return false;
 }
 
 /**

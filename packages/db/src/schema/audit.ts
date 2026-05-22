@@ -2,7 +2,8 @@
 // Append-only audit log. See docs/ARCHITECTURE.md §13.
 // Triggers and service helpers write here on every sensitive write.
 
-import { index, inet, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { check, index, inet, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 import { user } from "./auth";
 import { zones } from "./zones";
 
@@ -12,9 +13,13 @@ export const auditEvents = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    zoneId: text("zone_id")
-      .notNull()
-      .references(() => zones.id, { onDelete: "cascade" }),
+    /**
+     * Null for platform-scope events (e.g. granting a `support_admin` role).
+     * Set for every tenant-scope event. The CHECK below pins this invariant
+     * against the action namespace so we can't accidentally write a
+     * tenant-scope event with NULL zone_id.
+     */
+    zoneId: text("zone_id").references(() => zones.id, { onDelete: "cascade" }),
     actorUserId: text("actor_user_id").references(() => user.id, { onDelete: "set null" }),
     actorRoleCode: text("actor_role_code"),
     action: text("action").notNull(),
@@ -31,6 +36,17 @@ export const auditEvents = pgTable(
   (table) => [
     index("audit_events_zone_entity_idx").on(table.zoneId, table.entityType, table.entityId),
     index("audit_events_zone_occurred_idx").on(table.zoneId, table.occurredAt.desc()),
+    /**
+     * Platform-scope events are namespaced `platform.*` and have NULL
+     * zone_id; every other event must have a zone_id. This is what makes
+     * audit search safe to widen — a tenant-scope event can’t leak with
+     * NULL zone_id and a platform event can’t accidentally pin to a zone.
+     */
+    check(
+      "audit_events_zone_scope_check",
+      sql`((${table.action} like 'platform.%') and ${table.zoneId} is null)
+          or ((${table.action} not like 'platform.%') and ${table.zoneId} is not null)`,
+    ),
   ],
 );
 

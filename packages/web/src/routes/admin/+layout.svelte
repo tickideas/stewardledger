@@ -39,7 +39,10 @@
       ? PLATFORM_NAV
       : PLATFORM_NAV.map((g) => ({
           ...g,
-          items: g.items.filter((it) => it.href !== "/admin/zones"),
+          items: g.items.filter(
+            (it) =>
+              it.href !== "/admin/zones" && it.href !== "/admin/administrators",
+          ),
         })),
   );
 

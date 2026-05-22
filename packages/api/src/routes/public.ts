@@ -13,6 +13,7 @@ import {
 } from "@stewardledger/db/schema";
 import {
   invitationAcceptSchema,
+  platformInvitationAcceptSchema,
   regionTypeaheadSchema,
 } from "@stewardledger/shared";
 import { and, asc, eq, ilike, isNull } from "drizzle-orm";
@@ -26,6 +27,11 @@ import {
   InvitationError,
 } from "../services/invitations";
 import { mfaRequiredInZone } from "../services/mfa-policy";
+import {
+  applyAcceptedPlatformInvitation,
+  findPlatformInvitationByToken,
+  PlatformInvitationError,
+} from "../services/admin/platform-invitations";
 
 export const publicRouter = new Hono();
 
@@ -267,3 +273,86 @@ publicRouter.post("/invitations/accept", zValidator("json", invitationAcceptSche
   }
   return c.json({ status: "accepted", zoneSlug: inv.zoneSlug });
 });
+
+
+/** Look up a platform-admin invitation by token for the accept page. */
+publicRouter.get("/platform-invitations/:token", async (c) => {
+  const token = c.req.param("token");
+  const inv = await findPlatformInvitationByToken(db, token);
+  if (!inv)
+    return c.json({ error: { code: "invitation_not_found", message: "Not found" } }, 404);
+  if (inv.revokedAt)
+    return c.json({ error: { code: "invitation_revoked", message: "Revoked" } }, 410);
+  if (inv.acceptedAt)
+    return c.json({ error: { code: "invitation_already_accepted", message: "Used" } }, 410);
+  if (inv.expiresAt.getTime() < Date.now())
+    return c.json({ error: { code: "invitation_expired", message: "Expired" } }, 410);
+  return c.json({
+    invitation: {
+      email: inv.email,
+      name: inv.name,
+      roleCode: inv.roleCode,
+      superAdmin: inv.superAdmin,
+      expiresAt: inv.expiresAt.toISOString(),
+    },
+  });
+});
+
+/**
+ * Accept a platform-admin invitation:
+ *   1. Look up by token, validate.
+ *   2. Sign the user up via Better Auth on the invitation's email.
+ *   3. Apply the platform-role binding + optional super-admin bit.
+ */
+publicRouter.post(
+  "/platform-invitations/accept",
+  zValidator("json", platformInvitationAcceptSchema),
+  async (c) => {
+    const { token, name, password } = c.req.valid("json");
+    const inv = await findPlatformInvitationByToken(db, token);
+    if (!inv)
+      return c.json({ error: { code: "invitation_not_found", message: "Not found" } }, 404);
+    if (inv.revokedAt)
+      return c.json({ error: { code: "invitation_revoked", message: "Revoked" } }, 410);
+    if (inv.acceptedAt)
+      return c.json({ error: { code: "invitation_already_accepted", message: "Used" } }, 410);
+    if (inv.expiresAt.getTime() < Date.now())
+      return c.json({ error: { code: "invitation_expired", message: "Expired" } }, 410);
+
+    let userId: string;
+    try {
+      const result = await auth.api.signUpEmail({
+        body: { name, email: inv.email, password },
+        headers: c.req.raw.headers,
+        asResponse: false,
+      });
+      userId = result.user.id;
+    } catch (err) {
+      log.warn(
+        { err, email: inv.email },
+        "signUpEmail failed during platform invitation accept",
+      );
+      return c.json(
+        { error: { code: "signup_failed", message: "Could not create account." } },
+        400,
+      );
+    }
+
+    try {
+      const applied = await applyAcceptedPlatformInvitation(db, {
+        invitationId: inv.id,
+        userId,
+      });
+      return c.json({
+        status: "accepted",
+        roleCode: applied.roleCode,
+        superAdmin: applied.superAdmin,
+      });
+    } catch (err) {
+      if (err instanceof PlatformInvitationError) {
+        return c.json({ error: { code: err.code, message: err.message } }, 409);
+      }
+      throw err;
+    }
+  },
+);

@@ -6,11 +6,12 @@
 import {
   auditEvents,
   invitations,
+  platformRoleBindings,
   user as userTable,
   zones,
 } from "@stewardledger/db/schema";
 import { ZONE_ROLES } from "@stewardledger/shared";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app";
 import { auth } from "../auth";
@@ -368,3 +369,117 @@ describe("admin zone onboarding routes", () => {
     expect(after.regionNameUnverified).not.toBeNull();
   });
 });
+
+describe("admin platform-role gating", () => {
+  // A second describe to keep the scenario data isolated from the
+  // onboarding suite above. Each test seeds its own user and role
+  // binding and cleans them up in afterAll.
+  const cleanupUserIds: string[] = [];
+  const cleanupBindings: string[] = [];
+
+  beforeAll(async () => {
+    if (!process.env.DATABASE_URL?.includes("_test")) {
+      throw new Error("admin.test.ts requires a *_test DATABASE_URL");
+    }
+  });
+
+  afterAll(async () => {
+    if (cleanupBindings.length > 0) {
+      await db.delete(platformRoleBindings).where(inArray(platformRoleBindings.id, cleanupBindings));
+    }
+    if (cleanupUserIds.length > 0) {
+      for (const id of cleanupUserIds) {
+        await db.execute(sql`delete from "user" where id = ${id}`);
+      }
+    }
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  async function seedSupportAdmin(): Promise<{ id: string; email: string }> {
+    const id = `u-sup-${unique()}`;
+    const email = `support+${unique()}@example.com`;
+    await db.insert(userTable).values({ id, email, emailVerified: true, isSuperAdmin: false });
+    const [binding] = await db
+      .insert(platformRoleBindings)
+      .values({ userId: id, roleCode: "support_admin" })
+      .returning({ id: platformRoleBindings.id });
+    cleanupUserIds.push(id);
+    cleanupBindings.push(binding.id);
+    return { id, email };
+  }
+
+  it("support_admin reads tenant zone listing", async () => {
+    const sup = await seedSupportAdmin();
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(
+      fakeSession(sup.id, sup.email),
+    );
+    const res = await adminCall("/api/admin/zones");
+    expect(res.status).toBe(200);
+  });
+
+  it("support_admin reads a specific tenant zone", async () => {
+    const sup = await seedSupportAdmin();
+    // Need a zone to read; reuse the demo-river-ng-style fixture by
+    // creating one via the super-admin path. To keep this test
+    // independent, just insert a minimal zone directly.
+    const slug = `sup-zone-${unique()}`;
+    const [zone] = await db
+      .insert(zones)
+      .values({
+        slug,
+        name: `Support Test ${unique()}`,
+        countryCode: "GB",
+        defaultCurrencyCode: "GBP",
+        defaultTimeZone: "Europe/London",
+        regionNameUnverified: `Support Region ${unique()}`,
+        status: "active",
+      })
+      .returning({ id: zones.id });
+    try {
+      vi.spyOn(auth.api, "getSession").mockResolvedValue(
+        fakeSession(sup.id, sup.email),
+      );
+      const res = await adminCall(`/api/admin/zones/${encodeURIComponent(slug)}`);
+      expect(res.status).toBe(200);
+    } finally {
+      await db.execute(sql`delete from zones where id = ${zone.id}`);
+    }
+  });
+
+  it("support_admin cannot invite a zone (403)", async () => {
+    const sup = await seedSupportAdmin();
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(
+      fakeSession(sup.id, sup.email),
+    );
+    const res = await adminCall("/api/admin/zones/invite", {
+      method: "POST",
+      body: {
+        name: `No Permit ${unique()}`,
+        slug: `nop-${unique()}`,
+        countryCode: "GB",
+        timeZone: "Europe/London",
+        defaultCurrency: "GBP",
+        fiscalYearStartMonth: 1,
+        ministryYearStartMonth: 3,
+        regionNameUnverified: `Nope Region ${unique()}`,
+        primaryContactName: "Owner",
+        primaryContactEmail: `nope+${unique()}@example.com`,
+      },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("support_admin cannot create a region (403 via inline gate)", async () => {
+    const sup = await seedSupportAdmin();
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(
+      fakeSession(sup.id, sup.email),
+    );
+    const res = await adminCall("/api/admin/regions", {
+      method: "POST",
+      body: { name: `Forbidden Region ${unique()}` },
+    });
+    expect(res.status).toBe(403);
+  });
+});
+

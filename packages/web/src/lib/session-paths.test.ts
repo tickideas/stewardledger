@@ -11,6 +11,7 @@ import {
   isSafeInternalPath,
   isSuperAdminOnlyPath,
   landingInputFromServerSession,
+  platformInviteLandingPath,
   primaryRole,
   PROTECTED_PREFIXES,
   PUBLIC_PREFIXES,
@@ -65,11 +66,16 @@ describe("isSafeInternalPath", () => {
 });
 
 describe("isSuperAdminOnlyPath", () => {
-  it("matches only the zones admin surface", () => {
+  it("matches the zones admin surface", () => {
     expect(isSuperAdminOnlyPath("/admin/zones")).toBe(true);
     expect(isSuperAdminOnlyPath("/admin/zones/demo-grace-uk")).toBe(true);
     expect(isSuperAdminOnlyPath("/admin/regions")).toBe(false);
     expect(isSuperAdminOnlyPath("/admin/zonesish")).toBe(false);
+  });
+  it("matches the administrators admin surface", () => {
+    expect(isSuperAdminOnlyPath("/admin/administrators")).toBe(true);
+    expect(isSuperAdminOnlyPath("/admin/administrators/u-123")).toBe(true);
+    expect(isSuperAdminOnlyPath("/admin/administratorsish")).toBe(false);
   });
 });
 
@@ -383,3 +389,40 @@ describe("route partitioning", () => {
     expect(unclassified).toEqual([]);
   });
 });
+
+describe("platformInviteLandingPath", () => {
+  it("routes super-admin invitees to /admin/zones", () => {
+    expect(
+      platformInviteLandingPath({ roleCode: "support_admin", superAdmin: true }),
+    ).toBe("/admin/zones");
+  });
+  it("routes support_admin to /account until SSR carries platform-role bindings", () => {
+    // The API gate admits support_admin to /admin/zones, but the web
+    // root layout still treats /admin/zones as super-admin-only (the
+    // session shape does not yet carry platformRoles). Land them on
+    // /account so onboarding does not 303 them off a freshly-accepted
+    // invitation. See the comment on platformInviteLandingPath().
+    expect(
+      platformInviteLandingPath({ roleCode: "support_admin", superAdmin: false }),
+    ).toBe("/account");
+  });
+  it("routes region_curator to /account until SSR carries platform-role bindings", () => {
+    // Web /admin/* gates require super_admin OR a zone/chapter binding.
+    // A region_curator invitee may have neither, so /admin/regions
+    // would 303 them off. See the comment on platformInviteLandingPath().
+    expect(
+      platformInviteLandingPath({ roleCode: "region_curator", superAdmin: false }),
+    ).toBe("/account");
+  });
+  it("routes billing_admin to /account until subscriptions ship", () => {
+    expect(
+      platformInviteLandingPath({ roleCode: "billing_admin", superAdmin: false }),
+    ).toBe("/account");
+  });
+  it("falls back to /account on an unknown role", () => {
+    expect(
+      platformInviteLandingPath({ roleCode: "future_role", superAdmin: false }),
+    ).toBe("/account");
+  });
+});
+
