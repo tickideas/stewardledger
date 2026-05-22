@@ -33,15 +33,30 @@
     countryCode: string | null;
     dateFrom: string;
     dateTo: string | null;
+    groupId: string | null;
     createdAt: string;
     updatedAt: string;
     profile: ChapterProfile;
+  };
+  type GroupRow = { id: string; slug: string; name: string };
+  type GroupHistoryItem = {
+    id: string;
+    groupId: string;
+    groupName: string;
+    dateFrom: string;
+    dateTo: string | null;
   };
 
   const adminRoles = new Set(["zone_owner", "zone_admin"]);
 
   let detail = $state<Chapter | null>(null);
   let auth = $state<AuthorizedContext | null>(null);
+  let allGroups = $state<GroupRow[]>([]);
+  let groupHistory = $state<GroupHistoryItem[]>([]);
+  let moveGroupId = $state("");
+  let moveEffectiveDate = $state("");
+  let moving = $state(false);
+  let moveError = $state<string | null>(null);
   let loading = $state(true);
   let loadError = $state<string | null>(null);
   let saveError = $state<string | null>(null);
@@ -68,6 +83,43 @@
   const canEdit = $derived(
     auth?.isPlatformAdmin === true || auth?.roleCodes.some((role) => adminRoles.has(role)) === true,
   );
+  const groupNameById = $derived(new Map(allGroups.map((g) => [g.id, g.name])));
+  const currentGroup = $derived(
+    detail?.groupId ? allGroups.find((g) => g.id === detail!.groupId) ?? null : null,
+  );
+
+  async function moveGroup(e: SubmitEvent) {
+    e.preventDefault();
+    if (!detail || !moveGroupId) return;
+    moving = true;
+    moveError = null;
+    try {
+      await api.post(`/api/tenant/chapters/${detail.id}/move-group`, {
+        groupId: moveGroupId,
+        effectiveDate: moveEffectiveDate || undefined,
+      });
+      const [chapterRes, historyRes] = await Promise.all([
+        api.get<{ chapter: Chapter }>(`/api/tenant/chapters/${detail.id}`),
+        api.get<{ items: GroupHistoryItem[] }>(`/api/tenant/chapters/${detail.id}/group-history`),
+      ]);
+      detail = chapterRes.chapter;
+      groupHistory = historyRes.items;
+      moveGroupId = "";
+      moveEffectiveDate = "";
+      flash("Chapter moved to new group.");
+    } catch (err) {
+      let msg = err instanceof ApiError ? err.message : "Could not move chapter.";
+      if (err instanceof ApiError) {
+        if (err.code === "history_violation") msg = err.message;
+        else if (err.code === "group_not_found") msg = "Group not in this zone.";
+        else if (err.code === "groups_not_enabled")
+          msg = "Groups are not enabled for this zone yet.";
+      }
+      moveError = msg;
+    } finally {
+      moving = false;
+    }
+  }
 
   function seedProfile(profile: ChapterProfile) {
     line1 = profile.address.line1 ?? "";
@@ -151,12 +203,19 @@
   async function load(chapterId: string, signal: AbortSignal) {
     loading = true;
     try {
-      const [chapterRes, meRes] = await Promise.all([
+      const [chapterRes, meRes, groupsRes, historyRes] = await Promise.all([
         api.get<{ chapter: Chapter }>(`/api/tenant/chapters/${chapterId}`, signal),
         api.get<{ auth: AuthorizedContext }>("/api/tenant/me", signal),
+        api.get<{ items: GroupRow[] }>("/api/tenant/groups", signal),
+        api.get<{ items: GroupHistoryItem[] }>(
+          `/api/tenant/chapters/${chapterId}/group-history`,
+          signal,
+        ),
       ]);
       detail = chapterRes.chapter;
       auth = meRes.auth;
+      allGroups = groupsRes.items;
+      groupHistory = historyRes.items;
       seedProfile(chapterRes.chapter.profile);
       loadError = null;
     } catch (err) {
@@ -366,6 +425,78 @@
               <span class="text-[var(--ink-mute)]">Not recorded</span>
             {/if}
           </p>
+        </section>
+
+        <section class="sl-card overflow-hidden">
+          <div class="border-b border-[var(--rule)] bg-[var(--paper-soft)] px-6 py-3.5">
+            <span class="sl-eyebrow">Group</span>
+          </div>
+          <div class="px-6 py-5">
+            <dt class="sl-eyebrow" style="font-size:10.5px">Current group</dt>
+            <dd class="mt-2 text-[15px] text-[var(--ink)]">
+              {#if currentGroup}
+                {currentGroup.name}
+                <span class="sl-mono text-[12px] text-[var(--ink-mute)]" style="letter-spacing:0.04em">· {currentGroup.slug}</span>
+              {:else}
+                <span class="text-[var(--ink-mute)]">Not assigned to a group</span>
+              {/if}
+            </dd>
+          </div>
+          {#if groupHistory.length > 0}
+            <div class="border-t border-[var(--rule)]">
+              <table class="sl-table">
+                <thead>
+                  <tr>
+                    <th>Group</th>
+                    <th>From</th>
+                    <th>To</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each groupHistory as h (h.id)}
+                    <tr>
+                      <td class="text-[13.5px] text-[var(--ink)]">{h.groupName}</td>
+                      <td class="sl-mono text-[12px] text-[var(--ink-soft)]">{formatDate(h.dateFrom)}</td>
+                      <td class="sl-mono text-[12px] text-[var(--ink-soft)]">{h.dateTo ? formatDate(h.dateTo) : "—"}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
+          {#if canEdit}
+            {#if detail.groupId}
+              <form class="grid grid-cols-12 gap-3 border-t border-[var(--rule)] px-6 py-5" onsubmit={moveGroup}>
+                <label class="col-span-12 sm:col-span-6">
+                  <span class="sl-eyebrow" style="font-size:10.5px">Move to group</span>
+                  <select bind:value={moveGroupId} class="sl-select mt-1.5">
+                    <option value="">(Select group…)</option>
+                    {#each allGroups as g (g.id)}
+                      {#if g.id !== detail.groupId}
+                        <option value={g.id}>{g.name}</option>
+                      {/if}
+                    {/each}
+                  </select>
+                </label>
+                <label class="col-span-8 sm:col-span-4">
+                  <span class="sl-eyebrow" style="font-size:10.5px">Effective date</span>
+                  <input type="date" bind:value={moveEffectiveDate} class="sl-input mt-1.5" />
+                </label>
+                <div class="col-span-4 flex items-end sm:col-span-2">
+                  <button type="submit" disabled={!moveGroupId || moving} class="sl-btn sl-btn-primary w-full justify-center">
+                    {moving ? "Moving…" : "Move"}
+                  </button>
+                </div>
+                {#if moveError}
+                  <p class="col-span-12 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{moveError}</p>
+                {/if}
+              </form>
+            {:else}
+              <p class="border-t border-[var(--rule)] px-6 py-5 text-[13px] text-[var(--ink-mute)]">
+                This chapter is not assigned to a group. Use the chapter list to assign one.
+              </p>
+            {/if}
+          {/if}
         </section>
       </div>
 

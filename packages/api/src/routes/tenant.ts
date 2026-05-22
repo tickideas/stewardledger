@@ -180,6 +180,7 @@ tenantRouter.get("/chapters", async (c) => {
       dateFrom: chapters.dateFrom,
       dateTo: chapters.dateTo,
       createdAt: chapters.createdAt,
+      groupId: chapters.groupId,
       activeMemberCount: sql<number>`count(${members.id})::int`,
     })
     .from(chapters)
@@ -332,6 +333,7 @@ tenantRouter.get("/chapters/:id", async (c) => {
       dateFrom: chapters.dateFrom,
       dateTo: chapters.dateTo,
       metadata: chapters.metadata,
+      groupId: chapters.groupId,
       createdAt: chapters.createdAt,
       updatedAt: chapters.updatedAt,
     })
@@ -362,6 +364,7 @@ tenantRouter.get("/chapters/:id", async (c) => {
       countryCode: row.countryCode,
       dateFrom: row.dateFrom,
       dateTo: row.dateTo,
+      groupId: row.groupId,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
       banking,
