@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, ApiError } from "$lib/api";
+  import { api, ApiError, isAbortError } from "$lib/api";
 
   type Row = {
     id: string;
@@ -55,6 +55,10 @@
   let rows = $state<Row[]>([]);
   let loading = $state(false);
   let loadError = $state<string | null>(null);
+  // Race guard against stale fetches: if the initial on-mount search
+  // resolves after a submitted refined search, only the newer request
+  // may mutate rows/loading state.
+  let refreshToken = 0;
   let expanded = $state(new Set<string>());
 
   function toggleExpanded(id: string) {
@@ -63,12 +67,15 @@
     expanded = new Set(expanded);
   }
 
-  async function search(): Promise<void> {
+  async function search(signal?: AbortSignal): Promise<void> {
     if (!dateFrom || !dateTo) return;
     if (dateFrom > dateTo) {
       loadError = "From-date must be on or before to-date.";
+      rows = [];
+      expanded = new Set();
       return;
     }
+    const my = ++refreshToken;
     loading = true;
     loadError = null;
     try {
@@ -81,13 +88,19 @@
       if (entityId.trim()) params.set("entityId", entityId.trim());
       const res = await api.get<ListResponse>(
         `/api/admin/audit-events?${params.toString()}`,
+        signal,
       );
+      if (my !== refreshToken) return;
       rows = res.items;
+      expanded = new Set();
     } catch (err) {
+      if (isAbortError(err)) return;
+      if (my !== refreshToken) return;
       loadError = err instanceof ApiError ? err.message : "Could not load audit events.";
       rows = [];
+      expanded = new Set();
     } finally {
-      loading = false;
+      if (!signal?.aborted && my === refreshToken) loading = false;
     }
   }
 
@@ -121,7 +134,9 @@
   }
 
   onMount(() => {
-    void search();
+    const controller = new AbortController();
+    void search(controller.signal);
+    return () => controller.abort();
   });
 </script>
 
