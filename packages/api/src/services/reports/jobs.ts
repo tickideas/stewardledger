@@ -284,6 +284,7 @@ async function resolveAuthAtRunTime(
   const bindings = await database
     .select({
       chapterId: userRoleBindings.chapterId,
+      groupId: userRoleBindings.groupId,
       roleCode: roles.code,
     })
     .from(userRoleBindings)
@@ -309,8 +310,9 @@ async function resolveAuthAtRunTime(
     chapterIds: Array.from(
       new Set(bindings.map((b) => b.chapterId).filter((c): c is string => c !== null)),
     ),
-    // TODO(groups-hierarchy Task 9): query user_role_bindings.group_id and populate.
-    groupIds: [],
+    groupIds: Array.from(
+      new Set(bindings.map((b) => b.groupId).filter((g): g is string => g !== null)),
+    ),
     isPlatformAdmin: userRow.isSuperAdmin,
   };
 }

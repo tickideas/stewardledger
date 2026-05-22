@@ -7,7 +7,7 @@
 // "who is this and what can they do in this zone".
 
 import type { AuthorizedContext } from "@stewardledger/shared";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { Context, MiddlewareHandler } from "hono";
 import {
   chapters,
@@ -73,6 +73,7 @@ export const requireTenantAuth: MiddlewareHandler = async (c: Context, next) => 
   const bindings = await db
     .select({
       chapterId: userRoleBindings.chapterId,
+      groupId: userRoleBindings.groupId,
       roleCode: roles.code,
     })
     .from(userRoleBindings)
@@ -95,6 +96,9 @@ export const requireTenantAuth: MiddlewareHandler = async (c: Context, next) => 
   const chapterIds = Array.from(
     new Set(bindings.map((b) => b.chapterId).filter((id): id is string => id !== null)),
   );
+  const groupIds = Array.from(
+    new Set(bindings.map((b) => b.groupId).filter((id): id is string => id !== null)),
+  );
 
   const ctx: AuthorizedContext = {
     userId: sessionUser.id,
@@ -102,8 +106,7 @@ export const requireTenantAuth: MiddlewareHandler = async (c: Context, next) => 
     regionId: tenant.regionId,
     roleCodes,
     chapterIds,
-    // TODO(groups-hierarchy Task 9): query user_role_bindings.group_id and populate.
-    groupIds: [],
+    groupIds,
     isPlatformAdmin: sessionUser.isSuperAdmin,
   };
   c.set("auth", ctx);
@@ -210,4 +213,41 @@ export async function requireChapterScope(
     code: "forbidden",
     message: "No access to this chapter",
   };
+}
+
+/**
+ * The set of chapter ids the caller may legitimately read in their resolved
+ * zone. This is the single chokepoint every tenant read uses to narrow
+ * results.
+ *
+ * Returns:
+ *   - { kind: "all" }              — caller has a zone-wide role; skip narrowing.
+ *   - { kind: "list", ids: [...] } — restrict reads to these chapter ids
+ *                                    (may be empty if the user has bindings
+ *                                    that resolve to zero chapters).
+ *
+ * Group-tier reads join through `chapters` to expand each bound group_id
+ * into its current member chapters. Mixed bindings union with `chapterIds`.
+ */
+export async function visibleChapterIds(
+  ctx: AuthorizedContext,
+  zoneWideRoles: readonly string[],
+): Promise<{ kind: "all" } | { kind: "list"; ids: string[] }> {
+  if (hasAnyRole(ctx, ...zoneWideRoles)) return { kind: "all" };
+
+  const ids = new Set<string>(ctx.chapterIds);
+  if (ctx.groupIds.length > 0) {
+    const rows = await db
+      .select({ id: chapters.id })
+      .from(chapters)
+      .where(
+        and(
+          eq(chapters.zoneId, ctx.zoneId),
+          isNull(chapters.deletedAt),
+          inArray(chapters.groupId, ctx.groupIds),
+        ),
+      );
+    for (const r of rows) ids.add(r.id);
+  }
+  return { kind: "list", ids: Array.from(ids) };
 }
