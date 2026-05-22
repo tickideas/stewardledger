@@ -178,14 +178,31 @@ export async function grantRole(
         `User already has the ${args.roleCode} role.`,
       );
     }
-    const [row] = await tx
-      .insert(platformRoleBindings)
-      .values({
-        userId: target.id,
-        roleCode: args.roleCode,
-        grantedByUserId: actor.actorUserId,
-      })
-      .returning({ id: platformRoleBindings.id });
+    // The activeBindingId check above is a fast-path. A concurrent
+    // grant for the same (user_id, role_code) could pass both checks
+    // and then race on the partial unique index
+    // `platform_role_bindings_unique_idx`. Translate the
+    // unique-violation into the typed `already_granted` so the loser
+    // request gets a deterministic 409 instead of a raw 500.
+    let row: { id: string };
+    try {
+      [row] = await tx
+        .insert(platformRoleBindings)
+        .values({
+          userId: target.id,
+          roleCode: args.roleCode,
+          grantedByUserId: actor.actorUserId,
+        })
+        .returning({ id: platformRoleBindings.id });
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        throw new AdminError(
+          "already_granted",
+          `User already has the ${args.roleCode} role.`,
+        );
+      }
+      throw err;
+    }
     await writeAudit(tx, {
       zoneId: null,
       actorUserId: actor.actorUserId,
@@ -344,4 +361,19 @@ export async function activePlatformRoles(
       ),
     );
   return rows.map((r) => r.roleCode);
+}
+
+/**
+ * Detect a Postgres unique_violation (SQLSTATE 23505). `postgres-js`
+ * exposes the code directly on the error; some drizzle wrappers nest
+ * it under `cause`.
+ */
+function isUniqueViolation(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const direct = err as { code?: unknown; cause?: unknown };
+  if (direct.code === "23505") return true;
+  const cause = direct.cause;
+  return Boolean(
+    cause && typeof cause === "object" && (cause as { code?: unknown }).code === "23505",
+  );
 }

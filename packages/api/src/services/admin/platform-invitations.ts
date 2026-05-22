@@ -121,18 +121,34 @@ export async function createPlatformInvitation(
     const tokenHash = hashInvitationToken(token);
     const expiresAt = new Date(Date.now() + INVITATION_VALIDITY_HOURS * 60 * 60 * 1000);
 
-    const [row] = await tx
-      .insert(platformInvitations)
-      .values({
-        email,
-        name: args.name,
-        roleCode: args.roleCode,
-        superAdmin: args.superAdmin ?? false,
-        tokenHash,
-        createdByUserId: args.createdByUserId,
-        expiresAt,
-      })
-      .returning({ id: platformInvitations.id });
+    let row: { id: string };
+    try {
+      [row] = await tx
+        .insert(platformInvitations)
+        .values({
+          email,
+          name: args.name,
+          roleCode: args.roleCode,
+          superAdmin: args.superAdmin ?? false,
+          tokenHash,
+          createdByUserId: args.createdByUserId,
+          expiresAt,
+        })
+        .returning({ id: platformInvitations.id });
+    } catch (err) {
+      // Race on the partial unique index `platform_invitations_open_unique_idx`:
+      // two concurrent invites for the same (email, role) could both
+      // pass the revoke step and contend on the insert. Map to a
+      // typed conflict so the route layer can return 409 instead of
+      // a raw 500.
+      if (isUniqueViolation(err)) {
+        throw new PlatformInvitationError(
+          "email_already_user",
+          "An open invitation for this email + role already exists. Revoke it before re-issuing.",
+        );
+      }
+      throw err;
+    }
 
     await writeAudit(tx, {
       zoneId: null,
@@ -322,11 +338,21 @@ export async function applyAcceptedPlatformInvitation(
       )
       .limit(1);
     if (!existing) {
-      await tx.insert(platformRoleBindings).values({
-        userId: args.userId,
-        roleCode: inv.roleCode,
-        grantedByUserId: inv.createdByUserId,
-      });
+      try {
+        await tx.insert(platformRoleBindings).values({
+          userId: args.userId,
+          roleCode: inv.roleCode,
+          grantedByUserId: inv.createdByUserId,
+        });
+      } catch (err) {
+        // A concurrent accept (or a stray grantRole) for the same
+        // (user, role) could land between the SELECT above and this
+        // INSERT and trip the partial unique index. Treat that as
+        // idempotent success — the user ends up with the right role
+        // either way, and the audit row below still records the
+        // accept.
+        if (!isUniqueViolation(err)) throw err;
+      }
     }
 
     if (inv.superAdmin) {
@@ -356,4 +382,14 @@ export async function applyAcceptedPlatformInvitation(
 
     return { roleCode: inv.roleCode, superAdmin: inv.superAdmin };
   });
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const direct = err as { code?: unknown; cause?: unknown };
+  if (direct.code === "23505") return true;
+  const cause = direct.cause;
+  return Boolean(
+    cause && typeof cause === "object" && (cause as { code?: unknown }).code === "23505",
+  );
 }
