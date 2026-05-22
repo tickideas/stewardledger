@@ -83,6 +83,11 @@ describe("isSuperAdminOnlyPath", () => {
     expect(isSuperAdminOnlyPath("/admin/administrators/u-123")).toBe(true);
     expect(isSuperAdminOnlyPath("/admin/administratorsish")).toBe(false);
   });
+  it("matches the platform audit surface", () => {
+    expect(isSuperAdminOnlyPath("/admin/audit")).toBe(true);
+    expect(isSuperAdminOnlyPath("/admin/audit/anything")).toBe(true);
+    expect(isSuperAdminOnlyPath("/admin/auditish")).toBe(false);
+  });
 });
 
 describe("authenticatedLandingPath", () => {

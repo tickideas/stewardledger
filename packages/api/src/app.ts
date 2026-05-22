@@ -6,6 +6,7 @@ import { cors } from "hono/cors";
 import { auth } from "./auth";
 import { env } from "./env";
 import { adminAdministratorsRouter } from "./routes/admin-administrators";
+import { adminAuditRouter } from "./routes/admin-audit";
 import { adminRouter } from "./routes/admin";
 import { healthRouter } from "./routes/health";
 import { publicRouter } from "./routes/public";
@@ -33,6 +34,7 @@ export function createApp() {
   app.route("/api/public", publicRouter);
   app.route("/api/tenant", tenantRouter);
   app.route("/api/admin/administrators", adminAdministratorsRouter);
+  app.route("/api/admin/audit-events", adminAuditRouter);
   app.route("/api/admin", adminRouter);
 
   app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));

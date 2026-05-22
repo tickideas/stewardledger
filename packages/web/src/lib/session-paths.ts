@@ -108,18 +108,12 @@ export function platformInviteLandingPath(args: {
 export function isSuperAdminOnlyPath(pathname: string): boolean {
   return (
     pathname === "/admin/administrators" ||
-    pathname.startsWith("/admin/administrators/")
+    pathname.startsWith("/admin/administrators/") ||
+    pathname === "/admin/audit" ||
+    pathname.startsWith("/admin/audit/")
   );
 }
 
-/**
- * Paths under the `/admin/*` surface that require *some* platform
- * footprint — super-admin, any platform-role binding, or a zone
- * binding (because /admin/regions has a region-curator-via-zone use
- * case carried over from before platform_role_bindings existed). The
- * admin layout SSR gate enforces this; the root gate only handles the
- * super-admin-only subset.
- */
 /**
  * Per-path admission predicate for the `/admin/*` shell. Mirrors the
  * API allow-lists so a non-super-admin who can use one route doesn't
