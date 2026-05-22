@@ -325,7 +325,7 @@ Zone admins can add members one at a time or upload a CSV roster from the Member
 
 ### 12.2 Invitations
 
-All user onboarding goes through the `invitations` table (see DOMAIN-MODEL.md §2.6):
+All user onboarding goes through the `invitations` table (see DOMAIN-MODEL.md §2.7):
 
 - **Admin-issued zone onboarding** (`POST /api/admin/zones/invite`, super-admin only) creates the zone in `pending_setup`, seeds roles/lookups/giving setup/periods, writes a `zone_owner` invitation pinned to the primary contact email, and emails an opaque 32-byte URL-safe token. The raw token only appears in the email; the DB stores its SHA-256 hash. Every call writes a `zone.invite` audit event attributing the action to the admin.
 - **Owner-invite resend** (`POST /api/admin/zones/:slug/owner-invitations`, super-admin only, while the zone is still `pending_setup`) revokes every open `zone_owner` invitation for the zone and emits a fresh one. Use this to correct a wrong email or replace a lost/expired link — the old token stops working immediately. Writes a `zone.owner_invite.resend` audit event recording the revoked invitation ids.

@@ -143,7 +143,41 @@ Lightweight per-chapter presets for the Sunday-close flow. Managed via
 `?templateId=` deep-links and a stale referenced id (e.g. a deleted
 payment method) is silently ignored at apply-time.
 
-### 2.5 Roles & bindings
+### 2.5 Groups (sub-grouping of chapters)
+
+Groups are an optional, **per-zone opt-in** tier between Zone and Chapter — a zone-scoped collection of chapters. See the full design in `docs/superpowers/specs/2026-05-22-groups-hierarchy-design.md`.
+
+The feature is gated by `zones.groups_enabled` (boolean, default `false`). The toggle is **one-way** (`false → true`); flipping it on requires every chapter in the zone to already be assigned to a group (enforced in the enable transaction).
+
+```sql
+groups
+  id uuid pk
+  zone_id uuid not null references zones(id)
+  slug text not null
+  name text not null
+  metadata jsonb not null default '{}'
+  created_at, updated_at, deleted_at timestamptz
+  unique (zone_id, id)                          -- composite FK target for chapter_group_history
+  -- partial unique (zone_id, slug)        where deleted_at is null
+  -- partial unique (zone_id, lower(name)) where deleted_at is null
+
+chapter_group_history
+  id uuid pk
+  chapter_id uuid not null references chapters(id)
+  zone_id uuid not null
+  group_id uuid not null
+  date_from date not null
+  date_to   date null                           -- null = currently open segment
+  foreign key (zone_id, group_id) references groups(zone_id, id)
+  index (chapter_id, date_from)
+  -- partial unique (chapter_id) where date_to is null  → exactly one open segment per chapter
+```
+
+Group roles (see PRD §6): `group_admin` (chapter-admin-equivalent edit rights restricted to chapters in the bound group(s)) and `group_pastor_viewer` (read-only across the bound group(s)).
+
+Service-layer invariants live in `packages/api/src/services/groups.ts`: name and slug uniqueness (case-insensitive on name), pre-enable vs. post-enable distinction, soft-delete only when the group has no open chapter assignments, and race-safety via Postgres advisory locks around assignment moves.
+
+### 2.6 Roles & bindings
 
 ```sql
 roles
@@ -179,7 +213,7 @@ platform_role_bindings
   granted_at, revoked_at
 ```
 
-### 2.6 Invitations
+### 2.7 Invitations
 
 ```sql
 invitations
@@ -808,7 +842,7 @@ This is **not a migration map** — StewardLedger does not import legacy data. I
 | Legacy concept | StewardLedger concept |
 |---|---|
 | Single-DB per zone deployment | Multi-tenant `zones` rows in shared DB |
-| `ChurchGroup` (sub-grouping inside a zone, sometimes used as a region label) | Either dropped, or modeled as `region` (curated reference data) |
+| `ChurchGroup` (sub-grouping inside a zone) | Reintroduced as first-class `groups` table (see §2.5). Per-zone opt-in via `zones.groups_enabled`. |
 | `Chapter` | `chapters` |
 | `Member`, `MemberAddress` | `members`, `member_addresses` |
 | `GivingCategory`, `GivingType` | same names, multi-tenant |

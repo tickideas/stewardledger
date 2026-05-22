@@ -186,7 +186,7 @@ The legacy dedup heuristics (name, name+chapter, name with diff chapter, invalid
 | `money` SQL Server type | Replaced by `numeric(19,4)` + explicit `currency_code`. |
 | `float` for `cto.FinancialTarget` amounts | Replaced by `numeric(19,2)`. |
 | Mutable financial records | Replaced by posted-immutable + reversal. |
-| Ambiguous `ChurchGroup` (sometimes region-like, sometimes department-like) | Two distinct concepts split: `region` (reference data) and any department/group concept can be added later as a dedicated table. |
+| Ambiguous `ChurchGroup` (sometimes region-like, sometimes department-like) | `region` (reference data) holds the geographic-tier concept. The department/group concept is the StewardLedger `groups` table (see DOMAIN-MODEL.md §2.5). Per-zone opt-in. |
 | ASP.NET Identity password hashes | Replaced by Better Auth (email OTP / magic link / password). Legacy hashes wouldn't migrate cleanly anyway. |
 | EPPlus non-commercial | Replaced by `exceljs` (MIT, no licensing risk). |
 | DinkToPdf / wkhtmltopdf | Replaced by Playwright Chromium HTML→PDF. |

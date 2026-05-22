@@ -304,7 +304,16 @@ Apply to a single chapter only.
 | `chapter_bookkeeper` | Data entry on contributions and envelopes; cannot post/approve. |
 | `chapter_pastor_viewer` | Read-only chapter summaries. |
 
-### 6.4 Permissions model
+### 6.4 Group-level roles
+
+Apply to a group (a zone-scoped collection of chapters). Only meaningful when the zone has `groups_enabled = true`. See DOMAIN-MODEL.md §2.5.
+
+| Role | Description |
+|---|---|
+| `group_admin` | Chapter-admin-equivalent edit rights restricted to chapters in their bound group(s). Can invite chapter-tier roles into chapters in their group. Read-only for contributions/imports. Cannot create or manage groups (zone-tier only). |
+| `group_pastor_viewer` | Read-only across all chapters in their bound group(s). Equivalent to `chapter_pastor_viewer` but scoped at the group level. |
+
+### 6.5 Permissions model
 
 Permissions are derived from role bindings (`user_id` × `zone_id` × optional `chapter_id` × `role`). The API middleware computes the effective permission set per request. Write actions on financial records always require an explicit role check; default is deny.
 
