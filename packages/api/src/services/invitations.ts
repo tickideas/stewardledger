@@ -15,6 +15,7 @@ import {
 import {
   BRAND_WORDMARK,
   CHAPTER_ROLES,
+  GROUP_ROLES,
   INVITATION_TOKEN_BYTES,
   INVITATION_VALIDITY_HOURS,
   ZONE_ROLES,
@@ -36,6 +37,7 @@ interface CreateArgs {
   email: string;
   roleCode: string;
   chapterId?: string | null;
+  groupId?: string | null;
   createdByUserId?: string | null;
 }
 
@@ -105,6 +107,7 @@ export async function createInvitation(
       email: args.email.toLowerCase(),
       roleCode: args.roleCode,
       chapterId: args.chapterId ?? null,
+      groupId: args.groupId ?? null,
       tokenHash,
       expiresAt,
       createdByUserId: args.createdByUserId ?? null,
@@ -121,6 +124,7 @@ export interface InvitationLookup {
   email: string;
   roleCode: string;
   chapterId: string | null;
+  groupId: string | null;
   expiresAt: Date;
   acceptedAt: Date | null;
   revokedAt: Date | null;
@@ -140,6 +144,7 @@ export async function findInvitationByToken(
       email: invitations.email,
       roleCode: invitations.roleCode,
       chapterId: invitations.chapterId,
+      groupId: invitations.groupId,
       expiresAt: invitations.expiresAt,
       acceptedAt: invitations.acceptedAt,
       revokedAt: invitations.revokedAt,
@@ -277,6 +282,10 @@ export async function discardOrphanedAuthUser(
 
 export function isChapterRole(code: string): boolean {
   return (Object.values(CHAPTER_ROLES) as string[]).includes(code);
+}
+
+export function isGroupRole(code: string): boolean {
+  return (Object.values(GROUP_ROLES) as string[]).includes(code);
 }
 
 /**

@@ -17,6 +17,7 @@ import {
 import {
   type AuthorizedContext,
   CHAPTER_ROLES,
+  GROUP_ROLES,
   chapterBankingSettingsSchema,
   chapterCreateSchema,
   chapterProfileSchema,
@@ -49,6 +50,7 @@ import {
   buildAcceptUrl,
   createInvitation,
   isChapterRole,
+  isGroupRole,
   revokeOpenInvitations,
 } from "../services/invitations";
 import { tenantContributionsRouter } from "./tenant-contributions";
@@ -973,25 +975,67 @@ tenantRouter.post("/invitations", zValidator("json", invitationCreateSchema), as
   const ctx = c.get("auth") as AuthorizedContext;
   const isZoneAdmin = hasAnyRole(ctx, ZONE_ROLES.ZONE_OWNER, ZONE_ROLES.ZONE_ADMIN);
   const isChapterAdmin = ctx.roleCodes.includes(CHAPTER_ROLES.CHAPTER_ADMIN);
-  if (!isZoneAdmin && !isChapterAdmin) {
+  const isGroupAdmin = ctx.roleCodes.includes(GROUP_ROLES.GROUP_ADMIN);
+  if (!isZoneAdmin && !isChapterAdmin && !isGroupAdmin) {
     return c.json({ error: { code: "forbidden", message: "Admin role required" } }, 403);
   }
   const input = c.req.valid("json");
 
-  // Chapter admins may only invite chapter-scope roles INTO a chapter they
-  // administer. Zone-scope role invites and any chapter they don't own
-  // require a zone admin.
+  // Disallow inviting someone as zone_owner via the team flow; ownership is
+  // bootstrapped at signup only.
+  if (input.roleCode === ZONE_ROLES.ZONE_OWNER) {
+    return c.json(
+      { error: { code: "owner_invite_forbidden", message: "Cannot invite a second owner" } },
+      400,
+    );
+  }
+
+  // Role-gate by admin scope:
+  // - group_admin (not also chapter_admin): chapter roles into chapters in
+  //   one of their bound groups only.
+  // - chapter_admin: chapter roles into one of their bound chapters only.
   if (!isZoneAdmin) {
-    if (!isChapterRole(input.roleCode)) {
-      return forbidden(c, "Chapter admins can only invite chapter roles");
-    }
-    if (!input.chapterId || !ctx.chapterIds.includes(input.chapterId)) {
-      return forbidden(c, "Chapter admins can only invite into their own chapter");
+    if (isGroupAdmin && !isChapterAdmin) {
+      if (!isChapterRole(input.roleCode)) {
+        return forbidden(c, "Group admins can only invite chapter roles");
+      }
+      if (!input.chapterId) {
+        return c.json(
+          { error: { code: "chapter_required", message: "chapterId required" } },
+          400,
+        );
+      }
+      const [chap] = await db
+        .select({ groupId: chapters.groupId })
+        .from(chapters)
+        .where(
+          and(
+            eq(chapters.id, input.chapterId),
+            eq(chapters.zoneId, ctx.zoneId),
+            isNull(chapters.deletedAt),
+          ),
+        )
+        .limit(1);
+      if (!chap) {
+        return c.json(
+          { error: { code: "chapter_not_found", message: "Chapter not in this zone" } },
+          404,
+        );
+      }
+      if (!chap.groupId || !ctx.groupIds.includes(chap.groupId)) {
+        return forbidden(c, "Chapter is not in your group");
+      }
+    } else if (isChapterAdmin) {
+      if (!isChapterRole(input.roleCode)) {
+        return forbidden(c, "Chapter admins can only invite chapter roles");
+      }
+      if (!input.chapterId || !ctx.chapterIds.includes(input.chapterId)) {
+        return forbidden(c, "Chapter admins can only invite into their own chapter");
+      }
     }
   }
 
-  // Cross-tenant fuzz guard: if the input has a chapterId, it MUST belong to
-  // this zone. The shared schema checks shape; the DB check enforces tenancy.
+  // Cross-tenant fuzz guards: ids must belong to this zone.
   if (input.chapterId) {
     const ok = await db
       .select({ id: chapters.id })
@@ -1005,23 +1049,46 @@ tenantRouter.post("/invitations", zValidator("json", invitationCreateSchema), as
       );
     }
   }
+  if (input.groupId) {
+    const ok = await db
+      .select({ id: groups.id })
+      .from(groups)
+      .where(
+        and(
+          eq(groups.id, input.groupId),
+          eq(groups.zoneId, ctx.zoneId),
+          isNull(groups.deletedAt),
+        ),
+      )
+      .limit(1);
+    if (!ok[0]) {
+      return c.json(
+        { error: { code: "group_not_found", message: "Group not in this zone" } },
+        404,
+      );
+    }
+  }
+
+  // Shape: group roles need groupId; chapter roles need chapterId; zone roles take neither.
+  if (isGroupRole(input.roleCode) && !input.groupId) {
+    return c.json(
+      { error: { code: "group_required", message: "groupId required for group roles" } },
+      400,
+    );
+  }
   if (isChapterRole(input.roleCode) && !input.chapterId) {
     return c.json(
       { error: { code: "chapter_required", message: "chapterId required for chapter roles" } },
       400,
     );
   }
-  if (!isChapterRole(input.roleCode) && input.chapterId) {
+  if (
+    !isGroupRole(input.roleCode) &&
+    !isChapterRole(input.roleCode) &&
+    (input.chapterId || input.groupId)
+  ) {
     return c.json(
-      { error: { code: "chapter_forbidden", message: "chapterId not allowed for this role" } },
-      400,
-    );
-  }
-  // Disallow inviting someone as zone_owner via the team flow; ownership is
-  // bootstrapped at signup only.
-  if (input.roleCode === ZONE_ROLES.ZONE_OWNER) {
-    return c.json(
-      { error: { code: "owner_invite_forbidden", message: "Cannot invite a second owner" } },
+      { error: { code: "scope_forbidden", message: "Zone roles take no chapter/group" } },
       400,
     );
   }
@@ -1039,6 +1106,7 @@ tenantRouter.post("/invitations", zValidator("json", invitationCreateSchema), as
       email: input.email,
       roleCode: input.roleCode,
       chapterId: input.chapterId ?? null,
+      groupId: input.groupId ?? null,
       createdByUserId: ctx.userId,
     });
     await writeAudit(tx, {
@@ -1047,7 +1115,12 @@ tenantRouter.post("/invitations", zValidator("json", invitationCreateSchema), as
       action: "invitation.create",
       entityType: "invitation",
       entityId: inv.id,
-      after: { email: input.email, roleCode: input.roleCode, chapterId: input.chapterId ?? null },
+      after: {
+        email: input.email,
+        roleCode: input.roleCode,
+        chapterId: input.chapterId ?? null,
+        groupId: input.groupId ?? null,
+      },
     });
     return inv;
   });
@@ -1072,24 +1145,38 @@ tenantRouter.post("/invitations/:id/revoke", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
   const isZoneAdmin = hasAnyRole(ctx, ZONE_ROLES.ZONE_OWNER, ZONE_ROLES.ZONE_ADMIN);
   const isChapterAdmin = ctx.roleCodes.includes(CHAPTER_ROLES.CHAPTER_ADMIN);
-  if (!isZoneAdmin && !isChapterAdmin) {
+  const isGroupAdmin = ctx.roleCodes.includes(GROUP_ROLES.GROUP_ADMIN);
+  if (!isZoneAdmin && !isChapterAdmin && !isGroupAdmin) {
     return c.json({ error: { code: "forbidden", message: "Admin role required" } }, 403);
   }
   const id = c.req.param("id");
 
-  // Chapter admins can only revoke invitations attached to a chapter they
-  // administer. Look it up first so we surface a clean 403 (vs returning
-  // the generic “not revocable” that revokeOpenInvitations gives back).
+  // Non-zone admins can only revoke invitations within their scope.
   if (!isZoneAdmin) {
     const [target] = await db
-      .select({ chapterId: invitations.chapterId })
+      .select({ chapterId: invitations.chapterId, groupId: invitations.groupId })
       .from(invitations)
       .where(and(eq(invitations.id, id), eq(invitations.zoneId, ctx.zoneId)))
       .limit(1);
     if (!target)
       return c.json({ error: { code: "not_found", message: "Invitation not found" } }, 404);
-    if (!target.chapterId || !ctx.chapterIds.includes(target.chapterId)) {
-      return forbidden(c, "Chapter admins can only revoke their own chapter's invitations");
+
+    if (isGroupAdmin && !isChapterAdmin) {
+      if (!target.chapterId) {
+        return forbidden(c, "Group admins can only revoke chapter invites");
+      }
+      const [chap] = await db
+        .select({ groupId: chapters.groupId })
+        .from(chapters)
+        .where(and(eq(chapters.id, target.chapterId), eq(chapters.zoneId, ctx.zoneId)))
+        .limit(1);
+      if (!chap?.groupId || !ctx.groupIds.includes(chap.groupId)) {
+        return forbidden(c, "Invitation is not in your group");
+      }
+    } else if (isChapterAdmin) {
+      if (!target.chapterId || !ctx.chapterIds.includes(target.chapterId)) {
+        return forbidden(c, "Chapter admins can only revoke their own chapter's invitations");
+      }
     }
   }
 
