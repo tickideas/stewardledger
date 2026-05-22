@@ -237,7 +237,7 @@ Deliverables (full list in [`REPORTS.md`](REPORTS.md)):
 - Statement import reconciliation report. *(Excel + PDF landed.)*
 - Member list (active, by chapter, by status). *(Excel + PDF landed.)*
 - Saved filters. *(Personal-per-user named filter bundles per report, persisted in `saved_report_filters` (migration 0009). CRUD under `/api/tenant/reports/:id/saved-filters[/:filterId]`; the per-report UI at `/zone/reports/[id]` surfaces a pill picker + inline "Save current filters as…" form. Payloads re-validate against each report's existing Zod filter schema on write. Per-row audit (create / update / delete). Cross-user + cross-tenant isolation tested.)*
-- Background `report.generate` jobs with email-when-ready. *(queued; requires pg-boss worker, Phase 7+)*
+- Background `report.generate` jobs with email-when-ready. *(PR 1 landed: in-process polling worker drains a `report_jobs` table; new endpoints `POST /api/tenant/reports/:id/jobs`, `GET /api/tenant/reports/jobs[/:jobId][/download]`. Artefacts persist to object storage with a 7-day expiry. Worker auto-starts in `server.ts` and drains gracefully on SIGTERM. PR 2 swaps the polling loop for pg-boss + adds email-when-ready and an expiry-cleanup job; the route contract is unchanged.)*
 
 Implementation notes:
 
@@ -266,7 +266,7 @@ Audited implementation status (2026-05-13):
 - [x] Weekly finance report data + Excel export are implemented and tested (`weekly-finance.ts`, `reports.test.ts`); attendance lives in `service_event_attendance` (migration `0002_hesitant_human_robot.sql`).
 - [x] PDF export infrastructure (`pdfkit`-based generic branded-table renderer at `services/reports/pdf/branded-table.ts`; `GET /api/tenant/reports/:id/export.pdf` route; UI "Download PDF" alongside "Download Excel"). Bespoke layouts (letter-style member statement, partnership receipts) deferred until Playwright lands.
 - [x] Saved filters.
-- [ ] Background `report.generate` worker + object-storage retention for large exports.
+- [x] Background `report.generate` worker + object-storage retention for large exports. *(In-process worker; pg-boss / email follow-up in PR 2.)*
 
 Exit checklist:
 

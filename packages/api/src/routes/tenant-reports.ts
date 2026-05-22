@@ -9,6 +9,10 @@
 // POST   /api/tenant/reports/:id/saved-filters          create one
 // PATCH  /api/tenant/reports/:id/saved-filters/:filterId  rename / replace payload
 // DELETE /api/tenant/reports/:id/saved-filters/:filterId  hard delete (audited)
+// POST   /api/tenant/reports/:id/jobs                   queue an async export
+// GET    /api/tenant/reports/jobs                       caller's recent jobs in this zone
+// GET    /api/tenant/reports/jobs/:jobId                single job status
+// GET    /api/tenant/reports/jobs/:jobId/download       stream the completed artefact
 //
 // Filters arrive as query params (`q.<key>=value`) so a treasurer can
 // bookmark a URL and re-run the same report without re-keying. Per-spec
@@ -21,12 +25,22 @@ import {
   type AuthorizedContext,
 } from "@stewardledger/shared";
 import { Hono } from "hono";
+import { z } from "zod";
 import { db } from "../db";
+import { log } from "../logger";
 import {
   canExportReports,
   canReadReports,
 } from "../services/reports/access";
 import { loadReportBranding } from "../services/reports/branding";
+import {
+  getJobForReader,
+  JobError,
+  listJobs,
+  queueJob,
+  type JobSummary,
+  type ReportJobFormat,
+} from "../services/reports/jobs";
 import { renderBrandedTablePdf } from "../services/reports/pdf/branded-table";
 import { getReport, listReports } from "../services/reports/registry";
 import {
@@ -44,6 +58,7 @@ import {
   type ReportFetchResult,
   type ReportSpec,
 } from "../services/reports/types";
+import { storage } from "../services/storage";
 
 export const tenantReportsRouter = new Hono();
 
@@ -401,6 +416,163 @@ tenantReportsRouter.delete(
     }
   },
 );
+
+// ─── Async export jobs ─────────────────────────────────────────
+
+const jobCreateBodySchema = z.object({
+  format: z.enum(["xlsx", "pdf"]),
+  // Filters arrive as a plain object — same shape parseReportFilters
+  // already accepts on the synchronous path. Service layer re-runs
+  // the spec's Zod schema against this before persistence.
+  filters: z.record(z.string(), z.unknown()).default({}),
+});
+
+function jobErrorResponse(
+  c: { json: (b: unknown, s: number) => Response },
+  err: JobError,
+): Response {
+  const status: 400 | 403 | 404 =
+    err.code === "forbidden"
+      ? 403
+      : err.code === "not_found"
+        ? 404
+        : 400;
+  return c.json({ error: { code: err.code, message: err.message } }, status);
+}
+
+tenantReportsRouter.post(
+  "/reports/:id/jobs",
+  zValidator("json", jobCreateBodySchema),
+  async (c) => {
+    const ctx = c.get("auth") as AuthorizedContext;
+    if (!canReadReports(ctx)) return forbidden(c);
+    if (!canExportReports(ctx))
+      return forbidden(c, "forbidden_export", "Export requires a finance role");
+    const id = c.req.param("id");
+    let spec: ReportSpec<unknown, unknown>;
+    try {
+      spec = getReport(id);
+    } catch (err) {
+      return handleError(c, err);
+    }
+    const body = c.req.valid("json");
+    // Re-run the spec's `accessCheck` against the request-time
+    // bindings so a clearly-forbidden queue (e.g. a chapter
+    // treasurer asking for a member-statement outside their
+    // chapters) fails fast — before persistence + worker.
+    let parsedForCheck: unknown;
+    try {
+      parsedForCheck = parseReportFilters(spec, body.filters);
+    } catch (err) {
+      return handleError(c, err);
+    }
+    if (spec.accessCheck) {
+      const denial = spec.accessCheck(ctx, parsedForCheck);
+      if (denial) return forbidden(c, denial);
+    }
+
+    try {
+      const job = await queueJob(db, ctx, {
+        reportId: id,
+        format: body.format,
+        filters: body.filters,
+      });
+      return c.json({ job }, 201);
+    } catch (err) {
+      if (err instanceof JobError) return jobErrorResponse(c, err);
+      throw err;
+    }
+  },
+);
+
+tenantReportsRouter.get("/reports/jobs", async (c) => {
+  const ctx = c.get("auth") as AuthorizedContext;
+  if (!canReadReports(ctx)) return forbidden(c);
+  const reportId = c.req.query("reportId") || undefined;
+  const limitParam = Number(c.req.query("limit"));
+  const limit = Number.isFinite(limitParam) ? limitParam : undefined;
+  const items = await listJobs(db, ctx, { reportId, limit });
+  c.header("cache-control", NO_STORE);
+  return c.json({ items });
+});
+
+tenantReportsRouter.get("/reports/jobs/:jobId", async (c) => {
+  const ctx = c.get("auth") as AuthorizedContext;
+  if (!canReadReports(ctx)) return forbidden(c);
+  const job = await getJobForReader(db, ctx, c.req.param("jobId"));
+  if (!job) return c.json({ error: { code: "not_found", message: "Job not found" } }, 404);
+  const summary: JobSummary = {
+    id: job.id,
+    reportId: job.reportId,
+    format: job.format as ReportJobFormat,
+    status: job.status as JobSummary["status"],
+    rowCount: job.rowCount,
+    byteCount: job.byteCount,
+    errorCode: job.errorCode,
+    errorMessage: job.errorMessage,
+    expiresAt: job.expiresAt.toISOString(),
+    createdAt: job.createdAt.toISOString(),
+    startedAt: job.startedAt?.toISOString() ?? null,
+    completedAt: job.completedAt?.toISOString() ?? null,
+  };
+  c.header("cache-control", NO_STORE);
+  return c.json({ job: summary });
+});
+
+tenantReportsRouter.get("/reports/jobs/:jobId/download", async (c) => {
+  const ctx = c.get("auth") as AuthorizedContext;
+  if (!canReadReports(ctx)) return forbidden(c);
+  if (!canExportReports(ctx))
+    return forbidden(c, "forbidden_export", "Export requires a finance role");
+  const job = await getJobForReader(db, ctx, c.req.param("jobId"));
+  if (!job) return c.json({ error: { code: "not_found", message: "Job not found" } }, 404);
+  if (job.status !== "completed" || !job.storageKey) {
+    return c.json(
+      { error: { code: "not_ready", message: `Job is ${job.status}` } },
+      409,
+    );
+  }
+  if (job.expiresAt.getTime() < Date.now()) {
+    return c.json(
+      { error: { code: "expired", message: "Artefact has expired" } },
+      404,
+    );
+  }
+  let bytes: Uint8Array;
+  try {
+    bytes = await storage().get(job.storageKey);
+  } catch (err) {
+    // Artefact gone from storage even though the row is `completed`.
+    // Most likely cause: an out-of-band cleanup ran ahead of the row
+    // expiry. Treat it the same way as expiry rather than 500-ing.
+    log.warn(
+      { err, jobId: job.id, storageKey: job.storageKey, zoneId: ctx.zoneId },
+      "report job artefact missing from storage",
+    );
+    return c.json(
+      { error: { code: "artefact_missing", message: "Artefact is no longer available" } },
+      404,
+    );
+  }
+  const branding = await loadReportBranding(db, ctx.zoneId);
+  const filename = buildExportFilename(
+    job.reportId,
+    branding.zoneSlug,
+    job.format,
+  );
+  const contentType =
+    job.format === "xlsx"
+      ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      : "application/pdf";
+  return new Response(bytes, {
+    status: 200,
+    headers: {
+      "content-type": contentType,
+      "content-disposition": `attachment; filename="${filename}"`,
+      "cache-control": NO_STORE,
+    },
+  });
+});
 
 function buildExportFilename(reportId: string, zoneSlug: string, ext: string): string {
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
