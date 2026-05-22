@@ -187,6 +187,7 @@ function zoneCtx(zone: SeededZone): AuthorizedContext {
     regionId: null,
     roleCodes: [ZONE_ROLES.ZONE_OWNER],
     chapterIds: [],
+    groupIds: [],
     isPlatformAdmin: false,
   };
 }

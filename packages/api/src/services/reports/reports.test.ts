@@ -195,6 +195,7 @@ function zoneCtx(zone: SeededZone): AuthorizedContext {
     regionId: null,
     roleCodes: [ZONE_ROLES.ZONE_FINANCE_ADMIN],
     chapterIds: [],
+    groupIds: [],
     isPlatformAdmin: false,
   };
 }
@@ -350,6 +351,7 @@ describe("member-statement report", () => {
       regionId: null,
       roleCodes: ["chapter_treasurer"],
       chapterIds: [zone.otherChapterId], // chapter B only — member 0 is in A
+      groupIds: [],
       isPlatformAdmin: false,
     };
 
@@ -382,6 +384,7 @@ describe("member-statement report", () => {
       regionId: null,
       roleCodes: ["chapter_treasurer"],
       chapterIds: [zone.otherChapterId],
+      groupIds: [],
       isPlatformAdmin: false,
     };
 
@@ -501,6 +504,7 @@ describe("import-reconciliation tenancy", () => {
       regionId: null,
       roleCodes: ["chapter_treasurer"],
       chapterIds: [zone.chapterId],
+      groupIds: [],
       isPlatformAdmin: false,
     };
 
@@ -531,6 +535,7 @@ describe("import-reconciliation tenancy", () => {
       regionId: null,
       roleCodes: ["chapter_treasurer"],
       chapterIds: [],
+      groupIds: [],
       isPlatformAdmin: false,
     };
     expect(importReconciliationReport.accessCheck?.(noBindings, {})).toBe("forbidden");
@@ -827,6 +832,7 @@ describe("member-finance-summary report", () => {
       regionId: null,
       roleCodes: ["chapter_treasurer"],
       chapterIds: [zone.chapterId],
+      groupIds: [],
       isPlatformAdmin: false,
     };
 
@@ -878,6 +884,7 @@ describe("member-list report", () => {
       regionId: null,
       roleCodes: ["chapter_treasurer"],
       chapterIds: [zone.chapterId],
+      groupIds: [],
       isPlatformAdmin: false,
     };
 
@@ -922,6 +929,7 @@ describe("member-list report", () => {
       regionId: null,
       roleCodes: ["chapter_treasurer"],
       chapterIds: [zone.chapterId],
+      groupIds: [],
       isPlatformAdmin: false,
     };
 
@@ -1100,6 +1108,7 @@ describe("giving-by-chapter report", () => {
       regionId: null,
       roleCodes: ["chapter_treasurer"],
       chapterIds: [zone.chapterId],
+      groupIds: [],
       isPlatformAdmin: false,
     };
 
@@ -1473,6 +1482,7 @@ describe("general-ledger report", () => {
       regionId: null,
       roleCodes: ["chapter_treasurer"],
       chapterIds: [zone.chapterId],
+      groupIds: [],
       isPlatformAdmin: false,
     };
 
@@ -1692,6 +1702,7 @@ describe("envelope-ledger report", () => {
       regionId: null,
       roleCodes: ["chapter_treasurer"],
       chapterIds: [zone.chapterId],
+      groupIds: [],
       isPlatformAdmin: false,
     };
 
@@ -1742,6 +1753,7 @@ describe("envelope-ledger report", () => {
       regionId: null,
       roleCodes: ["chapter_treasurer"],
       chapterIds: [zone.chapterId],
+      groupIds: [],
       isPlatformAdmin: false,
     };
 
@@ -1951,6 +1963,7 @@ describe("online-giving-ledger report", () => {
       regionId: null,
       roleCodes: ["chapter_treasurer"],
       chapterIds: [zone.chapterId],
+      groupIds: [],
       isPlatformAdmin: false,
     };
 
@@ -2189,6 +2202,7 @@ describe("top-partners report", () => {
       regionId: null,
       roleCodes: ["chapter_treasurer"],
       chapterIds: [zone.chapterId],
+      groupIds: [],
       isPlatformAdmin: false,
     };
 
@@ -2373,6 +2387,7 @@ describe("top-chapters report", () => {
       regionId: null,
       roleCodes: ["chapter_treasurer"],
       chapterIds: [zone.chapterId],
+      groupIds: [],
       isPlatformAdmin: false,
     };
 
@@ -2550,6 +2565,7 @@ describe("audit-log report", () => {
       zoneId: "z-stub",
       regionId: null,
       chapterIds: ["c-stub"],
+      groupIds: [],
       isPlatformAdmin: false,
     };
     // Chapter-scoped role — no zone view at all.
@@ -2568,6 +2584,7 @@ describe("audit-log report", () => {
           ...baseCtx,
           roleCodes: [ZONE_ROLES.ZONE_AUDITOR],
           chapterIds: [],
+          groupIds: [],
         } satisfies AuthorizedContext,
         wideFilters(),
       ),
@@ -2578,6 +2595,7 @@ describe("audit-log report", () => {
           ...baseCtx,
           roleCodes: [ZONE_ROLES.ZONE_PASTOR_VIEWER],
           chapterIds: [],
+          groupIds: [],
         } satisfies AuthorizedContext,
         wideFilters(),
       ),
@@ -2594,6 +2612,7 @@ describe("audit-log report", () => {
             ...baseCtx,
             roleCodes: [code],
             chapterIds: [],
+            groupIds: [],
           } satisfies AuthorizedContext,
           wideFilters(),
         ),
@@ -2849,6 +2868,7 @@ describe("weekly-finance report", () => {
       regionId: null,
       roleCodes: ["chapter_treasurer"],
       chapterIds: [zone.chapterId],
+      groupIds: [],
       isPlatformAdmin: false,
     };
 
@@ -3202,6 +3222,7 @@ describe("partnership-progress report", () => {
       regionId: null,
       roleCodes: ["chapter_treasurer"],
       chapterIds: [zone.chapterId],
+      groupIds: [],
       isPlatformAdmin: false,
     };
 

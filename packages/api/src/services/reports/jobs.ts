@@ -309,6 +309,8 @@ async function resolveAuthAtRunTime(
     chapterIds: Array.from(
       new Set(bindings.map((b) => b.chapterId).filter((c): c is string => c !== null)),
     ),
+    // TODO(groups-hierarchy Task 9): query user_role_bindings.group_id and populate.
+    groupIds: [],
     isPlatformAdmin: userRow.isSuperAdmin,
   };
 }

@@ -102,6 +102,8 @@ export const requireTenantAuth: MiddlewareHandler = async (c: Context, next) => 
     regionId: tenant.regionId,
     roleCodes,
     chapterIds,
+    // TODO(groups-hierarchy Task 9): query user_role_bindings.group_id and populate.
+    groupIds: [],
     isPlatformAdmin: sessionUser.isSuperAdmin,
   };
   c.set("auth", ctx);

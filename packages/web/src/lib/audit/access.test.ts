@@ -15,6 +15,7 @@ function ctx(overrides: Partial<AuthorizedContext> = {}): AuthorizedContext {
     regionId: null,
     roleCodes: [],
     chapterIds: [],
+    groupIds: [],
     isPlatformAdmin: false,
     ...overrides,
   };
