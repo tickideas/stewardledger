@@ -99,6 +99,23 @@ tenantRouter.get("/me", async (c) => {
   return c.json({ user: { id: ctx.userId }, zone, auth: ctx });
 });
 
+/** Zone metadata including the groups_enabled toggle state. */
+tenantRouter.get("/zone", async (c) => {
+  const ctx = c.get("auth") as AuthorizedContext;
+  const [row] = await db
+    .select({
+      id: zones.id,
+      slug: zones.slug,
+      name: zones.name,
+      groupsEnabled: zones.groupsEnabled,
+    })
+    .from(zones)
+    .where(eq(zones.id, ctx.zoneId))
+    .limit(1);
+  if (!row) return c.json({ error: { code: "not_found", message: "Zone not found" } }, 404);
+  return c.json({ zone: row });
+});
+
 // ─── Chapters ─────────────────────────────────────────────────────────
 
 // Roles that can read any chapter in the zone. Mirrors the list used by

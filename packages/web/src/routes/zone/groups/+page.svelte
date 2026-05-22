@@ -17,11 +17,15 @@
   type GroupCreateResponse = {
     group: { id: string; slug: string; name: string; createdAt: string };
   };
+  type ZoneInfo = { id: string; slug: string; name: string; groupsEnabled: boolean };
+  type ChapterRow = { id: string; name: string; groupId: string | null };
 
   const adminRoles = new Set(["zone_owner", "zone_admin"]);
 
   let groups = $state<Group[]>([]);
   let auth = $state<AuthorizedContext | null>(null);
+  let zone = $state<ZoneInfo | null>(null);
+  let unassignedChapters = $state<ChapterRow[]>([]);
   let loading = $state(true);
   let loadError = $state<string | null>(null);
   let createOpen = $state(false);
@@ -32,9 +36,14 @@
   let createFlash = $state<string | null>(null);
   let rowError = $state<string | null>(null);
   let deletingId = $state<string | null>(null);
+  let enabling = $state(false);
+  let enableError = $state<string | null>(null);
 
   const canManage = $derived(
     auth?.isPlatformAdmin === true || auth?.roleCodes.some((role) => adminRoles.has(role)) === true,
+  );
+  const isZoneOwner = $derived(
+    auth?.isPlatformAdmin === true || auth?.roleCodes.includes("zone_owner") === true,
   );
 
   function toggleCreate() {
@@ -51,17 +60,45 @@
   async function refresh() {
     loading = true;
     try {
-      const [groupRes, meRes] = await Promise.all([
+      const [groupRes, meRes, zoneRes, chapterRes] = await Promise.all([
         api.get<{ items: Group[] }>("/api/tenant/groups"),
         api.get<{ auth: AuthorizedContext }>("/api/tenant/me"),
+        api.get<{ zone: ZoneInfo }>("/api/tenant/zone"),
+        api.get<{ items: ChapterRow[] }>("/api/tenant/chapters"),
       ]);
       groups = groupRes.items;
       auth = meRes.auth;
+      zone = zoneRes.zone;
+      unassignedChapters = chapterRes.items.filter((c) => c.groupId === null);
       loadError = null;
     } catch (err) {
       loadError = err instanceof ApiError ? err.message : "Could not load groups.";
     } finally {
       loading = false;
+    }
+  }
+
+  async function enableGroups() {
+    enableError = null;
+    if (!confirm("Enabling groups cannot be undone. Continue?")) return;
+    enabling = true;
+    try {
+      await api.post("/api/tenant/zones/groups-enabled", { enabled: true });
+      await refresh();
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.status === 403) {
+          enableError = "Only zone_owner can enable groups.";
+        } else if (err.status === 409) {
+          enableError = `Cannot enable: ${unassignedChapters.length} chapter(s) without a group.`;
+        } else {
+          enableError = err.message;
+        }
+      } else {
+        enableError = "Could not enable groups.";
+      }
+    } finally {
+      enabling = false;
     }
   }
 
@@ -108,6 +145,46 @@
 </script>
 
 <div class="pt-2 pb-10 lg:pt-0">
+  {#if zone && !zone.groupsEnabled}
+    <section class="sl-card-warm mb-8 p-6">
+      <h2 class="sl-display text-[20px] text-[var(--ink)]">Enable groups</h2>
+      <p class="mt-2 text-[13px] text-[var(--ink-mute)]">
+        Groups let you organise chapters into administrative units. Once enabled, this cannot be undone.
+      </p>
+      <p class="mt-3 sl-mono text-[12px] text-[var(--ink-soft)]">
+        {unassignedChapters.length} chapter(s) without a group.
+      </p>
+      {#if unassignedChapters.length > 0}
+        <p class="mt-2 text-[12px] text-[var(--ink-mute)]">
+          Assign every chapter to a group first. Currently {unassignedChapters.length} chapter(s) without a group: {unassignedChapters.map((c) => c.name).join(", ")}
+        </p>
+      {/if}
+      {#if !isZoneOwner}
+        <p class="mt-2 text-[12px] text-[var(--ink-mute)]">Only zone_owner can enable groups.</p>
+      {/if}
+      <div class="mt-4">
+        <button
+          type="button"
+          class="sl-btn sl-btn-primary"
+          disabled={enabling || unassignedChapters.length > 0 || !isZoneOwner}
+          onclick={enableGroups}
+        >
+          {enabling ? "Enabling…" : "Enable groups"}
+        </button>
+      </div>
+      {#if enableError}
+        <p class="mt-3 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{enableError}</p>
+      {/if}
+    </section>
+  {:else if zone && zone.groupsEnabled}
+    <section class="sl-card mb-8 p-6">
+      <h2 class="sl-display text-[20px] text-[var(--ink)]">Groups are enabled</h2>
+      <p class="mt-2 text-[13px] text-[var(--ink-mute)]">
+        All chapters in this zone are organised by group. Use the move-group action on a chapter detail page to reassign chapters between groups.
+      </p>
+    </section>
+  {/if}
+
   <div class="sl-reveal sl-reveal-1 flex flex-wrap items-end justify-between gap-6">
     <div>
       <span class="sl-eyebrow">§ I · Church administration</span>
