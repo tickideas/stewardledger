@@ -34,7 +34,7 @@ import {
   zones,
 } from "@stewardledger/db/schema";
 import { db } from "../db";
-import { hasAnyRole, requireChapterScope } from "../middleware/auth";
+import { hasAnyRole, requireChapterScope, visibleChapterIds } from "../middleware/auth";
 import { writeAudit } from "../services/audit";
 import { nextMemberReferenceCode } from "../services/member-codes";
 import {
@@ -203,14 +203,15 @@ tenantMembersRouter.get(
     }
 
     const conditions = [eq(members.zoneId, ctx.zoneId), isNull(members.deletedAt)];
-    if (hasZoneMemberRead(ctx)) {
+    const scope = await visibleChapterIds(ctx, ZONE_MEMBER_READ_ROLES);
+    if (scope.kind === "all") {
       if (q.chapterId) conditions.push(eq(members.chapterId, q.chapterId));
     } else {
-      if (ctx.chapterIds.length === 0) return forbidden(c);
+      if (scope.ids.length === 0) return forbidden(c);
       conditions.push(
         q.chapterId
           ? eq(members.chapterId, q.chapterId)
-          : inArray(members.chapterId, ctx.chapterIds),
+          : inArray(members.chapterId, scope.ids),
       );
     }
     if (q.isActive !== undefined) conditions.push(eq(members.isActive, q.isActive));
