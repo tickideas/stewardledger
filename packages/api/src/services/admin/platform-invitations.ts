@@ -13,15 +13,12 @@ import {
   user as userTable,
 } from "@stewardledger/db/schema";
 import {
-  BRAND_WORDMARK,
   INVITATION_TOKEN_BYTES,
   INVITATION_VALIDITY_HOURS,
-  PLATFORM_ROLES,
 } from "@stewardledger/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 
 import { writeAudit } from "../audit";
-import { brandedEmailHtml, escapeHtml, sendEmail } from "../email";
 import { hashInvitationToken } from "../invitations";
 import { isGrantableRole } from "./administrators";
 

@@ -10,7 +10,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   auditEvents,
-  platformRoleBindings,
   user as userTable,
 } from "@stewardledger/db/schema";
 import { PLATFORM_ROLES } from "@stewardledger/shared";

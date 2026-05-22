@@ -13,7 +13,7 @@ import {
   user as userTable,
 } from "@stewardledger/db/schema";
 import { PLATFORM_ROLES } from "@stewardledger/shared";
-import { and, desc, eq, isNull, ne, or, sql } from "drizzle-orm";
+import { and, eq, isNull, ne, or, sql } from "drizzle-orm";
 
 import { writeAudit } from "../audit";
 
