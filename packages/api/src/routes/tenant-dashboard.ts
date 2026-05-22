@@ -11,7 +11,8 @@
 import { Hono } from "hono";
 import type { AuthorizedContext } from "@stewardledger/shared";
 import { db } from "../db";
-import { hasAnyZoneRole } from "../services/reports/access";
+import { visibleChapterIds } from "../middleware/auth";
+import { hasAnyZoneRole, REPORT_ZONE_READ_ROLES } from "../services/reports/access";
 import {
   buildChapterDashboard,
   ChapterDashboardError,
@@ -48,7 +49,8 @@ tenantDashboardRouter.get("/dashboard/chapter/:chapterId", async (c) => {
   // "unknown chapter" case into the same 403 prevents an
   // existence-oracle for chapter-only callers (mirrors the pattern
   // used by member-statement.ts).
-  if (!hasAnyZoneRole(ctx) && !ctx.chapterIds.includes(chapterId)) {
+  const scope = await visibleChapterIds(ctx, REPORT_ZONE_READ_ROLES);
+  if (scope.kind === "list" && !scope.ids.includes(chapterId)) {
     return forbidden(c);
   }
   try {
