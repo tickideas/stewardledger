@@ -361,17 +361,21 @@ export async function demote(
   });
 }
 
-/** Internal: find user id by email (case-insensitive). */
-export async function findUserIdByEmail(
+/**
+ * Find a user by email (case-insensitive). Returns enough fields for
+ * the grant-by-email route to render a notification email; the older
+ * `findUserIdByEmail` was id-only and forced a second query.
+ */
+export async function findUserByEmail(
   database: Db,
   email: string,
-): Promise<string | null> {
+): Promise<{ id: string; email: string; name: string | null } | null> {
   const rows = await database
-    .select({ id: userTable.id })
+    .select({ id: userTable.id, email: userTable.email, name: userTable.name })
     .from(userTable)
     .where(sql`lower(${userTable.email}) = lower(${email})`)
     .limit(1);
-  return rows[0]?.id ?? null;
+  return rows[0] ?? null;
 }
 
 /**

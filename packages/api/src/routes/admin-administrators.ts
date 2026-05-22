@@ -23,7 +23,7 @@ import {
   AdminError,
   demote,
   elevate,
-  findUserIdByEmail,
+  findUserByEmail,
   grantRole,
   listAdministrators,
   revokeRole,
@@ -34,7 +34,10 @@ import {
   PlatformInvitationError,
   revokePlatformInvitation,
 } from "../services/admin/platform-invitations";
-import { sendPlatformAdminInviteEmail } from "../services/admin/platform-admin-emails";
+import {
+  sendPlatformAdminGrantNoticeEmail,
+  sendPlatformAdminInviteEmail,
+} from "../services/admin/platform-admin-emails";
 import { parseForwardedIp } from "../services/request-meta";
 
 export const adminAdministratorsRouter = new Hono();
@@ -65,6 +68,13 @@ const grantSchema = z.object({
 const grantByEmailSchema = z.object({
   email: z.string().trim().email().max(254),
   roleCode: z.enum(ROLE_VALUES),
+  /**
+   * Default-true: notify the recipient by email. Operators can opt
+   * out when granting silently (e.g. when transferring a long-time
+   * staff member's role and the email has already been agreed on
+   * another channel).
+   */
+  notify: z.boolean().default(true),
 });
 
 function actor(c: Context): {
@@ -205,24 +215,58 @@ adminAdministratorsRouter.post(
       email: input.email,
       roleCode: input.roleCode,
     });
-    const targetId = await findUserIdByEmail(db, input.email);
-    if (!targetId) {
+    const target = await findUserByEmail(db, input.email);
+    if (!target) {
       return c.json(
         { error: { code: "user_not_found", message: "No user with that email." } },
         404,
       );
     }
+    let result: { bindingId: string };
     try {
-      const result = await grantRole(
+      result = await grantRole(
         db,
-        { targetUserId: targetId, roleCode: input.roleCode },
+        { targetUserId: target.id, roleCode: input.roleCode },
         actor(c),
       );
-      return c.json({ status: "granted", bindingId: result.bindingId }, 201);
     } catch (err) {
       if (err instanceof AdminError) return adminErrorToResponse(c, err);
       throw err;
     }
+
+    // Side-effect: notify the user that they now hold the role. Same
+    // best-effort shape as the invite email — the grant itself
+    // already succeeded (audit row written, binding in place); if the
+    // transport blows up we surface that on the response so the UI
+    // can warn the operator instead of silently failing.
+    let emailSent = false;
+    let emailError: string | null = null;
+    if (input.notify) {
+      try {
+        await sendPlatformAdminGrantNoticeEmail({
+          to: target.email,
+          name: target.name,
+          roleCode: input.roleCode,
+        });
+        emailSent = true;
+      } catch (err) {
+        emailError = err instanceof Error ? err.message : "unknown_error";
+        log.warn(
+          { err, bindingId: result.bindingId, email: target.email },
+          "platform grant-notice email failed to send; binding stands",
+        );
+      }
+    }
+    return c.json(
+      {
+        status: "granted",
+        bindingId: result.bindingId,
+        notified: input.notify,
+        emailSent,
+        emailError,
+      },
+      201,
+    );
   },
 );
 

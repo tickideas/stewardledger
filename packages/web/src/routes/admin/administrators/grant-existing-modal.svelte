@@ -8,13 +8,14 @@
 
   let { open = $bindable(false), ongranted } = $props<{
     open?: boolean;
-    ongranted?: () => void;
+    ongranted?: (result: { notified: boolean; emailSent: boolean; emailError: string | null }) => void;
   }>();
 
   type RoleCode = "support_admin" | "billing_admin" | "region_curator";
 
   let email = $state("");
   let roleCode = $state<RoleCode>("support_admin");
+  let notify = $state(true);
   let submitting = $state(false);
   let errorMsg = $state<string | null>(null);
 
@@ -27,6 +28,7 @@
     if (!open) {
       email = "";
       roleCode = "support_admin";
+      notify = true;
       submitting = false;
       errorMsg = null;
     }
@@ -41,9 +43,17 @@
     submitting = true;
     errorMsg = null;
     try {
-      await api.post("/api/admin/administrators/grant", { email, roleCode });
+      const res = await api.post<{
+        notified: boolean;
+        emailSent: boolean;
+        emailError: string | null;
+      }>("/api/admin/administrators/grant", { email, roleCode, notify });
       open = false;
-      ongranted?.();
+      ongranted?.({
+        notified: res.notified,
+        emailSent: res.emailSent,
+        emailError: res.emailError,
+      });
     } catch (err) {
       errorMsg = err instanceof ApiError ? err.message : "Could not grant the role.";
     } finally {
@@ -111,6 +121,16 @@
             <option value="billing_admin">billing_admin — Stripe / subscriptions (Phase 10)</option>
             <option value="region_curator">region_curator — regions reference list</option>
           </select>
+        </label>
+
+        <label class="flex items-start gap-3 rounded-md border border-[var(--rule)] bg-[var(--paper-soft)] px-3 py-2.5">
+          <input type="checkbox" bind:checked={notify} class="mt-0.5" />
+          <span class="text-[13px] text-[var(--ink-soft)]">
+            Email the user to let them know they’ve been granted this role.
+            <span class="block text-[11.5px] text-[var(--ink-mute)]">
+              Recommended unless you’ve already told them out of band.
+            </span>
+          </span>
         </label>
 
         {#if errorMsg}
