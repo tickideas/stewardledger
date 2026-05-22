@@ -23,16 +23,21 @@ let stopRequested = false;
 let inflight: Promise<void> | null = null;
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
   return new Promise((resolve) => {
-    const t = setTimeout(resolve, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(t);
-        resolve();
-      },
-      { once: true },
-    );
+    // Hold the listener in a named ref so we can remove it whichever
+    // path wins (timer expiry or abort). Without explicit removal,
+    // signal listeners accumulate across thousands of 2-second polls
+    // until the process exits.
+    const onAbort = () => {
+      clearTimeout(t);
+      resolve();
+    };
+    const t = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 }
 
