@@ -1027,48 +1027,40 @@ tenantRouter.post("/invitations", zValidator("json", invitationCreateSchema), as
     );
   }
 
-  // Role-gate by admin scope:
-  // - group_admin (not also chapter_admin): chapter roles into chapters in
-  //   one of their bound groups only.
-  // - chapter_admin: chapter roles into one of their bound chapters only.
+  // Role-gate by admin scope. Non-zone admins can only invite chapter
+  // roles, and mixed group_admin + chapter_admin bindings are additive:
+  // either a bound group or a bound chapter is sufficient.
   if (!isZoneAdmin) {
-    if (isGroupAdmin && !isChapterAdmin) {
-      if (!isChapterRole(input.roleCode)) {
-        return forbidden(c, "Group admins can only invite chapter roles");
-      }
-      if (!input.chapterId) {
-        return c.json(
-          { error: { code: "chapter_required", message: "chapterId required" } },
-          400,
-        );
-      }
-      const [chap] = await db
-        .select({ groupId: chapters.groupId })
-        .from(chapters)
-        .where(
-          and(
-            eq(chapters.id, input.chapterId),
-            eq(chapters.zoneId, ctx.zoneId),
-            isNull(chapters.deletedAt),
-          ),
-        )
-        .limit(1);
-      if (!chap) {
-        return c.json(
-          { error: { code: "chapter_not_found", message: "Chapter not in this zone" } },
-          404,
-        );
-      }
-      if (!chap.groupId || !ctx.groupIds.includes(chap.groupId)) {
-        return forbidden(c, "Chapter is not in your group");
-      }
-    } else if (isChapterAdmin) {
-      if (!isChapterRole(input.roleCode)) {
-        return forbidden(c, "Chapter admins can only invite chapter roles");
-      }
-      if (!input.chapterId || !ctx.chapterIds.includes(input.chapterId)) {
-        return forbidden(c, "Chapter admins can only invite into their own chapter");
-      }
+    if (!isChapterRole(input.roleCode)) {
+      return forbidden(c, "Scoped admins can only invite chapter roles");
+    }
+    if (!input.chapterId) {
+      return c.json(
+        { error: { code: "chapter_required", message: "chapterId required" } },
+        400,
+      );
+    }
+    const [chap] = await db
+      .select({ groupId: chapters.groupId })
+      .from(chapters)
+      .where(
+        and(
+          eq(chapters.id, input.chapterId),
+          eq(chapters.zoneId, ctx.zoneId),
+          isNull(chapters.deletedAt),
+        ),
+      )
+      .limit(1);
+    if (!chap) {
+      return c.json(
+        { error: { code: "chapter_not_found", message: "Chapter not in this zone" } },
+        404,
+      );
+    }
+    const hasGroupScope = Boolean(chap.groupId && ctx.groupIds.includes(chap.groupId));
+    const hasChapterScope = ctx.chapterIds.includes(input.chapterId);
+    if (!hasGroupScope && !hasChapterScope) {
+      return forbidden(c, "Chapter is outside your scope");
     }
   }
 
@@ -1198,22 +1190,18 @@ tenantRouter.post("/invitations/:id/revoke", async (c) => {
     if (!target)
       return c.json({ error: { code: "not_found", message: "Invitation not found" } }, 404);
 
-    if (isGroupAdmin && !isChapterAdmin) {
-      if (!target.chapterId) {
-        return forbidden(c, "Group admins can only revoke chapter invites");
-      }
-      const [chap] = await db
-        .select({ groupId: chapters.groupId })
-        .from(chapters)
-        .where(and(eq(chapters.id, target.chapterId), eq(chapters.zoneId, ctx.zoneId)))
-        .limit(1);
-      if (!chap?.groupId || !ctx.groupIds.includes(chap.groupId)) {
-        return forbidden(c, "Invitation is not in your group");
-      }
-    } else if (isChapterAdmin) {
-      if (!target.chapterId || !ctx.chapterIds.includes(target.chapterId)) {
-        return forbidden(c, "Chapter admins can only revoke their own chapter's invitations");
-      }
+    if (!target.chapterId) {
+      return forbidden(c, "Scoped admins can only revoke chapter invites");
+    }
+    const [chap] = await db
+      .select({ groupId: chapters.groupId })
+      .from(chapters)
+      .where(and(eq(chapters.id, target.chapterId), eq(chapters.zoneId, ctx.zoneId)))
+      .limit(1);
+    const hasGroupScope = Boolean(chap?.groupId && ctx.groupIds.includes(chap.groupId));
+    const hasChapterScope = ctx.chapterIds.includes(target.chapterId);
+    if (!hasGroupScope && !hasChapterScope) {
+      return forbidden(c, "Invitation is outside your scope");
     }
   }
 
