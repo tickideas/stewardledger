@@ -13,6 +13,7 @@
 
 import {
   CHAPTER_ROLES,
+  GROUP_ROLES,
   ZONE_ROLES,
   type AuthorizedContext,
 } from "@stewardledger/shared";
@@ -34,6 +35,12 @@ export const REPORT_CHAPTER_READ_ROLES = [
   CHAPTER_ROLES.CHAPTER_TREASURER,
   CHAPTER_ROLES.CHAPTER_BOOKKEEPER,
   CHAPTER_ROLES.CHAPTER_PASTOR_VIEWER,
+] as const;
+
+/** Group-scoped roles that may VIEW reports filtered to their groups' chapters. */
+export const REPORT_GROUP_READ_ROLES = [
+  GROUP_ROLES.GROUP_ADMIN,
+  GROUP_ROLES.GROUP_PASTOR_VIEWER,
 ] as const;
 
 /** Zone-wide roles permitted to download exports (PII included). */
@@ -69,8 +76,12 @@ export function hasChapterReportExport(ctx: AuthorizedContext): boolean {
   return hasAny(ctx, REPORT_CHAPTER_EXPORT_ROLES);
 }
 
+export function hasGroupReportRead(ctx: AuthorizedContext): boolean {
+  return hasAny(ctx, REPORT_GROUP_READ_ROLES);
+}
+
 export function canReadReports(ctx: AuthorizedContext): boolean {
-  return hasZoneReportRead(ctx) || hasChapterReportRead(ctx);
+  return hasZoneReportRead(ctx) || hasChapterReportRead(ctx) || hasGroupReportRead(ctx);
 }
 
 export function canExportReports(ctx: AuthorizedContext): boolean {

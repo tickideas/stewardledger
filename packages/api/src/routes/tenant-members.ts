@@ -6,6 +6,7 @@
 import { zValidator } from "@hono/zod-validator";
 import {
   CHAPTER_ROLES,
+  GROUP_ROLES,
   ZONE_ROLES,
   lookupCreateSchema,
   lookupUpdateSchema,
@@ -64,7 +65,12 @@ const CHAPTER_MEMBER_READ_ROLES = [
   CHAPTER_ROLES.CHAPTER_PASTOR_VIEWER,
 ] as const;
 
-const LOOKUP_READ_ROLES = [...ZONE_MEMBER_READ_ROLES, ...CHAPTER_MEMBER_READ_ROLES] as const;
+const GROUP_MEMBER_READ_ROLES = [
+  GROUP_ROLES.GROUP_ADMIN,
+  GROUP_ROLES.GROUP_PASTOR_VIEWER,
+] as const;
+
+const LOOKUP_READ_ROLES = [...ZONE_MEMBER_READ_ROLES, ...CHAPTER_MEMBER_READ_ROLES, ...GROUP_MEMBER_READ_ROLES] as const;
 
 function forbidden(c: { json: (b: unknown, s: number) => Response }, msg = "Insufficient role"): Response {
   return c.json({ error: { code: "forbidden", message: msg } }, 403);
@@ -124,6 +130,10 @@ function hasChapterMemberRead(ctx: AuthorizedContext): boolean {
   return ctx.roleCodes.some((code) => (CHAPTER_MEMBER_READ_ROLES as readonly string[]).includes(code));
 }
 
+function hasGroupMemberRead(ctx: AuthorizedContext): boolean {
+  return ctx.roleCodes.some((code) => (GROUP_MEMBER_READ_ROLES as readonly string[]).includes(code));
+}
+
 function hasZoneMemberWrite(ctx: AuthorizedContext): boolean {
   return hasAnyRole(ctx, ...ZONE_MEMBER_WRITE_ROLES);
 }
@@ -132,9 +142,13 @@ function hasChapterMemberWrite(ctx: AuthorizedContext): boolean {
   return ctx.roleCodes.some((code) => (CHAPTER_MEMBER_WRITE_ROLES as readonly string[]).includes(code));
 }
 
-function canReadMember(ctx: AuthorizedContext, chapterId: string | null): boolean {
+async function canReadMember(ctx: AuthorizedContext, chapterId: string | null): Promise<boolean> {
   if (hasZoneMemberRead(ctx)) return true;
-  return chapterId !== null && hasChapterMemberRead(ctx) && ctx.chapterIds.includes(chapterId);
+  if (chapterId === null) return false;
+  if (hasChapterMemberRead(ctx) && ctx.chapterIds.includes(chapterId)) return true;
+  if (!hasGroupMemberRead(ctx) || ctx.groupIds.length === 0) return false;
+  const scope = await requireChapterScope(ctx, chapterId, ZONE_MEMBER_READ_ROLES);
+  return scope.ok;
 }
 
 function canWriteMember(ctx: AuthorizedContext, chapterId: string | null): boolean {
@@ -188,7 +202,7 @@ tenantMembersRouter.get(
   zValidator("query", memberListQuerySchema),
   async (c) => {
     const ctx = c.get("auth") as AuthorizedContext;
-    if (!hasZoneMemberRead(ctx) && !hasChapterMemberRead(ctx)) return forbidden(c);
+    if (!hasZoneMemberRead(ctx) && !hasChapterMemberRead(ctx) && !hasGroupMemberRead(ctx)) return forbidden(c);
     const q = c.req.valid("query");
 
     // When the caller pins to a specific chapter, validate it against the
@@ -263,14 +277,14 @@ tenantMembersRouter.get(
 
 tenantMembersRouter.get("/members/:id", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
-  if (!hasZoneMemberRead(ctx) && !hasChapterMemberRead(ctx)) return forbidden(c);
+  if (!hasZoneMemberRead(ctx) && !hasChapterMemberRead(ctx) && !hasGroupMemberRead(ctx)) return forbidden(c);
   const id = c.req.param("id");
   const [row] = await db
     .select()
     .from(members)
     .where(and(eq(members.id, id), eq(members.zoneId, ctx.zoneId), isNull(members.deletedAt)))
     .limit(1);
-  if (!row || !canReadMember(ctx, row.chapterId)) {
+  if (!row || !(await canReadMember(ctx, row.chapterId))) {
     return c.json({ error: { code: "not_found", message: "Member not found" } }, 404);
   }
   return c.json({ member: row });
@@ -468,10 +482,10 @@ tenantMembersRouter.delete("/members/:id", async (c) => {
 
 tenantMembersRouter.get("/members/:id/addresses", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
-  if (!hasZoneMemberRead(ctx) && !hasChapterMemberRead(ctx)) return forbidden(c);
+  if (!hasZoneMemberRead(ctx) && !hasChapterMemberRead(ctx) && !hasGroupMemberRead(ctx)) return forbidden(c);
   const memberId = c.req.param("id");
   const member = await loadActiveMemberInZone(ctx.zoneId, memberId);
-  if (!member || !canReadMember(ctx, member.chapterId)) {
+  if (!member || !(await canReadMember(ctx, member.chapterId))) {
     return c.json({ error: { code: "not_found", message: "Member not found" } }, 404);
   }
   const rows = await db

@@ -36,10 +36,6 @@
   function isActive(href: string): boolean {
     return path === href || path.startsWith(`${href}/`);
   }
-
-  async function switchGroup(_groupId: string) {
-    // Group switching is a future enhancement — stub for Task 19+.
-  }
 </script>
 
 {#if authed}
@@ -63,15 +59,8 @@
         {#if data.boundGroup}
           <div class="text-[14px] font-medium text-[var(--ink)]">{data.boundGroup.name}</div>
           {#if data.boundGroups.length > 1}
-            <div class="mt-2">
-              <select
-                class="w-full border border-[var(--rule)] bg-[var(--card)] px-2 py-1 text-[12px] text-[var(--ink)]"
-                onchange={(e) => switchGroup((e.target as HTMLSelectElement).value)}
-              >
-                {#each data.boundGroups as g (g.id)}
-                  <option value={g.id} selected={g.id === data.boundGroup.id}>{g.name}</option>
-                {/each}
-              </select>
+            <div class="mt-2 text-[12px] text-[var(--ink-mute)]">
+              Showing chapters from {data.boundGroups.length} bound groups.
             </div>
           {/if}
         {:else}

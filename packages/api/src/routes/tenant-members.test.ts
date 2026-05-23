@@ -6,10 +6,11 @@
 
 import { sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { CHAPTER_ROLES, ZONE_ROLES } from "@stewardledger/shared";
+import { CHAPTER_ROLES, GROUP_ROLES, ZONE_ROLES } from "@stewardledger/shared";
 import {
   auditEvents,
   chapters,
+  groups,
   maritalStatuses,
   memberAddresses,
   memberMergeProposals,
@@ -38,6 +39,7 @@ interface SeededZone {
   name: string;
   ownerRoleId: string;
   chapterAdminRoleId: string;
+  groupAdminRoleId: string;
 }
 
 async function seedZone(slug: string, name: string): Promise<SeededZone> {
@@ -61,6 +63,7 @@ async function seedZone(slug: string, name: string): Promise<SeededZone> {
     name: zone.name,
     ownerRoleId: roleMap.get(ZONE_ROLES.ZONE_OWNER)!,
     chapterAdminRoleId: roleMap.get(CHAPTER_ROLES.CHAPTER_ADMIN)!,
+    groupAdminRoleId: roleMap.get(GROUP_ROLES.GROUP_ADMIN)!,
   };
 }
 
@@ -70,16 +73,25 @@ async function seedUser(email: string): Promise<string> {
   return id;
 }
 
-async function seedChapter(zoneId: string, name: string): Promise<string> {
+async function seedChapter(zoneId: string, name: string, groupId: string | null = null): Promise<string> {
   const [row] = await db
     .insert(chapters)
     .values({
       zoneId,
       referenceCode: `C${unique()}`,
       name,
+      groupId,
       dateFrom: new Date().toISOString().slice(0, 10),
     })
     .returning({ id: chapters.id });
+  return row.id;
+}
+
+async function seedGroup(zoneId: string): Promise<string> {
+  const [row] = await db
+    .insert(groups)
+    .values({ zoneId, name: `Group ${unique()}`, slug: `group-${unique()}` })
+    .returning({ id: groups.id });
   return row.id;
 }
 
@@ -129,6 +141,7 @@ describe("tenant member routes — cross-tenant fuzz", () => {
   let userA: string;
   let userBOwner: string;
   let userChapterA: string;
+  let userGroupA: string;
   let chapterA: string;
   let chapterAOther: string;
   let chapterB: string;
@@ -146,7 +159,8 @@ describe("tenant member routes — cross-tenant fuzz", () => {
     userA = await seedUser(`user-a+${unique()}@example.com`);
     userBOwner = await seedUser(`user-b+${unique()}@example.com`);
     userChapterA = await seedUser(`user-chapter-a+${unique()}@example.com`);
-    cleanupUserIds.push(userA, userBOwner, userChapterA);
+    userGroupA = await seedUser(`user-group-a+${unique()}@example.com`);
+    cleanupUserIds.push(userA, userBOwner, userChapterA, userGroupA);
 
     await db.insert(userRoleBindings).values({
       userId: userA,
@@ -161,7 +175,8 @@ describe("tenant member routes — cross-tenant fuzz", () => {
       roleScope: "zone",
     });
 
-    chapterA = await seedChapter(zoneA.id, "Chapter A");
+    const groupA = await seedGroup(zoneA.id);
+    chapterA = await seedChapter(zoneA.id, "Chapter A", groupA);
     chapterAOther = await seedChapter(zoneA.id, "Chapter A Other");
     chapterB = await seedChapter(zoneB.id, "Chapter B");
     memberA = await seedMember(zoneA.id, "Alice", chapterA);
@@ -174,6 +189,13 @@ describe("tenant member routes — cross-tenant fuzz", () => {
       chapterId: chapterA,
       roleId: zoneA.chapterAdminRoleId,
       roleScope: "chapter",
+    });
+    await db.insert(userRoleBindings).values({
+      userId: userGroupA,
+      zoneId: zoneA.id,
+      groupId: groupA,
+      roleId: zoneA.groupAdminRoleId,
+      roleScope: "group",
     });
   });
 
@@ -188,6 +210,12 @@ describe("tenant member routes — cross-tenant fuzz", () => {
       );
       await db.execute(
         sql`delete from members where zone_id = (select id from zones where slug = ${slug})`,
+      );
+      await db.execute(
+        sql`update chapters set group_id = null where zone_id = (select id from zones where slug = ${slug})`,
+      );
+      await db.execute(
+        sql`delete from groups where zone_id = (select id from zones where slug = ${slug})`,
       );
       await db.execute(
         sql`delete from chapters where zone_id = (select id from zones where slug = ${slug})`,
@@ -240,6 +268,21 @@ describe("tenant member routes — cross-tenant fuzz", () => {
       body: { firstName: "Hacked" },
     });
     expect(patchRes.status).toBe(404);
+  });
+
+  it("group-scoped admins read only members in their bound group", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userGroupA, "group@x"));
+    const list = await call(zoneA.slug, "/api/tenant/members");
+    expect(list.status).toBe(200);
+    const body = (await list.json()) as { items: Array<{ id: string }> };
+    const ids = body.items.map((m) => m.id);
+    expect(ids).toContain(memberA);
+    expect(ids).not.toContain(memberAOther);
+
+    const allowed = await call(zoneA.slug, `/api/tenant/members/${memberA}`);
+    expect(allowed.status).toBe(200);
+    const denied = await call(zoneA.slug, `/api/tenant/members/${memberAOther}`);
+    expect(denied.status).toBe(404);
   });
 
   it("chapter-scoped admins can only create members in their assigned chapter", async () => {

@@ -591,18 +591,26 @@ describe("tenant-groups router", () => {
     let histZone: SeededZone;
     let histOwner: string;
     let histChapter: string;
+    let histOtherChapter: string;
+    let histGroupAdmin: string;
 
     beforeAll(async () => {
       histZone = await seedZone(`grp-hist-${unique()}`);
       cleanupSlugs.push(histZone.slug);
       histOwner = await seedUser(`grp-hist+${unique()}@example.com`);
-      cleanupUserIds.push(histOwner);
+      histGroupAdmin = await seedUser(`grp-hist-group+${unique()}@example.com`);
+      cleanupUserIds.push(histOwner, histGroupAdmin);
       await bindUser(histOwner, histZone.id, histZone.ownerRoleId, { scope: "zone" });
 
       const g1 = await seedGroup(histZone.id, `H1 ${unique()}`, `h1-${unique()}`);
       const g2 = await seedGroup(histZone.id, `H2 ${unique()}`, `h2-${unique()}`);
+      await bindUser(histGroupAdmin, histZone.id, histZone.groupAdminRoleId, { scope: "group", groupId: g1 });
       histChapter = await seedChapter(histZone.id, "HistCh", {
         groupId: g1,
+        dateFrom: new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10),
+      });
+      histOtherChapter = await seedChapter(histZone.id, "HistOther", {
+        groupId: g2,
         dateFrom: new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10),
       });
       await enableGroupsForZone(db, { zoneId: histZone.id, actorUserId: histOwner });
@@ -631,6 +639,15 @@ describe("tenant-groups router", () => {
       expect(body.items.length).toBe(2);
       expect(body.items[0].dateFrom <= body.items[1].dateFrom).toBe(true);
       expect(body.items[1].dateTo).toBeNull();
+    });
+
+    it("group admins cannot read another group's chapter history", async () => {
+      asUser(histGroupAdmin, "hist-group@example.com");
+      const res = await call(
+        histZone.slug,
+        `/api/tenant/chapters/${histOtherChapter}/group-history`,
+      );
+      expect(res.status).toBe(403);
     });
 
     it("404 for cross-zone chapter id", async () => {

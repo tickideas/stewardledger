@@ -15,6 +15,7 @@ export class ApiError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
+    readonly details?: Record<string, unknown>,
   ) {
     super(message);
   }
@@ -54,7 +55,7 @@ async function request<T>(
   const json = text ? (JSON.parse(text) as unknown) : null;
   if (!res.ok) {
     const err = (json as ApiErrorBody | null)?.error;
-    throw new ApiError(res.status, err?.code ?? "unknown", err?.message ?? res.statusText);
+    throw new ApiError(res.status, err?.code ?? "unknown", err?.message ?? res.statusText, err?.details);
   }
   return json as T;
 }

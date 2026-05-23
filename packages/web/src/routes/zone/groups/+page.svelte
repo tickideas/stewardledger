@@ -90,7 +90,10 @@
         if (err.status === 403) {
           enableError = "Only zone_owner can enable groups.";
         } else if (err.status === 409) {
-          enableError = `Cannot enable: ${unassignedChapters.length} chapter(s) without a group.`;
+          const ids = Array.isArray(err.details?.unassignedChapterIds) ? err.details.unassignedChapterIds : null;
+          enableError = ids
+            ? `Cannot enable: ${ids.length} chapter(s) without a group.`
+            : `Cannot enable: ${unassignedChapters.length} chapter(s) without a group.`;
         } else {
           enableError = err.message;
         }
@@ -137,7 +140,12 @@
       await api.delete(`/api/tenant/groups/${group.id}`);
       await refresh();
     } catch (err) {
-      rowError = err instanceof ApiError ? err.message : "Could not delete group.";
+      if (err instanceof ApiError && err.code === "group_not_empty") {
+        const count = typeof err.details?.chapterCount === "number" ? err.details.chapterCount : group.chapterCount;
+        rowError = `Cannot delete group: ${count} chapter(s) still belong to it.`;
+      } else {
+        rowError = err instanceof ApiError ? err.message : "Could not delete group.";
+      }
     } finally {
       deletingId = null;
     }

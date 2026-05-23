@@ -21,7 +21,7 @@ import {
 import { and, asc, count, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
-import { hasAnyRole } from "../middleware/auth";
+import { hasAnyRole, requireChapterScope } from "../middleware/auth";
 import { writeAudit } from "../services/audit";
 import {
   assertGroupNameAvailable,
@@ -316,19 +316,10 @@ tenantGroupsRouter.post(
 tenantGroupsRouter.get("/chapters/:id/group-history", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
   const chapterId = c.req.param("id");
-  const [chap] = await db
-    .select({ id: chapters.id })
-    .from(chapters)
-    .where(
-      and(
-        eq(chapters.id, chapterId),
-        eq(chapters.zoneId, ctx.zoneId),
-        isNull(chapters.deletedAt),
-      ),
-    )
-    .limit(1);
-  if (!chap)
-    return c.json({ error: { code: "chapter_not_found", message: "Chapter not in this zone" } }, 404);
+  const scope = await requireChapterScope(ctx, chapterId, ZONE_GROUP_READ_ROLES);
+  if (!scope.ok) {
+    return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
+  }
 
   const rows = await db
     .select({

@@ -6,6 +6,7 @@
 import { zValidator } from "@hono/zod-validator";
 import {
   CHAPTER_ROLES,
+  GROUP_ROLES,
   ZONE_ROLES,
   contributionBatchCreateSchema,
   contributionBatchListQuerySchema,
@@ -63,6 +64,11 @@ const CONTRIB_CHAPTER_READ_ROLES = [
   CHAPTER_ROLES.CHAPTER_PASTOR_VIEWER,
 ] as const;
 
+const CONTRIB_GROUP_READ_ROLES = [
+  GROUP_ROLES.GROUP_ADMIN,
+  GROUP_ROLES.GROUP_PASTOR_VIEWER,
+] as const;
+
 // Roles that can create / edit drafts.
 const CONTRIB_ZONE_WRITE_ROLES = [
   ZONE_ROLES.ZONE_OWNER,
@@ -95,6 +101,9 @@ function hasZoneRead(ctx: AuthorizedContext): boolean {
 function hasChapterRead(ctx: AuthorizedContext): boolean {
   return ctx.roleCodes.some((c) => (CONTRIB_CHAPTER_READ_ROLES as readonly string[]).includes(c));
 }
+function hasGroupRead(ctx: AuthorizedContext): boolean {
+  return ctx.roleCodes.some((c) => (CONTRIB_GROUP_READ_ROLES as readonly string[]).includes(c));
+}
 function hasZoneWrite(ctx: AuthorizedContext): boolean {
   return hasAnyRole(ctx, ...CONTRIB_ZONE_WRITE_ROLES);
 }
@@ -108,9 +117,13 @@ function hasChapterPost(ctx: AuthorizedContext): boolean {
   return ctx.roleCodes.some((c) => (CONTRIB_CHAPTER_POST_ROLES as readonly string[]).includes(c));
 }
 
-function canReadContribution(ctx: AuthorizedContext, chapterId: string | null): boolean {
+async function canReadContribution(ctx: AuthorizedContext, chapterId: string | null): Promise<boolean> {
   if (hasZoneRead(ctx)) return true;
-  return chapterId !== null && hasChapterRead(ctx) && ctx.chapterIds.includes(chapterId);
+  if (chapterId === null) return false;
+  if (hasChapterRead(ctx) && ctx.chapterIds.includes(chapterId)) return true;
+  if (!hasGroupRead(ctx) || ctx.groupIds.length === 0) return false;
+  const scope = await requireChapterScope(ctx, chapterId, CONTRIB_ZONE_READ_ROLES);
+  return scope.ok;
 }
 
 function canWriteContribution(ctx: AuthorizedContext, chapterId: string | null): boolean {
@@ -141,7 +154,7 @@ tenantContributionsRouter.get(
   zValidator("query", contributionListQuerySchema),
   async (c) => {
     const ctx = c.get("auth") as AuthorizedContext;
-    if (!hasZoneRead(ctx) && !hasChapterRead(ctx)) return forbidden(c);
+    if (!hasZoneRead(ctx) && !hasChapterRead(ctx) && !hasGroupRead(ctx)) return forbidden(c);
     const q = c.req.valid("query");
     // Reject cross-zone or unauthorised chapter ids loudly. Without this,
     // `?chapterId=<other-zone-uuid>` silently returns an empty list.
@@ -164,11 +177,11 @@ tenantContributionsRouter.get(
 
 tenantContributionsRouter.get("/contributions/:id", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
-  if (!hasZoneRead(ctx) && !hasChapterRead(ctx)) return forbidden(c);
+  if (!hasZoneRead(ctx) && !hasChapterRead(ctx) && !hasGroupRead(ctx)) return forbidden(c);
   const id = c.req.param("id");
   const detail = await getContribution(db, ctx.zoneId, id);
   if (!detail) return c.json({ error: { code: "not_found", message: "Contribution not found" } }, 404);
-  if (!canReadContribution(ctx, detail.contribution.chapterId)) return forbidden(c);
+  if (!(await canReadContribution(ctx, detail.contribution.chapterId))) return forbidden(c);
   return c.json({ contribution: detail.contribution, lines: detail.lines, members: detail.members });
 });
 
@@ -310,7 +323,7 @@ tenantContributionsRouter.get(
   zValidator("query", contributionBatchListQuerySchema),
   async (c) => {
     const ctx = c.get("auth") as AuthorizedContext;
-    if (!hasZoneRead(ctx) && !hasChapterRead(ctx)) return forbidden(c);
+    if (!hasZoneRead(ctx) && !hasChapterRead(ctx) && !hasGroupRead(ctx)) return forbidden(c);
     const q = c.req.valid("query");
     if (q.chapterId) {
       const scope = await requireChapterScope(ctx, q.chapterId, CONTRIB_ZONE_READ_ROLES);
@@ -331,11 +344,11 @@ tenantContributionsRouter.get(
 
 tenantContributionsRouter.get("/contribution-batches/:id", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
-  if (!hasZoneRead(ctx) && !hasChapterRead(ctx)) return forbidden(c);
+  if (!hasZoneRead(ctx) && !hasChapterRead(ctx) && !hasGroupRead(ctx)) return forbidden(c);
   const id = c.req.param("id");
   const batch = await getBatch(db, ctx.zoneId, id);
   if (!batch) return c.json({ error: { code: "not_found", message: "Batch not found" } }, 404);
-  if (!canReadContribution(ctx, batch.chapterId)) return forbidden(c);
+  if (!(await canReadContribution(ctx, batch.chapterId))) return forbidden(c);
   return c.json({ batch });
 });
 
