@@ -6,6 +6,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Database, Db } from "@stewardledger/db";
 import {
+  groups,
   invitations,
   roles,
   userRoleBindings,
@@ -199,6 +200,23 @@ export async function applyAcceptedInvitation(
       .limit(1);
     if (!role)
       throw new InvitationError("role_not_seeded", `Role ${inv.roleCode} not seeded for zone.`);
+
+    if (inv.groupId) {
+      const [group] = await tx
+        .select({ id: groups.id })
+        .from(groups)
+        .where(
+          and(
+            eq(groups.id, inv.groupId),
+            eq(groups.zoneId, inv.zoneId),
+            isNull(groups.deletedAt),
+          ),
+        )
+        .limit(1);
+      if (!group) {
+        throw new InvitationError("group_not_found", "Invitation group is no longer active.");
+      }
+    }
 
     // Re-use any existing active binding (idempotency for retried accepts).
     const existing = await tx

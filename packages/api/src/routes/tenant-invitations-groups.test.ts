@@ -17,6 +17,11 @@ import {
 import { createApp } from "../app";
 import { auth } from "../auth";
 import { db } from "../db";
+import {
+  InvitationError,
+  applyAcceptedInvitation,
+  createInvitation,
+} from "../services/invitations";
 import { seedZoneRoles } from "../services/role-seed";
 
 function unique(): string {
@@ -220,6 +225,27 @@ describe("invitations — groups + group_admin rules", () => {
         },
       });
       expect(res.status).toBe(201);
+    });
+
+    it("rejects acceptance after the invited group is soft-deleted", async () => {
+      const invitee = await seedUser(`deleted-group-invitee+${unique()}@example.com`);
+      cleanupUserIds.push(invitee);
+      const deletedGroupId = await seedGroup(zoneA.id);
+      const invitation = await createInvitation(db, {
+        zoneId: zoneA.id,
+        email: `deleted-group+${unique()}@example.com`,
+        roleCode: GROUP_ROLES.GROUP_ADMIN,
+        groupId: deletedGroupId,
+        createdByUserId: ownerA,
+      });
+      await db
+        .update(groups)
+        .set({ deletedAt: new Date() })
+        .where(sql`${groups.id} = ${deletedGroupId}`);
+
+      await expect(
+        applyAcceptedInvitation(db, { invitationId: invitation.id, userId: invitee }),
+      ).rejects.toMatchObject({ code: "group_not_found" } satisfies Partial<InvitationError>);
     });
 
     it("rejects group role without groupId (zod)", async () => {
