@@ -28,7 +28,7 @@ import {
   escapeExcelText,
   moneyFormatForCurrency,
 } from "./branding";
-import { hasAnyZoneRole } from "./access";
+import { reportVisibleScope } from "./access";
 import {
   ReportError,
   type CurrencySubtotal,
@@ -94,10 +94,11 @@ export const envelopeLedgerReport: ReportSpec<
     "One row per posted envelope contribution with the line breakdown rolled up inline.",
   filtersSchema: envelopeLedgerFiltersSchema,
   columns: () => COLUMNS,
-  accessCheck: (ctx, filters) => {
-    if (hasAnyZoneRole(ctx)) return null;
-    if (ctx.chapterIds.length === 0) return "forbidden";
-    if (filters.chapterId && !ctx.chapterIds.includes(filters.chapterId)) {
+  async accessCheck(ctx, filters) {
+    const scope = await reportVisibleScope(ctx);
+    if (scope.kind === "all") return null;
+    if (scope.ids.length === 0) return "forbidden";
+    if (filters.chapterId && !scope.ids.includes(filters.chapterId)) {
       return "forbidden";
     }
     return null;
@@ -109,7 +110,8 @@ export const envelopeLedgerReport: ReportSpec<
     // Otherwise a chapter-scoped caller could probe uuids and learn
     // "this is a real member elsewhere in the zone" by the empty
     // 200 vs error split. Mirrors `member-statement.ts`.
-    if (!hasAnyZoneRole(ctx) && filters.memberId) {
+    const scope = await reportVisibleScope(ctx);
+    if (scope.kind === "list" && filters.memberId) {
       const [member] = await database
         .select({ chapterId: members.chapterId })
         .from(members)
@@ -121,7 +123,7 @@ export const envelopeLedgerReport: ReportSpec<
           ),
         )
         .limit(1);
-      if (!member?.chapterId || !ctx.chapterIds.includes(member.chapterId)) {
+      if (!member?.chapterId || !scope.ids.includes(member.chapterId)) {
         throw new ReportError("forbidden", "Member is not in your chapter scope.");
       }
     }
@@ -138,8 +140,8 @@ export const envelopeLedgerReport: ReportSpec<
     ];
     if (filters.chapterId) {
       conditions.push(eq(contributions.chapterId, filters.chapterId));
-    } else if (!hasAnyZoneRole(ctx)) {
-      conditions.push(inArray(contributions.chapterId, ctx.chapterIds));
+    } else if (scope.kind === "list") {
+      conditions.push(inArray(contributions.chapterId, scope.ids));
     }
     if (filters.memberId) {
       conditions.push(eq(contributions.memberId, filters.memberId));

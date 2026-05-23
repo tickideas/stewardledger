@@ -17,8 +17,10 @@
     dateFrom: string;
     dateTo: string | null;
     createdAt: string;
+    groupId: string | null;
     activeMemberCount: number;
   };
+  type GroupRow = { id: string; slug: string; name: string };
   type ChapterInviteRow = {
     id: number;
     email: string;
@@ -31,7 +33,12 @@
   const adminRoles = new Set(["zone_owner", "zone_admin"]);
 
   let chapters = $state<Chapter[]>([]);
+  let groups = $state<GroupRow[]>([]);
   let auth = $state<AuthorizedContext | null>(null);
+  let assignGroupSelection = $state<Record<string, string>>({});
+  let assignBusyId = $state<string | null>(null);
+  let assignErrorById = $state<Record<string, string>>({});
+  let createGroupId = $state("");
   let loading = $state(true);
   let loadError = $state<string | null>(null);
   let createOpen = $state(false);
@@ -48,6 +55,28 @@
   const canCreate = $derived(
     auth?.isPlatformAdmin === true || auth?.roleCodes.some((role) => adminRoles.has(role)) === true,
   );
+  const groupNameById = $derived(new Map(groups.map((g) => [g.id, g.name])));
+  const hasGroups = $derived(groups.length > 0);
+
+  async function assignGroup(chapterId: string) {
+    const groupId = assignGroupSelection[chapterId];
+    if (!groupId) return;
+    assignBusyId = chapterId;
+    assignErrorById = { ...assignErrorById, [chapterId]: "" };
+    try {
+      await api.patch(`/api/tenant/chapters/${chapterId}`, { groupId });
+      await refresh();
+      assignGroupSelection = { ...assignGroupSelection, [chapterId]: "" };
+    } catch (err) {
+      let msg = err instanceof ApiError ? err.message : "Could not assign group.";
+      if (err instanceof ApiError && err.code === "use_move_group") {
+        msg = "Groups are enabled — use the move-group action on the chapter detail page.";
+      }
+      assignErrorById = { ...assignErrorById, [chapterId]: msg };
+    } finally {
+      assignBusyId = null;
+    }
+  }
 
   function addInviteRow() {
     inviteRows = [
@@ -65,6 +94,7 @@
     name = "";
     countryCode = "";
     dateFrom = "";
+    createGroupId = "";
     inviteRows = [];
     nextInviteRowId = 1;
     createdChapter = null;
@@ -84,12 +114,14 @@
   async function refresh() {
     loading = true;
     try {
-      const [chapterRes, meRes] = await Promise.all([
+      const [chapterRes, meRes, groupsRes] = await Promise.all([
         api.get<{ items: Chapter[] }>("/api/tenant/chapters"),
         api.get<{ auth: AuthorizedContext }>("/api/tenant/me"),
+        api.get<{ items: GroupRow[] }>("/api/tenant/groups"),
       ]);
       chapters = chapterRes.items;
       auth = meRes.auth;
+      groups = groupsRes.items;
       loadError = null;
     } catch (err) {
       loadError = err instanceof ApiError ? err.message : "Could not load chapters.";
@@ -114,6 +146,7 @@
               name,
               countryCode: countryCode.trim() ? countryCode.trim().toUpperCase() : undefined,
               dateFrom: dateFrom || undefined,
+              groupId: createGroupId || undefined,
             })
           : { chapter: createdChapter };
       createdChapter = result.chapter;
@@ -225,6 +258,17 @@
         <span class="sl-eyebrow" style="font-size:10.5px">Active since</span>
         <input type="date" bind:value={dateFrom} disabled={createdChapter !== null} class="sl-input mt-1.5" />
       </label>
+      {#if hasGroups}
+        <label class="col-span-12 sm:col-span-5">
+          <span class="sl-eyebrow" style="font-size:10.5px">Group</span>
+          <select bind:value={createGroupId} disabled={createdChapter !== null} class="sl-select mt-1.5">
+            <option value="">(No group)</option>
+            {#each groups as g (g.id)}
+              <option value={g.id}>{g.name}</option>
+            {/each}
+          </select>
+        </label>
+      {/if}
       <div class="col-span-12 flex items-end sm:col-span-2">
         <button type="submit" disabled={creating} class="sl-btn sl-btn-primary w-full justify-center">
           {#if creating}
@@ -313,6 +357,7 @@
             <tr>
               <th>Reference</th>
               <th>Name</th>
+              {#if hasGroups}<th>Group</th>{/if}
               <th>Country</th>
               <th>Members</th>
               <th>Active since</th>
@@ -329,6 +374,39 @@
                     {chapter.name}
                   </a>
                 </td>
+                {#if hasGroups}
+                  <td class="text-[13px] text-[var(--ink)]">
+                    {#if chapter.groupId}
+                      {groupNameById.get(chapter.groupId) ?? "—"}
+                    {:else if canCreate}
+                      <div class="flex flex-wrap items-center gap-2">
+                        <select
+                          bind:value={assignGroupSelection[chapter.id]}
+                          class="sl-select py-1 text-[12px]"
+                          disabled={assignBusyId === chapter.id}
+                        >
+                          <option value="">(Assign group…)</option>
+                          {#each groups as g (g.id)}
+                            <option value={g.id}>{g.name}</option>
+                          {/each}
+                        </select>
+                        <button
+                          type="button"
+                          class="sl-btn sl-btn-ghost"
+                          disabled={!assignGroupSelection[chapter.id] || assignBusyId === chapter.id}
+                          onclick={() => assignGroup(chapter.id)}
+                        >
+                          {assignBusyId === chapter.id ? "Saving…" : "Assign"}
+                        </button>
+                        {#if assignErrorById[chapter.id]}
+                          <span class="basis-full text-[12px] text-[var(--bad)]">{assignErrorById[chapter.id]}</span>
+                        {/if}
+                      </div>
+                    {:else}
+                      —
+                    {/if}
+                  </td>
+                {/if}
                 <td class="sl-mono text-[12px] uppercase text-[var(--ink-soft)]">{chapter.countryCode ?? "—"}</td>
                 <td class="sl-mono text-[12px] text-[var(--ink-soft)]">{chapter.activeMemberCount}</td>
                 <td class="sl-mono text-[12px] text-[var(--ink-soft)]">

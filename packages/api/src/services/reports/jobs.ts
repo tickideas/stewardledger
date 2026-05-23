@@ -284,6 +284,7 @@ async function resolveAuthAtRunTime(
   const bindings = await database
     .select({
       chapterId: userRoleBindings.chapterId,
+      groupId: userRoleBindings.groupId,
       roleCode: roles.code,
     })
     .from(userRoleBindings)
@@ -308,6 +309,9 @@ async function resolveAuthAtRunTime(
     roleCodes: Array.from(new Set(bindings.map((b) => b.roleCode))),
     chapterIds: Array.from(
       new Set(bindings.map((b) => b.chapterId).filter((c): c is string => c !== null)),
+    ),
+    groupIds: Array.from(
+      new Set(bindings.map((b) => b.groupId).filter((g): g is string => g !== null)),
     ),
     isPlatformAdmin: userRow.isSuperAdmin,
   };
@@ -387,7 +391,7 @@ export async function runClaimedJob(
     }
 
     if (spec.accessCheck) {
-      const denial = spec.accessCheck(ctx, filters);
+      const denial = await spec.accessCheck(ctx, filters);
       if (denial) {
         return {
           status: "failed",

@@ -5,7 +5,7 @@
 > The roadmap is in **phases**, not in calendar weeks. Each phase has explicit deliverables and an exit checklist. We move on when the checklist is green.
 >
 > Product name: **StewardLedger**. Primary domain: **`stewardledger.church`**.
-> Tenant model: **the zone is the tenant**. Region is platform-curated reference data.
+> Tenant model: **the zone is the tenant**. Region is platform-curated reference data; Groups are an optional per-zone tier between Zone and Chapter (Phase 15, `feat/groups-hierarchy`).
 
 ---
 
@@ -409,6 +409,21 @@ Speculative; add when justified by customer demand.
 - Direct integration with echurcher for online-giving capture.
 - Partner API for integrations.
 - Optional ETL from legacy Church Plus for zones who want to migrate later.
+
+---
+
+## Phase 15 — Groups hierarchy
+
+Introduced a per-zone opt-in `groups` layer between Zone and Chapter:
+
+- `groups` and `chapter_group_history` tables; point-in-time chapter moves.
+- Two new roles: `group_admin` (chapter-admin-equivalent) and `group_pastor_viewer` (read-only).
+- `/group/*` surface mirrors `/zone/*` narrowed to bound groups.
+- `visibleChapterIds(ctx)` chokepoint centralises read-narrowing across all tenant routes.
+- One-way enable toggle gated on every chapter being assigned to a group.
+
+Spec: `docs/superpowers/specs/2026-05-22-groups-hierarchy-design.md`
+Plan: `docs/superpowers/plans/2026-05-22-groups-hierarchy.md`
 
 ---
 

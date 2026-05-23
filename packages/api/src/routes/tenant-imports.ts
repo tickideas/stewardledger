@@ -6,6 +6,7 @@
 import { zValidator } from "@hono/zod-validator";
 import {
   CHAPTER_ROLES,
+  GROUP_ROLES,
   ZONE_ROLES,
   importCreateSchema,
   importListQuerySchema,
@@ -14,7 +15,7 @@ import {
   type AuthorizedContext,
 } from "@stewardledger/shared";
 import { Hono } from "hono";
-import { hasAnyRole, requireChapterScope } from "../middleware/auth";
+import { hasAnyRole, requireChapterScope, visibleChapterIds } from "../middleware/auth";
 import { db } from "../db";
 import {
   ImportError,
@@ -80,6 +81,9 @@ function hasChapterRead(ctx: AuthorizedContext): boolean {
     (IMPORT_CHAPTER_READ_ROLES as readonly string[]).includes(c),
   );
 }
+function hasGroupRead(ctx: AuthorizedContext): boolean {
+  return ctx.roleCodes.includes(GROUP_ROLES.GROUP_ADMIN);
+}
 function hasZoneWrite(ctx: AuthorizedContext): boolean {
   return hasAnyRole(ctx, ...IMPORT_ZONE_WRITE_ROLES);
 }
@@ -102,13 +106,12 @@ function hasChapterCommit(ctx: AuthorizedContext): boolean {
  * `chapterId` means the import is zone-wide; only zone-level roles may
  * touch it.
  */
-function canReadImport(ctx: AuthorizedContext, chapterId: string | null): boolean {
+async function canReadImport(ctx: AuthorizedContext, chapterId: string | null): Promise<boolean> {
   if (hasZoneRead(ctx)) return true;
-  return (
-    chapterId !== null &&
-    hasChapterRead(ctx) &&
-    ctx.chapterIds.includes(chapterId)
-  );
+  if (chapterId === null) return false;
+  if (!hasChapterRead(ctx) && !hasGroupRead(ctx)) return false;
+  const scope = await requireChapterScope(ctx, chapterId, IMPORT_ZONE_READ_ROLES);
+  return scope.ok;
 }
 function canWriteImport(ctx: AuthorizedContext, chapterId: string | null): boolean {
   if (hasZoneWrite(ctx)) return true;
@@ -283,16 +286,17 @@ tenantImportsRouter.get(
   zValidator("query", importListQuerySchema),
   async (c) => {
     const ctx = c.get("auth") as AuthorizedContext;
-    if (!hasZoneRead(ctx) && !hasChapterRead(ctx)) return forbidden(c);
+    if (!hasZoneRead(ctx) && !hasChapterRead(ctx) && !hasGroupRead(ctx)) return forbidden(c);
     const q = c.req.valid("query");
     if (q.chapterId) {
-      const scope = await requireChapterScope(ctx, q.chapterId, IMPORT_ZONE_READ_ROLES);
-      if (!scope.ok) {
-        return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
+      const cscope = await requireChapterScope(ctx, q.chapterId, IMPORT_ZONE_READ_ROLES);
+      if (!cscope.ok) {
+        return c.json({ error: { code: cscope.code, message: cscope.message } }, cscope.status);
       }
     }
+    const scope = await visibleChapterIds(ctx, IMPORT_ZONE_READ_ROLES);
     const result = await listImports(db, ctx.zoneId, q, {
-      chapterIds: hasZoneRead(ctx) ? undefined : ctx.chapterIds,
+      chapterIds: scope.kind === "all" ? undefined : scope.ids,
     });
     return c.json(result);
   },
@@ -300,11 +304,11 @@ tenantImportsRouter.get(
 
 tenantImportsRouter.get("/imports/:id", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
-  if (!hasZoneRead(ctx) && !hasChapterRead(ctx)) return forbidden(c);
+  if (!hasZoneRead(ctx) && !hasChapterRead(ctx) && !hasGroupRead(ctx)) return forbidden(c);
   const id = c.req.param("id");
   const detail = await getImport(db, ctx.zoneId, id);
   if (!detail) return c.json({ error: { code: "not_found", message: "Import not found" } }, 404);
-  if (!canReadImport(ctx, detail.file.chapterId)) return forbidden(c);
+  if (!(await canReadImport(ctx, detail.file.chapterId))) return forbidden(c);
   return c.json(detail);
 });
 
@@ -313,12 +317,12 @@ tenantImportsRouter.get(
   zValidator("query", importRowListQuerySchema),
   async (c) => {
     const ctx = c.get("auth") as AuthorizedContext;
-    if (!hasZoneRead(ctx) && !hasChapterRead(ctx)) return forbidden(c);
+    if (!hasZoneRead(ctx) && !hasChapterRead(ctx) && !hasGroupRead(ctx)) return forbidden(c);
     const id = c.req.param("id");
     const q = c.req.valid("query");
     const detail = await getImport(db, ctx.zoneId, id);
     if (!detail) return c.json({ error: { code: "not_found", message: "Import not found" } }, 404);
-    if (!canReadImport(ctx, detail.file.chapterId)) return forbidden(c);
+    if (!(await canReadImport(ctx, detail.file.chapterId))) return forbidden(c);
     const result = await listImportRows(db, ctx.zoneId, id, q);
     return c.json(result);
   },

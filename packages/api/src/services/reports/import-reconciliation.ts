@@ -39,7 +39,7 @@ import {
   escapeExcelText,
   moneyFormatForCurrency,
 } from "./branding";
-import { hasAnyZoneRole } from "./access";
+import { reportVisibleScope } from "./access";
 import type {
   CurrencySubtotal,
   ReportColumn,
@@ -118,12 +118,13 @@ export const importReconciliationReport: ReportSpec<
     "Every import job with row outcomes, posted contributions, and per-currency totals.",
   filtersSchema: importReconciliationFiltersSchema,
   columns: () => COLUMNS,
-  accessCheck: (ctx, _filters) => {
-    // Zone-wide readers see every job; chapter-scoped readers must own
+  async accessCheck(ctx, _filters) {
+    // Zone-wide readers see every job; chapter/group-scoped readers must own
     // at least one chapter binding (the per-job scope is applied in
     // `fetch` against `import_files.chapter_id`).
-    if (hasAnyZoneRole(ctx)) return null;
-    if (ctx.chapterIds.length === 0) return "forbidden";
+    const scope = await reportVisibleScope(ctx);
+    if (scope.kind === "all") return null;
+    if (scope.ids.length === 0) return "forbidden";
     return null;
   },
   async fetch(database, ctx, filters): Promise<ReportFetchResult<ReconciliationRow>> {
@@ -140,8 +141,9 @@ export const importReconciliationReport: ReportSpec<
     // readers see only jobs whose file is tied to one of their
     // bindings. The accessCheck above guarantees
     // `ctx.chapterIds.length > 0` here.
-    if (!hasAnyZoneRole(ctx)) {
-      jobConditions.push(inArray(importFiles.chapterId, ctx.chapterIds));
+    const scope = await reportVisibleScope(ctx);
+    if (scope.kind === "list") {
+      jobConditions.push(inArray(importFiles.chapterId, scope.ids));
     }
 
     const jobRows = await database

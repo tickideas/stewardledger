@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "chapter_group_history_one_open_per_chapter_idx" ON "chapter_group_history" USING btree ("zone_id","chapter_id") WHERE date_to is null;

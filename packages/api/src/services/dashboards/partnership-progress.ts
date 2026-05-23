@@ -57,7 +57,7 @@ const PERCENT_DISPLAY_CAP = new Decimal("999.9");
 export async function buildPartnershipProgressSummary(
   database: Database,
   zoneId: string,
-  options: { chapterId?: string; timeZone?: string } = {},
+  options: { chapterId?: string; timeZone?: string; chapterScope?: string[] } = {},
 ): Promise<DashboardPartnershipProgress> {
   const year = await loadCurrentMinistryYear(database, zoneId, options.timeZone);
   if (!year) {
@@ -86,6 +86,8 @@ export async function buildPartnershipProgressSummary(
     inArray(contributionLines.givingTypeId, givingTypeIds),
   ];
   if (options.chapterId) achievedConditions.push(eq(contributions.chapterId, options.chapterId));
+  if (options.chapterScope)
+    achievedConditions.push(inArray(contributions.chapterId, options.chapterScope));
 
   const achievedRows = await database
     .select({

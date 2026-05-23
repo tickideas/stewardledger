@@ -147,16 +147,17 @@ But: it is a **separate repo**, separate Git history, separate CI pipeline, sepa
 
 ### 5.1 Hierarchy & strategy
 
-- Hierarchy: `Region (reference) → Zone (tenant) → Chapter → Member`.
+- Hierarchy: `Region (reference) → Zone (tenant) → [Group (optional)] → Chapter → Member`.
 - **Single database, row-level isolation** (matches echurcher).
 - Every domain table has `zone_id uuid not null` — the tenant boundary.
-- Chapter-scoped tables also have `chapter_id uuid not null`.
+- Chapter-scoped tables also have `chapter_id uuid not null`; group-scoped tables/bindings add `group_id` while still carrying `zone_id`.
 - Most domain tables denormalize `region_id` for fast region-aware reports; updated by a maintenance job when a zone's region changes.
 - API middleware:
   1. Resolves the user from the session.
   2. Resolves the zone from `Host` header (subdomain or custom domain) and matches against the user's `user_role_bindings`.
-  3. Builds an `AuthorizedContext` containing `{ userId, zoneId, regionId, roles[], chapterIds[] }`.
-  4. Every DB query goes through a thin tenant-aware wrapper that injects the `zone_id` filter.
+  3. Builds an `AuthorizedContext` containing `{ userId, zoneId, regionId, roleCodes[], chapterIds[], groupIds[] }`.
+  4. Tenant reads that return chapter-scoped data go through `visibleChapterIds(ctx)`: zone roles resolve to `all`; chapter/group roles resolve to the exact chapter id list they may see.
+  5. Every DB query goes through a thin tenant-aware wrapper that injects the `zone_id` filter.
 - Drizzle `with` helpers (e.g. `withTenant(db, ctx)`) make the `zone_id` filter mandatory.
 
 ### 5.2 Defence in depth
@@ -188,7 +189,7 @@ We organize the codebase by domain context, not by technical layer.
 | Context | Owns |
 |---|---|
 | **Identity** | Users, sessions, OTP, password reset, MFA. |
-| **Tenancy** | Zones, chapters, custom domains, branding. |
+| **Tenancy** | Zones, optional groups, chapters, custom domains, branding. |
 | **Regions** (platform-only) | Curated region reference list, unverified region submissions, merging. |
 | **People** | Members, addresses, dedup, merges. |
 | **Giving setup** | Categories, types, payment methods, accounts/funds, service types, periods. |
@@ -306,10 +307,10 @@ Four Hono middlewares compose every request, in this order:
 |---|---|---|
 | `tenantMiddleware` | `tenant: { zoneId, zoneSlug, regionId }` resolved from Host (subdomain or custom domain) or, on the configured API host only, `x-stewardledger-zone-slug` | tenant routes only |
 | `requireSession` | `user: { id, email, isSuperAdmin }` from Better Auth | tenant + admin routes |
-| `requireTenantAuth` | `auth: AuthorizedContext` (union of role codes + chapter ids in this zone) | tenant routes |
+| `requireTenantAuth` | `auth: AuthorizedContext` (union of role codes + chapter/group ids in this zone) | tenant routes |
 | `requirePlatformRole(...)` | (asserts only) | admin routes |
 
-A helper `requireChapterScope(ctx, chapterId, readRoles)` builds on the auth context to gate **chapter-scoped reads**: it returns a discriminated union (`{ ok: true }` / `{ status: 404, code: "chapter_not_found" }` / `{ status: 403, code: "forbidden" }`) and is wired into the list endpoints for members, contributions, contribution batches, imports, and chapter batch templates. Cross-zone ids surface as 404 to avoid leaking that the chapter exists; in-zone-but-unauthorised callers see 403.
+A helper `requireChapterScope(ctx, chapterId, readRoles)` builds on the auth context to gate **chapter-scoped reads**: it returns a discriminated union (`{ ok: true }` / `{ status: 404, code: "chapter_not_found" }` / `{ status: 403, code: "forbidden" }`) and is wired into the list endpoints for members, contributions, contribution batches, imports, chapter batch templates, and group-history reads. Cross-zone ids surface as 404 to avoid leaking that the chapter exists; in-zone-but-unauthorised callers see 403. The related `visibleChapterIds(ctx)` chokepoint expands group bindings through the current `chapters.group_id` values so group-tier readers are consistently clamped across tenant routes and reports.
 
 Route groups:
 
@@ -317,7 +318,7 @@ Route groups:
 - `/api/tenant/*` — `tenantMiddleware → requireSession → requireTenantAuth`. Split-host web deployments send `x-stewardledger-zone-slug` because `api.stewardledger.church` is a reserved host and cannot itself identify a tenant; the middleware ignores that header on non-API hosts so custom domains cannot spoof tenant selection.
 - `/api/admin/*` — `requireSession → requirePlatformRole(super_admin, region_curator, ...)`. Cross-zone reads are allowed here and only here. `/api/admin/zones`, `/api/admin/zones/:slug`, `/api/admin/zones/invite`, and `DELETE /api/admin/zones/:slug` are currently super-admin-only; the list endpoint uses cursor pagination on `(created_at, id)` plus per-currency contribution subtotals. Zone removal is a soft delete (`zones.deleted_at`) so tenant data stays recoverable while admin lists, detail reads, and session-zone lookup exclude the removed zone.
 
-The SvelteKit root layout treats `/` as the anonymous marketing landing page only. If a signed-in user reaches `/` directly or through same-tab navigation, the web app redirects to the same canonical destination used after login: platform users to `/admin/zones`, zone users to `/zone/chapters`, chapter-only users to `/church/overview`, and users with no usable binding to `/login?error=no_zone`.
+The SvelteKit root layout treats `/` as the anonymous marketing landing page only. If a signed-in user reaches `/` directly or through same-tab navigation, the web app redirects to the same canonical destination used after login: platform users to `/admin/zones`, zone users to `/zone/chapters`, group-tier users to `/group/dashboard`, chapter-only users to `/church/overview`, and users with no usable binding to `/login?error=no_zone`.
 
 Member profile reference lists (titles, marital statuses, and member types) are managed from the zonal Members page because they only configure member profile fields and member reports. The retired `/zone/lookups` route redirects to `/zone/members?panel=profile-fields` for existing bookmarks.
 
@@ -325,17 +326,17 @@ Zone admins can add members one at a time or upload a CSV roster from the Member
 
 ### 12.2 Invitations
 
-All user onboarding goes through the `invitations` table (see DOMAIN-MODEL.md §2.6):
+All user onboarding goes through the `invitations` table (see DOMAIN-MODEL.md §2.7):
 
 - **Admin-issued zone onboarding** (`POST /api/admin/zones/invite`, super-admin only) creates the zone in `pending_setup`, seeds roles/lookups/giving setup/periods, writes a `zone_owner` invitation pinned to the primary contact email, and emails an opaque 32-byte URL-safe token. The raw token only appears in the email; the DB stores its SHA-256 hash. Every call writes a `zone.invite` audit event attributing the action to the admin.
 - **Owner-invite resend** (`POST /api/admin/zones/:slug/owner-invitations`, super-admin only, while the zone is still `pending_setup`) revokes every open `zone_owner` invitation for the zone and emits a fresh one. Use this to correct a wrong email or replace a lost/expired link — the old token stops working immediately. Writes a `zone.owner_invite.resend` audit event recording the revoked invitation ids.
 - **Cross-tenant invitation revoke** (`POST /api/admin/zones/:slug/invitations/:id/revoke`, super-admin only) revokes a specific open invitation on any zone. Used by the platform-admin dashboard; the tenant-side equivalent at `POST /api/tenant/invitations/:id/revoke` is preferred when a zone admin is available.
 - **Zone removal** (`DELETE /api/admin/zones/:slug`, super-admin only) soft-deletes the zone by setting `zones.deleted_at` and writes a `zone.remove` audit event. Removed zones disappear from `/admin/zones`, `/admin/zones/:slug`, and `/api/public/session-zones`; posted financial records are not hard-deleted.
-- **Team invitations and active access** are managed by zone owners/admins from `/zone/administrators`. The page reads active tenant bindings via `GET /api/tenant/administrators`, revokes them with `DELETE /api/tenant/administrators/:bindingId` (with a self-lockout guard for the caller's own zone owner/admin access), and creates zone-wide or chapter-scoped invitations via `POST /api/tenant/invitations`. `chapter_admin` callers are accepted on the invitation endpoints too — they can list / create / revoke invitations clamped to their bound chapter, with the API enforcing the clamp regardless of the request payload. All invitation paths follow the same accept flow.
+- **Team invitations and active access** are managed by zone owners/admins from `/zone/administrators`. The page reads active tenant bindings via `GET /api/tenant/administrators`, revokes them with `DELETE /api/tenant/administrators/:bindingId` (with a self-lockout guard for the caller's own zone owner/admin access), and creates zone-wide, group-scoped, or chapter-scoped invitations via `POST /api/tenant/invitations`. `group_admin` callers can invite chapter-tier roles into chapters in their bound groups; `chapter_admin` callers can list / create / revoke invitations clamped to their bound chapter. The API enforces the clamp regardless of the request payload. All invitation paths follow the same accept flow.
 - **Acceptance** runs Better Auth `signUpEmail` with the email pinned by the invitation, then writes the role binding atomically. A `zone_owner` accept also flips the zone from `pending_setup` to `active` and sets `users.default_zone_id`.
-- **Demo seed data** creates zones, chapters, members, and contributions only. It does not create church or zone login accounts. To access a demo zone, create a platform admin with `pnpm create-admin`, open `/onboarding/invites?zone=<demo-slug>`, invite the desired zone-wide or chapter-scoped user, then accept the logged invitation URL to create the password.
+- **Demo seed data** creates zones, groups, chapters, members, and contributions only. It does not create church, group, or zone login accounts. To access a demo zone, create a platform admin with `pnpm create-admin`, open `/onboarding/invites?zone=<demo-slug>`, invite the desired zone-wide, group-scoped, or chapter-scoped user, then accept the logged invitation URL to create the password.
 - **Chapter onboarding** is only for zones with no chapters. The web app checks `/api/tenant/chapters` before rendering the first-chapter form and redirects to the zone area when any chapter already exists.
-- **Ongoing chapter management** lives under `Zone → Chapters`, where zone owners/admins can add additional chapters after onboarding and optionally send chapter-scoped administrator invitations as part of chapter creation. If an invitation fails after the chapter is created, the UI keeps the remaining invitation rows attached to the created chapter so the operator can retry without creating a duplicate chapter. The register includes each chapter's active member count, chapter names open a profile page backed by `GET /api/tenant/chapters/:id` and `PATCH /api/tenant/chapters/:id/profile`, and the dashboard action opens the chapter-scoped church overview with that chapter selected. The profile is stored in `chapters.metadata.profile` and records the church address, pastor, and contact details without adding another join target; website values are limited to HTTP(S) URLs. Chapter profile and banking updates write only their own `chapters.metadata` JSON key so one settings form cannot overwrite the other. The `Zone` entry opens chapters first because zone setup usually starts there before member management.
+- **Ongoing chapter management** lives under `Zone → Chapters`, where zone owners/admins can add additional chapters after onboarding and optionally send chapter-scoped administrator invitations as part of chapter creation. `Zone → Groups` manages group CRUD, the one-way `groups_enabled` toggle, and the pre-enable assignment workflow; after enablement, chapter moves go through the chapter detail page so `chapter_group_history` stays point-in-time correct. If an invitation fails after the chapter is created, the UI keeps the remaining invitation rows attached to the created chapter so the operator can retry without creating a duplicate chapter. The register includes each chapter's active member count, chapter names open a profile page backed by `GET /api/tenant/chapters/:id` and `PATCH /api/tenant/chapters/:id/profile`, and the dashboard action opens the chapter-scoped church overview with that chapter selected. The profile is stored in `chapters.metadata.profile` and records the church address, pastor, and contact details without adding another join target; website values are limited to HTTP(S) URLs. Chapter profile and banking updates write only their own `chapters.metadata` JSON key so one settings form cannot overwrite the other. The `Zone` entry opens chapters first because zone setup usually starts there before member management.
 
 ---
 

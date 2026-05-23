@@ -9,9 +9,10 @@
 
 import { sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { CHAPTER_ROLES, ZONE_ROLES } from "@stewardledger/shared";
+import { CHAPTER_ROLES, GROUP_ROLES, ZONE_ROLES } from "@stewardledger/shared";
 import {
   chapters,
+  groups,
   invitations,
   members,
   roles,
@@ -35,6 +36,8 @@ interface SeededZone {
   slug: string;
   name: string;
   ownerRoleId: string;
+  groupAdminRoleId: string;
+  groupPastorViewerRoleId: string;
   chapterAdminRoleId: string;
   chapterTreasurerRoleId: string;
 }
@@ -58,6 +61,8 @@ async function seedZone(slug: string, name: string): Promise<SeededZone> {
     slug: zone.slug,
     name: zone.name,
     ownerRoleId: seeded.get(ZONE_ROLES.ZONE_OWNER)!,
+    groupAdminRoleId: seeded.get(GROUP_ROLES.GROUP_ADMIN)!,
+    groupPastorViewerRoleId: seeded.get(GROUP_ROLES.GROUP_PASTOR_VIEWER)!,
     chapterAdminRoleId: seeded.get(CHAPTER_ROLES.CHAPTER_ADMIN)!,
     chapterTreasurerRoleId: seeded.get(CHAPTER_ROLES.CHAPTER_TREASURER)!,
   };
@@ -156,12 +161,14 @@ describe("tenant routes — cross-tenant fuzz", () => {
       userId: userA,
       zoneId: zoneA.id,
       roleId: zoneA.ownerRoleId,
+      roleScope: "zone",
     });
     // Bind userBOwner as owner of zone B (so we can verify zone B has its own data).
     await db.insert(userRoleBindings).values({
       userId: userBOwner,
       zoneId: zoneB.id,
       roleId: zoneB.ownerRoleId,
+      roleScope: "zone",
     });
 
     chapterA = await seedChapter(zoneA.id, "Chapter A");
@@ -200,6 +207,9 @@ describe("tenant routes — cross-tenant fuzz", () => {
       );
       await db.execute(
         sql`delete from chapters where zone_id = (select id from zones where slug = ${slug})`,
+      );
+      await db.execute(
+        sql`delete from groups where zone_id = (select id from zones where slug = ${slug})`,
       );
       await db.execute(sql`delete from zones where slug = ${slug}`);
     }
@@ -286,6 +296,7 @@ describe("tenant routes — cross-tenant fuzz", () => {
       zoneId: zoneA.id,
       chapterId: chapterA,
       roleId: zoneA.chapterAdminRoleId,
+      roleScope: "chapter",
     });
 
     vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
@@ -323,6 +334,7 @@ describe("tenant routes — cross-tenant fuzz", () => {
         zoneId: zoneA.id,
         chapterId: chapterA,
         roleId: zoneA.chapterAdminRoleId,
+        roleScope: "chapter",
       })
       .returning({ id: userRoleBindings.id });
     const [zoneAdminRole] = await db
@@ -334,6 +346,7 @@ describe("tenant routes — cross-tenant fuzz", () => {
       userId: zoneAdmin,
       zoneId: zoneA.id,
       roleId: zoneAdminRole.id,
+      roleScope: "zone",
     });
 
     vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
@@ -498,8 +511,8 @@ describe("tenant routes — cross-tenant fuzz", () => {
       .select({ code: roles.code })
       .from(roles)
       .where(sql`${roles.zoneId} = ${zoneB.id}`);
-    expect(aRoles.length).toBe(9);
-    expect(bRoles.length).toBe(9);
+    expect(aRoles.length).toBe(11);
+    expect(bRoles.length).toBe(11);
     // Same role codes, different ids.
     expect(new Set(aRoles.map((r) => r.code))).toEqual(new Set(bRoles.map((r) => r.code)));
   });
@@ -653,12 +666,14 @@ describe("tenant routes — cross-tenant fuzz", () => {
         zoneId: zoneA.id,
         chapterId: chapterA,
         roleId: zoneA.chapterAdminRoleId,
+        roleScope: "chapter",
       },
       {
         userId: mixedRoleUser,
         zoneId: zoneA.id,
         chapterId: otherChapter,
         roleId: zoneA.chapterTreasurerRoleId,
+        roleScope: "chapter",
       },
     ]);
     vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(mixedRoleUser, "mixed@x"));
@@ -688,6 +703,7 @@ describe("tenant routes — cross-tenant fuzz", () => {
       zoneId: zoneA.id,
       chapterId: chapterA,
       roleId: zoneA.chapterAdminRoleId,
+      roleScope: "chapter",
     });
     vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(chapAdmin, "ca@x"));
 
@@ -704,6 +720,89 @@ describe("tenant routes — cross-tenant fuzz", () => {
     expect(foreignPatch.status).toBe(403);
   });
 
+  it("group admin can write chapter settings inside their group only", async () => {
+    const groupChapter = await seedChapter(zoneA.id, `Group Settings ${unique()}`);
+    const outsideChapter = await seedChapter(zoneA.id, `Outside Settings ${unique()}`);
+    const [group] = await db
+      .insert(groups)
+      .values({ zoneId: zoneA.id, slug: `settings-${unique()}`, name: `Settings ${unique()}` })
+      .returning({ id: groups.id });
+    await db.execute(sql`update chapters set group_id = ${group.id} where id = ${groupChapter}`);
+
+    const groupAdmin = await seedUser(`group-settings+${unique()}@example.com`);
+    cleanupUserIds.push(groupAdmin);
+    await db.insert(userRoleBindings).values({
+      userId: groupAdmin,
+      zoneId: zoneA.id,
+      groupId: group.id,
+      roleId: zoneA.groupAdminRoleId,
+      roleScope: "group",
+    });
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(groupAdmin, "group-settings@x"));
+
+    const ownPatch = await call(zoneA.slug, `/api/tenant/chapters/${groupChapter}/profile`, {
+      method: "PATCH",
+      body: { pastorName: "Group Pastor" },
+    });
+    expect(ownPatch.status).toBe(200);
+
+    const outsidePatch = await call(zoneA.slug, `/api/tenant/chapters/${outsideChapter}/profile`, {
+      method: "PATCH",
+      body: { pastorName: "Outside Pastor" },
+    });
+    expect(outsidePatch.status).toBe(403);
+  });
+
+  it("group admin chapter writes require group_admin on the target group", async () => {
+    const adminChapter = await seedChapter(zoneA.id, `Admin Group Chapter ${unique()}`);
+    const viewerChapter = await seedChapter(zoneA.id, `Viewer Group Chapter ${unique()}`);
+    const [adminGroup, viewerGroup] = await db
+      .insert(groups)
+      .values([
+        { zoneId: zoneA.id, slug: `admin-${unique()}`, name: `Admin ${unique()}` },
+        { zoneId: zoneA.id, slug: `viewer-${unique()}`, name: `Viewer ${unique()}` },
+      ])
+      .returning({ id: groups.id });
+    await db.execute(sql`update chapters set group_id = ${adminGroup.id} where id = ${adminChapter}`);
+    await db.execute(sql`update chapters set group_id = ${viewerGroup.id} where id = ${viewerChapter}`);
+
+    const mixedGroupUser = await seedUser(`mixed-group+${unique()}@example.com`);
+    cleanupUserIds.push(mixedGroupUser);
+    await db.insert(userRoleBindings).values([
+      {
+        userId: mixedGroupUser,
+        zoneId: zoneA.id,
+        groupId: adminGroup.id,
+        roleId: zoneA.groupAdminRoleId,
+        roleScope: "group",
+      },
+      {
+        userId: mixedGroupUser,
+        zoneId: zoneA.id,
+        groupId: viewerGroup.id,
+        roleId: zoneA.groupPastorViewerRoleId,
+        roleScope: "group",
+      },
+    ]);
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(mixedGroupUser, "mixed-group@x"));
+
+    const adminGroupPatch = await call(zoneA.slug, `/api/tenant/chapters/${adminChapter}/profile`, {
+      method: "PATCH",
+      body: { pastorName: "Admin Group Pastor" },
+    });
+    expect(adminGroupPatch.status).toBe(200);
+
+    const viewerGroupPatch = await call(
+      zoneA.slug,
+      `/api/tenant/chapters/${viewerChapter}/profile`,
+      {
+        method: "PATCH",
+        body: { pastorName: "Viewer Group Pastor" },
+      },
+    );
+    expect(viewerGroupPatch.status).toBe(403);
+  });
+
   it("GET /chapters/:id/roster lists active chapter-scope bindings", async () => {
     // Seed a chapter admin for chapterA and confirm they show up.
     const treasurer = await seedUser(`treasurer+${unique()}@example.com`);
@@ -713,6 +812,7 @@ describe("tenant routes — cross-tenant fuzz", () => {
       zoneId: zoneA.id,
       chapterId: chapterA,
       roleId: zoneA.chapterAdminRoleId,
+      roleScope: "chapter",
     });
     vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
     const res = await call(zoneA.slug, `/api/tenant/chapters/${chapterA}/roster`);
@@ -732,6 +832,7 @@ describe("tenant routes — cross-tenant fuzz", () => {
       zoneId: zoneA.id,
       chapterId: chapterA,
       roleId: zoneA.chapterAdminRoleId,
+      roleScope: "chapter",
     });
     vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(chapAdmin, "ca@x"));
 
@@ -764,6 +865,198 @@ describe("tenant routes — cross-tenant fuzz", () => {
       },
     });
     expect(zoneScope.status).toBe(403);
+  });
+
+  it("mixed group/chapter admin can invite into chapters covered by either binding", async () => {
+    const groupChapter = await seedChapter(zoneA.id, `Group Chapter ${unique()}`);
+    const outsideChapter = await seedChapter(zoneA.id, `Outside Chapter ${unique()}`);
+    const [group] = await db
+      .insert(groups)
+      .values({ zoneId: zoneA.id, slug: `group-${unique()}`, name: `Group ${unique()}` })
+      .returning({ id: groups.id });
+    await db.execute(sql`update chapters set group_id = ${group.id} where id = ${groupChapter}`);
+
+    const mixedAdmin = await seedUser(`mixed-admin+${unique()}@example.com`);
+    cleanupUserIds.push(mixedAdmin);
+    await db.insert(userRoleBindings).values([
+      {
+        userId: mixedAdmin,
+        zoneId: zoneA.id,
+        groupId: group.id,
+        roleId: zoneA.groupAdminRoleId,
+        roleScope: "group",
+      },
+      {
+        userId: mixedAdmin,
+        zoneId: zoneA.id,
+        chapterId: chapterA,
+        roleId: zoneA.chapterAdminRoleId,
+        roleScope: "chapter",
+      },
+    ]);
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(mixedAdmin, "mixed@x"));
+
+    const groupScoped = await call(zoneA.slug, "/api/tenant/invitations", {
+      method: "POST",
+      body: {
+        email: `mixed-group+${unique()}@example.com`,
+        roleCode: CHAPTER_ROLES.CHAPTER_TREASURER,
+        chapterId: groupChapter,
+      },
+    });
+    expect(groupScoped.status).toBe(201);
+
+    const chapterScoped = await call(zoneA.slug, "/api/tenant/invitations", {
+      method: "POST",
+      body: {
+        email: `mixed-chapter+${unique()}@example.com`,
+        roleCode: CHAPTER_ROLES.CHAPTER_TREASURER,
+        chapterId: chapterA,
+      },
+    });
+    expect(chapterScoped.status).toBe(201);
+
+    const outOfScope = await call(zoneA.slug, "/api/tenant/invitations", {
+      method: "POST",
+      body: {
+        email: `mixed-out+${unique()}@example.com`,
+        roleCode: CHAPTER_ROLES.CHAPTER_TREASURER,
+        chapterId: outsideChapter,
+      },
+    });
+    expect(outOfScope.status).toBe(403);
+  });
+
+  it("mixed group/chapter admin can revoke invitations covered by either binding", async () => {
+    const groupChapter = await seedChapter(zoneA.id, `Group Revoke ${unique()}`);
+    const outsideChapter = await seedChapter(zoneA.id, `Outside Revoke ${unique()}`);
+    const [group] = await db
+      .insert(groups)
+      .values({ zoneId: zoneA.id, slug: `revoke-${unique()}`, name: `Revoke ${unique()}` })
+      .returning({ id: groups.id });
+    await db.execute(sql`update chapters set group_id = ${group.id} where id = ${groupChapter}`);
+
+    const mixedAdmin = await seedUser(`mixed-revoke+${unique()}@example.com`);
+    cleanupUserIds.push(mixedAdmin);
+    await db.insert(userRoleBindings).values([
+      {
+        userId: mixedAdmin,
+        zoneId: zoneA.id,
+        groupId: group.id,
+        roleId: zoneA.groupAdminRoleId,
+        roleScope: "group",
+      },
+      {
+        userId: mixedAdmin,
+        zoneId: zoneA.id,
+        chapterId: chapterA,
+        roleId: zoneA.chapterAdminRoleId,
+        roleScope: "chapter",
+      },
+    ]);
+
+    const [groupInvite, chapterInvite, outsideInvite] = await db
+      .insert(invitations)
+      .values([
+        {
+          zoneId: zoneA.id,
+          email: `revoke-group+${unique()}@example.com`,
+          roleCode: CHAPTER_ROLES.CHAPTER_TREASURER,
+          chapterId: groupChapter,
+          tokenHash: `hash-rg-${unique()}`,
+          expiresAt: new Date(Date.now() + 86_400_000),
+        },
+        {
+          zoneId: zoneA.id,
+          email: `revoke-chapter+${unique()}@example.com`,
+          roleCode: CHAPTER_ROLES.CHAPTER_TREASURER,
+          chapterId: chapterA,
+          tokenHash: `hash-rc-${unique()}`,
+          expiresAt: new Date(Date.now() + 86_400_000),
+        },
+        {
+          zoneId: zoneA.id,
+          email: `revoke-out+${unique()}@example.com`,
+          roleCode: CHAPTER_ROLES.CHAPTER_TREASURER,
+          chapterId: outsideChapter,
+          tokenHash: `hash-ro-${unique()}`,
+          expiresAt: new Date(Date.now() + 86_400_000),
+        },
+      ])
+      .returning({ id: invitations.id });
+
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(mixedAdmin, "mixed-revoke@x"));
+
+    const groupScoped = await call(
+      zoneA.slug,
+      `/api/tenant/invitations/${groupInvite.id}/revoke`,
+      { method: "POST" },
+    );
+    expect(groupScoped.status).toBe(200);
+
+    const chapterScoped = await call(
+      zoneA.slug,
+      `/api/tenant/invitations/${chapterInvite.id}/revoke`,
+      { method: "POST" },
+    );
+    expect(chapterScoped.status).toBe(200);
+
+    const outOfScope = await call(
+      zoneA.slug,
+      `/api/tenant/invitations/${outsideInvite.id}/revoke`,
+      { method: "POST" },
+    );
+    expect(outOfScope.status).toBe(403);
+  });
+
+  it("group admin lists only invitations for chapters in their group", async () => {
+    const groupChapter = await seedChapter(zoneA.id, `Group List ${unique()}`);
+    const outsideChapter = await seedChapter(zoneA.id, `Outside List ${unique()}`);
+    const [group] = await db
+      .insert(groups)
+      .values({ zoneId: zoneA.id, slug: `list-${unique()}`, name: `List ${unique()}` })
+      .returning({ id: groups.id });
+    await db.execute(sql`update chapters set group_id = ${group.id} where id = ${groupChapter}`);
+
+    const groupAdmin = await seedUser(`group-list+${unique()}@example.com`);
+    cleanupUserIds.push(groupAdmin);
+    await db.insert(userRoleBindings).values({
+      userId: groupAdmin,
+      zoneId: zoneA.id,
+      groupId: group.id,
+      roleId: zoneA.groupAdminRoleId,
+      roleScope: "group",
+    });
+
+    const [groupInvite, outsideInvite] = await db
+      .insert(invitations)
+      .values([
+        {
+          zoneId: zoneA.id,
+          email: `list-group+${unique()}@example.com`,
+          roleCode: CHAPTER_ROLES.CHAPTER_TREASURER,
+          chapterId: groupChapter,
+          tokenHash: `hash-lg-${unique()}`,
+          expiresAt: new Date(Date.now() + 86_400_000),
+        },
+        {
+          zoneId: zoneA.id,
+          email: `list-out+${unique()}@example.com`,
+          roleCode: CHAPTER_ROLES.CHAPTER_TREASURER,
+          chapterId: outsideChapter,
+          tokenHash: `hash-lo-${unique()}`,
+          expiresAt: new Date(Date.now() + 86_400_000),
+        },
+      ])
+      .returning({ id: invitations.id });
+
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(groupAdmin, "group-list@x"));
+    const res = await call(zoneA.slug, "/api/tenant/invitations");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: { id: string }[] };
+    const ids = new Set(body.items.map((i) => i.id));
+    expect(ids.has(groupInvite.id)).toBe(true);
+    expect(ids.has(outsideInvite.id)).toBe(false);
   });
 
   it("GET /invitations?chapterId= clamps zone-admin and chapter-admin to that chapter", async () => {
@@ -865,8 +1158,12 @@ describe("tenant routes — cross-tenant fuzz", () => {
       )
       .limit(1);
     await db.insert(userRoleBindings).values([
-      { userId: chapAdmin, zoneId: zoneA.id, chapterId: chapterA, roleId: zoneA.chapterAdminRoleId },
-      { userId: bookkeeper, zoneId: zoneA.id, chapterId: chapterA, roleId: bkRole.id },
+      { userId: chapAdmin, zoneId: zoneA.id, chapterId: chapterA, roleId: zoneA.chapterAdminRoleId,
+  roleScope: "chapter",
+},
+      { userId: bookkeeper, zoneId: zoneA.id, chapterId: chapterA, roleId: bkRole.id,
+  roleScope: "chapter",
+},
     ]);
 
     vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(chapAdmin, "ca@x"));

@@ -4,7 +4,9 @@
 import { zValidator } from "@hono/zod-validator";
 import {
   chapterBatchTemplates,
+  chapterGroupHistory,
   chapters,
+  groups,
   invitations,
   members,
   roles as rolesTable,
@@ -15,35 +17,47 @@ import {
 import {
   type AuthorizedContext,
   CHAPTER_ROLES,
+  GROUP_ROLES,
   chapterBankingSettingsSchema,
   chapterCreateSchema,
   chapterProfileSchema,
   contributionBatchTemplateCreateSchema,
   invitationCreateSchema,
+  uuidSchema,
   ZONE_ROLES,
 } from "@stewardledger/shared";
+import { z } from "zod";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
 import {
   hasAnyRole,
   requireChapterScope,
+  visibleChapterIds,
   requireSession,
   requireTenantAuth,
 } from "../middleware/auth";
 import { type TenantBindings, tenantMiddleware } from "../middleware/tenant";
 import { writeAudit } from "../services/audit";
 import { nextChapterReferenceCode } from "../services/chapter-codes";
+import {
+  assignChapterToGroupPreEnable,
+  ChapterNotFoundError,
+  GroupNotFoundError,
+  GroupsNotEnabledError,
+} from "../services/groups";
 import { brandedEmailHtml, escapeHtml, sendEmail } from "../services/email";
 import {
   buildAcceptUrl,
   createInvitation,
   isChapterRole,
+  isGroupRole,
   revokeOpenInvitations,
 } from "../services/invitations";
 import { tenantContributionsRouter } from "./tenant-contributions";
 import { tenantDashboardRouter } from "./tenant-dashboard";
 import { tenantGivingRouter } from "./tenant-giving";
+import { tenantGroupsRouter } from "./tenant-groups";
 import { tenantGivingEventsRouter } from "./tenant-giving-events";
 import { tenantGivingMethodsRouter } from "./tenant-giving-methods";
 import { tenantImportsRouter } from "./tenant-imports";
@@ -52,6 +66,7 @@ import { tenantReportsRouter } from "./tenant-reports";
 import { tenantPayingInBooksRouter } from "./tenant-paying-in-books";
 import { tenantPeriodsRouter } from "./tenant-periods";
 import { tenantTargetsRouter } from "./tenant-targets";
+import { tenantZonesRouter } from "./tenant-zones";
 
 export const tenantRouter = new Hono();
 
@@ -60,6 +75,7 @@ tenantRouter.use("*", tenantMiddleware, requireSession, requireTenantAuth);
 // Member-domain routes live in their own module to keep this file small.
 tenantRouter.route("/", tenantMembersRouter);
 tenantRouter.route("/", tenantGivingRouter);
+tenantRouter.route("/", tenantGroupsRouter);
 tenantRouter.route("/", tenantGivingMethodsRouter);
 tenantRouter.route("/", tenantGivingEventsRouter);
 tenantRouter.route("/", tenantContributionsRouter);
@@ -69,6 +85,7 @@ tenantRouter.route("/", tenantDashboardRouter);
 tenantRouter.route("/", tenantTargetsRouter);
 tenantRouter.route("/", tenantPayingInBooksRouter);
 tenantRouter.route("/", tenantPeriodsRouter);
+tenantRouter.route("/", tenantZonesRouter);
 
 /** Current user's authorization context for the resolved zone. */
 tenantRouter.get("/me", async (c) => {
@@ -80,6 +97,23 @@ tenantRouter.get("/me", async (c) => {
     .where(eq(zones.id, tenant.zoneId))
     .limit(1);
   return c.json({ user: { id: ctx.userId }, zone, auth: ctx });
+});
+
+/** Zone metadata including the groups_enabled toggle state. */
+tenantRouter.get("/zone", async (c) => {
+  const ctx = c.get("auth") as AuthorizedContext;
+  const [row] = await db
+    .select({
+      id: zones.id,
+      slug: zones.slug,
+      name: zones.name,
+      groupsEnabled: zones.groupsEnabled,
+    })
+    .from(zones)
+    .where(eq(zones.id, ctx.zoneId))
+    .limit(1);
+  if (!row) return c.json({ error: { code: "not_found", message: "Zone not found" } }, 404);
+  return c.json({ zone: row });
 });
 
 // ─── Chapters ─────────────────────────────────────────────────────────
@@ -101,6 +135,7 @@ const CHAPTER_READ_ZONE_ROLES = [
 const CHAPTER_SETTINGS_WRITE_ROLES = [
   ZONE_ROLES.ZONE_OWNER,
   ZONE_ROLES.ZONE_ADMIN,
+  GROUP_ROLES.GROUP_ADMIN,
   CHAPTER_ROLES.CHAPTER_ADMIN,
 ] as const;
 const CHAPTER_SETTINGS_ZONE_WRITE_ROLES = [ZONE_ROLES.ZONE_OWNER, ZONE_ROLES.ZONE_ADMIN] as const;
@@ -130,6 +165,31 @@ function forbidden(c: { json: (b: unknown, s: number) => Response }, msg = "Insu
 
 async function canWriteChapterSettings(ctx: AuthorizedContext, chapterId: string): Promise<boolean> {
   if (hasAnyRole(ctx, ...CHAPTER_SETTINGS_ZONE_WRITE_ROLES)) return true;
+  if (ctx.roleCodes.includes(GROUP_ROLES.GROUP_ADMIN)) {
+    const [binding] = await db
+      .select({ id: userRoleBindings.id })
+      .from(chapters)
+      .innerJoin(
+        userRoleBindings,
+        and(
+          eq(userRoleBindings.zoneId, chapters.zoneId),
+          eq(userRoleBindings.groupId, chapters.groupId),
+        ),
+      )
+      .innerJoin(rolesTable, eq(userRoleBindings.roleId, rolesTable.id))
+      .where(
+        and(
+          eq(chapters.id, chapterId),
+          eq(chapters.zoneId, ctx.zoneId),
+          isNull(chapters.deletedAt),
+          eq(userRoleBindings.userId, ctx.userId),
+          eq(rolesTable.code, GROUP_ROLES.GROUP_ADMIN),
+          isNull(userRoleBindings.revokedAt),
+        ),
+      )
+      .limit(1);
+    if (binding) return true;
+  }
   if (!ctx.roleCodes.includes(CHAPTER_ROLES.CHAPTER_ADMIN)) return false;
   const [binding] = await db
     .select({ id: userRoleBindings.id })
@@ -150,10 +210,10 @@ async function canWriteChapterSettings(ctx: AuthorizedContext, chapterId: string
 
 tenantRouter.get("/chapters", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
-  const zoneWide = hasAnyRole(ctx, ...CHAPTER_READ_ZONE_ROLES);
-  if (!zoneWide && ctx.chapterIds.length === 0) return c.json({ items: [] });
+  const scope = await visibleChapterIds(ctx, CHAPTER_READ_ZONE_ROLES);
+  if (scope.kind === "list" && scope.ids.length === 0) return c.json({ items: [] });
   const conditions = [eq(chapters.zoneId, ctx.zoneId), isNull(chapters.deletedAt)];
-  if (!zoneWide) conditions.push(inArray(chapters.id, ctx.chapterIds));
+  if (scope.kind === "list") conditions.push(inArray(chapters.id, scope.ids));
   const rows = await db
     .select({
       id: chapters.id,
@@ -163,6 +223,7 @@ tenantRouter.get("/chapters", async (c) => {
       dateFrom: chapters.dateFrom,
       dateTo: chapters.dateTo,
       createdAt: chapters.createdAt,
+      groupId: chapters.groupId,
       activeMemberCount: sql<number>`count(${members.id})::int`,
     })
     .from(chapters)
@@ -189,27 +250,93 @@ tenantRouter.post("/chapters", zValidator("json", chapterCreateSchema), async (c
   const input = c.req.valid("json");
   const today = new Date().toISOString().slice(0, 10);
   const result = await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${ctx.zoneId}, 0))`,
+    );
     const referenceCode = await nextChapterReferenceCode(tx, ctx.zoneId);
     const [zone] = await tx
-      .select({ regionId: zones.regionId })
+      .select({ regionId: zones.regionId, groupsEnabled: zones.groupsEnabled })
       .from(zones)
       .where(eq(zones.id, ctx.zoneId))
       .limit(1);
+
+    if (zone?.groupsEnabled && !input.groupId) {
+      return {
+        error: {
+          status: 400 as const,
+          code: "group_required",
+          message: "groupId is required when groups are enabled",
+        },
+      } as const;
+    }
+    if (input.groupId) {
+      const [grp] = await tx
+        .select({ id: groups.id })
+        .from(groups)
+        .where(
+          and(
+            eq(groups.id, input.groupId),
+            eq(groups.zoneId, ctx.zoneId),
+            isNull(groups.deletedAt),
+          ),
+        )
+        .limit(1);
+      if (!grp) {
+        return {
+          error: {
+            status: 404 as const,
+            code: "group_not_found",
+            message: "Group not in this zone",
+          },
+        } as const;
+      }
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${input.groupId}, 0))`,
+      );
+      const [grp2] = await tx
+        .select({ deletedAt: groups.deletedAt })
+        .from(groups)
+        .where(eq(groups.id, input.groupId))
+        .limit(1);
+      if (!grp2 || grp2.deletedAt) {
+        return {
+          error: {
+            status: 404 as const,
+            code: "group_not_found",
+            message: "Group not in this zone",
+          },
+        } as const;
+      }
+    }
+
+    const dateFrom = input.dateFrom ?? today;
+
     const [row] = await tx
       .insert(chapters)
       .values({
         zoneId: ctx.zoneId,
         regionId: zone?.regionId ?? null,
+        groupId: input.groupId ?? null,
         referenceCode,
         name: input.name,
         countryCode: input.countryCode ?? null,
-        dateFrom: input.dateFrom ?? today,
+        dateFrom,
       })
       .returning({
         id: chapters.id,
         referenceCode: chapters.referenceCode,
         name: chapters.name,
+        groupId: chapters.groupId,
       });
+
+    if (zone?.groupsEnabled && input.groupId) {
+      await tx.insert(chapterGroupHistory).values({
+        zoneId: ctx.zoneId,
+        chapterId: row.id,
+        groupId: input.groupId,
+        dateFrom,
+      });
+    }
     await writeAudit(tx, {
       zoneId: ctx.zoneId,
       actorUserId: ctx.userId,
@@ -218,9 +345,12 @@ tenantRouter.post("/chapters", zValidator("json", chapterCreateSchema), async (c
       entityId: row.id,
       after: row,
     });
-    return row;
+    return { ok: row } as const;
   });
-  return c.json({ chapter: result }, 201);
+  if ("error" in result && result.error) {
+    return c.json({ error: result.error }, result.error.status);
+  }
+  return c.json({ chapter: result.ok }, 201);
 });
 
 /**
@@ -246,6 +376,7 @@ tenantRouter.get("/chapters/:id", async (c) => {
       dateFrom: chapters.dateFrom,
       dateTo: chapters.dateTo,
       metadata: chapters.metadata,
+      groupId: chapters.groupId,
       createdAt: chapters.createdAt,
       updatedAt: chapters.updatedAt,
     })
@@ -276,6 +407,7 @@ tenantRouter.get("/chapters/:id", async (c) => {
       countryCode: row.countryCode,
       dateFrom: row.dateFrom,
       dateTo: row.dateTo,
+      groupId: row.groupId,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
       banking,
@@ -394,6 +526,52 @@ tenantRouter.patch(
     if (!result)
       return c.json({ error: { code: "not_found", message: "Chapter not found" } }, 404);
     return c.json({ banking: result });
+  },
+);
+
+tenantRouter.patch(
+  "/chapters/:id",
+  zValidator("json", z.object({ groupId: uuidSchema }).strict()),
+  async (c) => {
+    const ctx = c.get("auth") as AuthorizedContext;
+    if (!hasAnyRole(ctx, ZONE_ROLES.ZONE_OWNER, ZONE_ROLES.ZONE_ADMIN)) return forbidden(c);
+    const id = c.req.param("id");
+    const input = c.req.valid("json");
+
+    try {
+      await assignChapterToGroupPreEnable(db, {
+        zoneId: ctx.zoneId,
+        chapterId: id,
+        groupId: input.groupId,
+        actorUserId: ctx.userId,
+      });
+    } catch (e) {
+      if (e instanceof GroupsNotEnabledError) {
+        return c.json(
+          {
+            error: {
+              code: "use_move_group",
+              message: "Use POST /chapters/:id/move-group when groups are enabled",
+            },
+          },
+          400,
+        );
+      }
+      if (e instanceof GroupNotFoundError) {
+        return c.json(
+          { error: { code: "group_not_found", message: "Group not in this zone" } },
+          404,
+        );
+      }
+      if (e instanceof ChapterNotFoundError) {
+        return c.json(
+          { error: { code: "chapter_not_found", message: "Chapter not in this zone" } },
+          404,
+        );
+      }
+      throw e;
+    }
+    return c.json({ status: "assigned" });
   },
 );
 
@@ -687,6 +865,9 @@ tenantRouter.get("/administrators", async (c) => {
       chapterId: userRoleBindings.chapterId,
       chapterName: chapters.name,
       chapterReferenceCode: chapters.referenceCode,
+      groupId: userRoleBindings.groupId,
+      groupName: groups.name,
+      groupSlug: groups.slug,
       grantedAt: userRoleBindings.grantedAt,
     })
     .from(userRoleBindings)
@@ -696,11 +877,15 @@ tenantRouter.get("/administrators", async (c) => {
       chapters,
       and(eq(chapters.zoneId, userRoleBindings.zoneId), eq(chapters.id, userRoleBindings.chapterId)),
     )
+    .leftJoin(
+      groups,
+      and(eq(groups.zoneId, userRoleBindings.zoneId), eq(groups.id, userRoleBindings.groupId)),
+    )
     .where(
       and(
         eq(userRoleBindings.zoneId, ctx.zoneId),
         isNull(userRoleBindings.revokedAt),
-        inArray(rolesTable.scope, ["zone", "chapter"]),
+        inArray(rolesTable.scope, ["zone", "group", "chapter"]),
       ),
     )
     .orderBy(asc(userTable.email), asc(rolesTable.scope), asc(rolesTable.code));
@@ -719,6 +904,7 @@ tenantRouter.delete("/administrators/:bindingId", async (c) => {
         id: userRoleBindings.id,
         userId: userRoleBindings.userId,
         chapterId: userRoleBindings.chapterId,
+        groupId: userRoleBindings.groupId,
         roleCode: rolesTable.code,
         roleScope: rolesTable.scope,
       })
@@ -733,7 +919,11 @@ tenantRouter.delete("/administrators/:bindingId", async (c) => {
       )
       .limit(1);
     if (!binding) return { kind: "not_found" as const };
-    if (binding.roleScope !== "zone" && binding.roleScope !== "chapter") {
+    if (
+      binding.roleScope !== "zone" &&
+      binding.roleScope !== "group" &&
+      binding.roleScope !== "chapter"
+    ) {
       return { kind: "forbidden" as const };
     }
     if (
@@ -770,6 +960,7 @@ tenantRouter.delete("/administrators/:bindingId", async (c) => {
       before: {
         userId: binding.userId,
         chapterId: binding.chapterId,
+        groupId: binding.groupId,
         roleCode: binding.roleCode,
       },
     });
@@ -802,7 +993,8 @@ tenantRouter.get("/invitations", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
   const isZoneAdmin = hasAnyRole(ctx, ZONE_ROLES.ZONE_OWNER, ZONE_ROLES.ZONE_ADMIN);
   const isChapterAdmin = ctx.roleCodes.includes(CHAPTER_ROLES.CHAPTER_ADMIN);
-  if (!isZoneAdmin && !isChapterAdmin) {
+  const isGroupAdmin = ctx.roleCodes.includes(GROUP_ROLES.GROUP_ADMIN);
+  if (!isZoneAdmin && !isChapterAdmin && !isGroupAdmin) {
     return c.json({ error: { code: "forbidden", message: "Admin role required" } }, 403);
   }
   // Optional `?chapterId=` filter for the church-admin surface, which
@@ -820,8 +1012,11 @@ tenantRouter.get("/invitations", async (c) => {
   } else if (!isZoneAdmin) {
     // Chapter admin without a filter → only see invitations for chapters
     // they administer. Empty list when they're somehow unbound.
-    if (ctx.chapterIds.length === 0) return c.json({ items: [] });
-    conditions.push(inArray(invitations.chapterId, ctx.chapterIds));
+    const scope = await visibleChapterIds(ctx, CHAPTER_READ_ZONE_ROLES);
+    if (scope.kind === "list") {
+      if (scope.ids.length === 0) return c.json({ items: [] });
+      conditions.push(inArray(invitations.chapterId, scope.ids));
+    }
   }
   const rows = await db
     .select({
@@ -844,25 +1039,59 @@ tenantRouter.post("/invitations", zValidator("json", invitationCreateSchema), as
   const ctx = c.get("auth") as AuthorizedContext;
   const isZoneAdmin = hasAnyRole(ctx, ZONE_ROLES.ZONE_OWNER, ZONE_ROLES.ZONE_ADMIN);
   const isChapterAdmin = ctx.roleCodes.includes(CHAPTER_ROLES.CHAPTER_ADMIN);
-  if (!isZoneAdmin && !isChapterAdmin) {
+  const isGroupAdmin = ctx.roleCodes.includes(GROUP_ROLES.GROUP_ADMIN);
+  if (!isZoneAdmin && !isChapterAdmin && !isGroupAdmin) {
     return c.json({ error: { code: "forbidden", message: "Admin role required" } }, 403);
   }
   const input = c.req.valid("json");
 
-  // Chapter admins may only invite chapter-scope roles INTO a chapter they
-  // administer. Zone-scope role invites and any chapter they don't own
-  // require a zone admin.
+  // Disallow inviting someone as zone_owner via the team flow; ownership is
+  // bootstrapped at signup only.
+  if (input.roleCode === ZONE_ROLES.ZONE_OWNER) {
+    return c.json(
+      { error: { code: "owner_invite_forbidden", message: "Cannot invite a second owner" } },
+      400,
+    );
+  }
+
+  // Role-gate by admin scope. Non-zone admins can only invite chapter
+  // roles, and mixed group_admin + chapter_admin bindings are additive:
+  // either a bound group or a bound chapter is sufficient.
   if (!isZoneAdmin) {
     if (!isChapterRole(input.roleCode)) {
-      return forbidden(c, "Chapter admins can only invite chapter roles");
+      return forbidden(c, "Scoped admins can only invite chapter roles");
     }
-    if (!input.chapterId || !ctx.chapterIds.includes(input.chapterId)) {
-      return forbidden(c, "Chapter admins can only invite into their own chapter");
+    if (!input.chapterId) {
+      return c.json(
+        { error: { code: "chapter_required", message: "chapterId required" } },
+        400,
+      );
+    }
+    const [chap] = await db
+      .select({ groupId: chapters.groupId })
+      .from(chapters)
+      .where(
+        and(
+          eq(chapters.id, input.chapterId),
+          eq(chapters.zoneId, ctx.zoneId),
+          isNull(chapters.deletedAt),
+        ),
+      )
+      .limit(1);
+    if (!chap) {
+      return c.json(
+        { error: { code: "chapter_not_found", message: "Chapter not in this zone" } },
+        404,
+      );
+    }
+    const hasGroupScope = Boolean(chap.groupId && ctx.groupIds.includes(chap.groupId));
+    const hasChapterScope = ctx.chapterIds.includes(input.chapterId);
+    if (!hasGroupScope && !hasChapterScope) {
+      return forbidden(c, "Chapter is outside your scope");
     }
   }
 
-  // Cross-tenant fuzz guard: if the input has a chapterId, it MUST belong to
-  // this zone. The shared schema checks shape; the DB check enforces tenancy.
+  // Cross-tenant fuzz guards: ids must belong to this zone.
   if (input.chapterId) {
     const ok = await db
       .select({ id: chapters.id })
@@ -876,23 +1105,46 @@ tenantRouter.post("/invitations", zValidator("json", invitationCreateSchema), as
       );
     }
   }
+  if (input.groupId) {
+    const ok = await db
+      .select({ id: groups.id })
+      .from(groups)
+      .where(
+        and(
+          eq(groups.id, input.groupId),
+          eq(groups.zoneId, ctx.zoneId),
+          isNull(groups.deletedAt),
+        ),
+      )
+      .limit(1);
+    if (!ok[0]) {
+      return c.json(
+        { error: { code: "group_not_found", message: "Group not in this zone" } },
+        404,
+      );
+    }
+  }
+
+  // Shape: group roles need groupId; chapter roles need chapterId; zone roles take neither.
+  if (isGroupRole(input.roleCode) && !input.groupId) {
+    return c.json(
+      { error: { code: "group_required", message: "groupId required for group roles" } },
+      400,
+    );
+  }
   if (isChapterRole(input.roleCode) && !input.chapterId) {
     return c.json(
       { error: { code: "chapter_required", message: "chapterId required for chapter roles" } },
       400,
     );
   }
-  if (!isChapterRole(input.roleCode) && input.chapterId) {
+  if (
+    !isGroupRole(input.roleCode) &&
+    !isChapterRole(input.roleCode) &&
+    (input.chapterId || input.groupId)
+  ) {
     return c.json(
-      { error: { code: "chapter_forbidden", message: "chapterId not allowed for this role" } },
-      400,
-    );
-  }
-  // Disallow inviting someone as zone_owner via the team flow; ownership is
-  // bootstrapped at signup only.
-  if (input.roleCode === ZONE_ROLES.ZONE_OWNER) {
-    return c.json(
-      { error: { code: "owner_invite_forbidden", message: "Cannot invite a second owner" } },
+      { error: { code: "scope_forbidden", message: "Zone roles take no chapter/group" } },
       400,
     );
   }
@@ -910,6 +1162,7 @@ tenantRouter.post("/invitations", zValidator("json", invitationCreateSchema), as
       email: input.email,
       roleCode: input.roleCode,
       chapterId: input.chapterId ?? null,
+      groupId: input.groupId ?? null,
       createdByUserId: ctx.userId,
     });
     await writeAudit(tx, {
@@ -918,7 +1171,12 @@ tenantRouter.post("/invitations", zValidator("json", invitationCreateSchema), as
       action: "invitation.create",
       entityType: "invitation",
       entityId: inv.id,
-      after: { email: input.email, roleCode: input.roleCode, chapterId: input.chapterId ?? null },
+      after: {
+        email: input.email,
+        roleCode: input.roleCode,
+        chapterId: input.chapterId ?? null,
+        groupId: input.groupId ?? null,
+      },
     });
     return inv;
   });
@@ -943,24 +1201,34 @@ tenantRouter.post("/invitations/:id/revoke", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
   const isZoneAdmin = hasAnyRole(ctx, ZONE_ROLES.ZONE_OWNER, ZONE_ROLES.ZONE_ADMIN);
   const isChapterAdmin = ctx.roleCodes.includes(CHAPTER_ROLES.CHAPTER_ADMIN);
-  if (!isZoneAdmin && !isChapterAdmin) {
+  const isGroupAdmin = ctx.roleCodes.includes(GROUP_ROLES.GROUP_ADMIN);
+  if (!isZoneAdmin && !isChapterAdmin && !isGroupAdmin) {
     return c.json({ error: { code: "forbidden", message: "Admin role required" } }, 403);
   }
   const id = c.req.param("id");
 
-  // Chapter admins can only revoke invitations attached to a chapter they
-  // administer. Look it up first so we surface a clean 403 (vs returning
-  // the generic “not revocable” that revokeOpenInvitations gives back).
+  // Non-zone admins can only revoke invitations within their scope.
   if (!isZoneAdmin) {
     const [target] = await db
-      .select({ chapterId: invitations.chapterId })
+      .select({ chapterId: invitations.chapterId, groupId: invitations.groupId })
       .from(invitations)
       .where(and(eq(invitations.id, id), eq(invitations.zoneId, ctx.zoneId)))
       .limit(1);
     if (!target)
       return c.json({ error: { code: "not_found", message: "Invitation not found" } }, 404);
-    if (!target.chapterId || !ctx.chapterIds.includes(target.chapterId)) {
-      return forbidden(c, "Chapter admins can only revoke their own chapter's invitations");
+
+    if (!target.chapterId) {
+      return forbidden(c, "Scoped admins can only revoke chapter invites");
+    }
+    const [chap] = await db
+      .select({ groupId: chapters.groupId })
+      .from(chapters)
+      .where(and(eq(chapters.id, target.chapterId), eq(chapters.zoneId, ctx.zoneId)))
+      .limit(1);
+    const hasGroupScope = Boolean(chap?.groupId && ctx.groupIds.includes(chap.groupId));
+    const hasChapterScope = ctx.chapterIds.includes(target.chapterId);
+    if (!hasGroupScope && !hasChapterScope) {
+      return forbidden(c, "Invitation is outside your scope");
     }
   }
 

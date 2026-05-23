@@ -6,6 +6,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Database, Db } from "@stewardledger/db";
 import {
+  groups,
   invitations,
   roles,
   userRoleBindings,
@@ -15,6 +16,7 @@ import {
 import {
   BRAND_WORDMARK,
   CHAPTER_ROLES,
+  GROUP_ROLES,
   INVITATION_TOKEN_BYTES,
   INVITATION_VALIDITY_HOURS,
   ZONE_ROLES,
@@ -36,6 +38,7 @@ interface CreateArgs {
   email: string;
   roleCode: string;
   chapterId?: string | null;
+  groupId?: string | null;
   createdByUserId?: string | null;
 }
 
@@ -105,6 +108,7 @@ export async function createInvitation(
       email: args.email.toLowerCase(),
       roleCode: args.roleCode,
       chapterId: args.chapterId ?? null,
+      groupId: args.groupId ?? null,
       tokenHash,
       expiresAt,
       createdByUserId: args.createdByUserId ?? null,
@@ -121,6 +125,7 @@ export interface InvitationLookup {
   email: string;
   roleCode: string;
   chapterId: string | null;
+  groupId: string | null;
   expiresAt: Date;
   acceptedAt: Date | null;
   revokedAt: Date | null;
@@ -140,6 +145,7 @@ export async function findInvitationByToken(
       email: invitations.email,
       roleCode: invitations.roleCode,
       chapterId: invitations.chapterId,
+      groupId: invitations.groupId,
       expiresAt: invitations.expiresAt,
       acceptedAt: invitations.acceptedAt,
       revokedAt: invitations.revokedAt,
@@ -170,6 +176,7 @@ export async function applyAcceptedInvitation(
         zoneId: invitations.zoneId,
         roleCode: invitations.roleCode,
         chapterId: invitations.chapterId,
+        groupId: invitations.groupId,
         expiresAt: invitations.expiresAt,
         acceptedAt: invitations.acceptedAt,
         revokedAt: invitations.revokedAt,
@@ -187,12 +194,29 @@ export async function applyAcceptedInvitation(
       throw new InvitationError("invitation_expired", "Invitation has expired.");
 
     const [role] = await tx
-      .select({ id: roles.id })
+      .select({ id: roles.id, scope: roles.scope })
       .from(roles)
       .where(and(eq(roles.zoneId, inv.zoneId), eq(roles.code, inv.roleCode)))
       .limit(1);
     if (!role)
       throw new InvitationError("role_not_seeded", `Role ${inv.roleCode} not seeded for zone.`);
+
+    if (inv.groupId) {
+      const [group] = await tx
+        .select({ id: groups.id })
+        .from(groups)
+        .where(
+          and(
+            eq(groups.id, inv.groupId),
+            eq(groups.zoneId, inv.zoneId),
+            isNull(groups.deletedAt),
+          ),
+        )
+        .limit(1);
+      if (!group) {
+        throw new InvitationError("group_not_found", "Invitation group is no longer active.");
+      }
+    }
 
     // Re-use any existing active binding (idempotency for retried accepts).
     const existing = await tx
@@ -203,6 +227,12 @@ export async function applyAcceptedInvitation(
           eq(userRoleBindings.userId, args.userId),
           eq(userRoleBindings.zoneId, inv.zoneId),
           eq(userRoleBindings.roleId, role.id),
+          inv.chapterId
+            ? eq(userRoleBindings.chapterId, inv.chapterId)
+            : isNull(userRoleBindings.chapterId),
+          inv.groupId
+            ? eq(userRoleBindings.groupId, inv.groupId)
+            : isNull(userRoleBindings.groupId),
           isNull(userRoleBindings.revokedAt),
         ),
       )
@@ -212,7 +242,9 @@ export async function applyAcceptedInvitation(
         userId: args.userId,
         zoneId: inv.zoneId,
         chapterId: inv.chapterId,
+        groupId: inv.groupId,
         roleId: role.id,
+        roleScope: role.scope,
       });
     }
 
@@ -268,6 +300,10 @@ export async function discardOrphanedAuthUser(
 
 export function isChapterRole(code: string): boolean {
   return (Object.values(CHAPTER_ROLES) as string[]).includes(code);
+}
+
+export function isGroupRole(code: string): boolean {
+  return (Object.values(GROUP_ROLES) as string[]).includes(code);
 }
 
 /**

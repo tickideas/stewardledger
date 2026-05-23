@@ -10,10 +10,11 @@
 
 import { sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { CHAPTER_ROLES, ZONE_ROLES } from "@stewardledger/shared";
+import { CHAPTER_ROLES, GROUP_ROLES, ZONE_ROLES } from "@stewardledger/shared";
 import {
   applyContributionTriggers,
   chapters,
+  groups,
   members,
   user as userTable,
   userRoleBindings,
@@ -41,6 +42,7 @@ interface SeededZone {
   chapterIdB: string;
   memberRef: string;
   ownerRoleId: string;
+  groupAdminRoleId: string;
   treasurerRoleId: string;
   bookkeeperRoleId: string;
 }
@@ -101,6 +103,7 @@ async function seedZone(slug: string): Promise<SeededZone> {
     chapterIdB: chapterB.id,
     memberRef,
     ownerRoleId: roleIds.get(ZONE_ROLES.ZONE_OWNER)!,
+    groupAdminRoleId: roleIds.get(GROUP_ROLES.GROUP_ADMIN)!,
     treasurerRoleId: roleIds.get(CHAPTER_ROLES.CHAPTER_TREASURER)!,
     bookkeeperRoleId: roleIds.get(CHAPTER_ROLES.CHAPTER_BOOKKEEPER)!,
   };
@@ -199,18 +202,22 @@ describe("tenant import routes", () => {
     cleanupUserIds.push(ownerA, treasurerA, bookkeeperA);
 
     await db.insert(userRoleBindings).values([
-      { userId: ownerA, zoneId: zoneA.id, roleId: zoneA.ownerRoleId },
+      { userId: ownerA, zoneId: zoneA.id, roleId: zoneA.ownerRoleId,
+  roleScope: "zone",
+},
       {
         userId: treasurerA,
         zoneId: zoneA.id,
         chapterId: zoneA.chapterIdA,
         roleId: zoneA.treasurerRoleId,
+        roleScope: "chapter",
       },
       {
         userId: bookkeeperA,
         zoneId: zoneA.id,
         chapterId: zoneA.chapterIdA,
         roleId: zoneA.bookkeeperRoleId,
+        roleScope: "chapter",
       },
     ]);
   });
@@ -249,6 +256,7 @@ describe("tenant import routes", () => {
           await tx.execute(sql`delete from contribution_batches where zone_id = ${z}`);
           await tx.execute(sql`delete from members where zone_id = ${z}`);
           await tx.execute(sql`delete from chapters where zone_id = ${z}`);
+          await tx.execute(sql`delete from groups where zone_id = ${z}`);
           await tx.execute(sql`delete from zones where slug = ${slug}`);
         }
         for (const id of cleanupUserIds) {
@@ -436,6 +444,54 @@ describe("tenant import routes", () => {
     const ids = new Set(items.map((i) => i.id));
     expect(ids.has(jobA)).toBe(true);
     expect(ids.has(jobB)).toBe(false);
+  });
+
+  it("list/detail/rows allow group admins for imports in their group only", async () => {
+    const [group] = await db
+      .insert(groups)
+      .values({ zoneId: zoneA.id, slug: `imports-${unique()}`, name: `Imports ${unique()}` })
+      .returning({ id: groups.id });
+    await db.execute(sql`update chapters set group_id = ${group.id} where id = ${zoneA.chapterIdB}`);
+
+    const groupAdmin = await seedUser(`imp-group-admin+${unique()}@example.com`);
+    cleanupUserIds.push(groupAdmin);
+    await db.insert(userRoleBindings).values({
+      userId: groupAdmin,
+      zoneId: zoneA.id,
+      groupId: group.id,
+      roleId: zoneA.groupAdminRoleId,
+      roleScope: "group",
+    });
+
+    asUser(ownerA, "owner@example.com");
+    const fa = buildCsv(zoneA.memberRef, today);
+    fa.set("chapterId", zoneA.chapterIdA);
+    const ra = await call(zoneA.slug, "/api/tenant/imports", { multipart: fa });
+    expect(ra.status).toBe(201);
+    const { importJobId: jobA } = (await ra.json()) as { importJobId: string };
+
+    const fb = buildCsv(zoneA.memberRef, today);
+    fb.set("chapterId", zoneA.chapterIdB);
+    const rb = await call(zoneA.slug, "/api/tenant/imports", { multipart: fb });
+    expect(rb.status).toBe(201);
+    const { importJobId: jobB } = (await rb.json()) as { importJobId: string };
+
+    asUser(groupAdmin, "imp-group-admin@example.com");
+    const list = await call(zoneA.slug, "/api/tenant/imports?limit=200");
+    expect(list.status).toBe(200);
+    const { items } = (await list.json()) as { items: { id: string }[] };
+    const ids = new Set(items.map((i) => i.id));
+    expect(ids.has(jobB)).toBe(true);
+    expect(ids.has(jobA)).toBe(false);
+
+    const detail = await call(zoneA.slug, `/api/tenant/imports/${jobB}`);
+    expect(detail.status).toBe(200);
+
+    const rows = await call(zoneA.slug, `/api/tenant/imports/${jobB}/rows`);
+    expect(rows.status).toBe(200);
+
+    const outOfScope = await call(zoneA.slug, `/api/tenant/imports/${jobA}`);
+    expect(outOfScope.status).toBe(403);
   });
 
   // ─── Chapter-scope filter (requireChapterScope on the list endpoint) ──────

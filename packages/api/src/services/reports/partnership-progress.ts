@@ -24,7 +24,7 @@ import {
   escapeExcelText,
   moneyFormatForCurrency,
 } from "./branding";
-import { hasAnyZoneRole } from "./access";
+import { reportVisibleScope } from "./access";
 import type {
   ReportColumn,
   ReportFetchResult,
@@ -89,10 +89,11 @@ export const partnershipProgressReport: ReportSpec<
     "Per-target progress against goal for partnership giving types over a ministry year.",
   filtersSchema: partnershipProgressFiltersSchema,
   columns: () => COLUMNS,
-  accessCheck: (ctx, filters) => {
-    if (hasAnyZoneRole(ctx)) return null;
-    if (ctx.chapterIds.length === 0) return "forbidden";
-    if (filters.chapterId && !ctx.chapterIds.includes(filters.chapterId)) {
+  async accessCheck(ctx, filters) {
+    const scope = await reportVisibleScope(ctx);
+    if (scope.kind === "all") return null;
+    if (scope.ids.length === 0) return "forbidden";
+    if (filters.chapterId && !scope.ids.includes(filters.chapterId)) {
       return "forbidden";
     }
     return null;
@@ -148,13 +149,14 @@ export const partnershipProgressReport: ReportSpec<
       targetConditions.push(
         sql`(${financialTargets.chapterId} = ${filters.chapterId} or ${financialTargets.chapterId} is null)`,
       );
-    } else if (!hasAnyZoneRole(ctx)) {
-      // Chapter-scoped reader without an explicit chapter filter:
-      // their bound chapters' targets + zone-wide rows.
-      if (ctx.chapterIds.length > 0) {
+    } else {
+      const scope = await reportVisibleScope(ctx);
+      if (scope.kind === "list" && scope.ids.length > 0) {
+        // Chapter/group-scoped reader without an explicit chapter filter:
+        // their bound chapters' targets + zone-wide rows.
         targetConditions.push(
           sql`(${financialTargets.chapterId} = any(array[${sql.join(
-            ctx.chapterIds.map((id) => sql`${id}`),
+            scope.ids.map((id) => sql`${id}`),
             sql`, `,
           )}]::text[]) or ${financialTargets.chapterId} is null)`,
         );

@@ -135,12 +135,14 @@ describe("tenant giving setup routes", () => {
       userId: userA,
       zoneId: zoneA.id,
       roleId: zoneA.ownerRoleId,
+      roleScope: "zone",
     });
     await db.insert(userRoleBindings).values({
       userId: chapterUserA,
       zoneId: zoneA.id,
       chapterId: chapterA,
       roleId: zoneA.chapterTreasurerRoleId,
+      roleScope: "chapter",
     });
   });
 

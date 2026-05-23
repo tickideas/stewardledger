@@ -112,7 +112,9 @@ const RECENT_IMPORTS_N = 5;
 export async function buildZoneDashboard(
   database: Database,
   ctx: AuthorizedContext,
+  options: { chapterScope?: string[] } = {},
 ): Promise<ZoneDashboardPayload> {
+  const chapterScope = options.chapterScope;
   // Resolve the zone's timezone first. Every subsequent query / bound
   // computation depends on it, so doing this one round-trip ahead of
   // the parallel fan-out is the right cost.
@@ -142,14 +144,14 @@ export async function buildZoneDashboard(
     recentImportsList,
     partnershipProgress,
   ] = await Promise.all([
-    countChapters(database, ctx.zoneId),
-    countMembers(database, ctx.zoneId),
-    sumPostedByCurrency(database, ctx.zoneId, month),
-    sumPostedByCurrency(database, ctx.zoneId, year),
-    fetchTopChapters(database, ctx.zoneId, month),
-    fetchTopPartners(database, ctx.zoneId, month),
-    fetchRecentImports(database, ctx.zoneId),
-    buildPartnershipProgressSummary(database, ctx.zoneId, { timeZone }),
+    countChapters(database, ctx.zoneId, chapterScope),
+    countMembers(database, ctx.zoneId, { chapterIds: chapterScope }),
+    sumPostedByCurrency(database, ctx.zoneId, month, { chapterIds: chapterScope }),
+    sumPostedByCurrency(database, ctx.zoneId, year, { chapterIds: chapterScope }),
+    fetchTopChapters(database, ctx.zoneId, month, chapterScope),
+    fetchTopPartners(database, ctx.zoneId, month, chapterScope),
+    fetchRecentImports(database, ctx.zoneId, chapterScope),
+    buildPartnershipProgressSummary(database, ctx.zoneId, { timeZone, chapterScope }),
   ]);
 
   return {
@@ -177,14 +179,17 @@ export async function buildZoneDashboard(
 async function countChapters(
   database: Database,
   zoneId: string,
+  chapterScope: string[] | undefined,
 ): Promise<{ total: number; active: number }> {
+  const conditions = [eq(chapters.zoneId, zoneId)];
+  if (chapterScope) conditions.push(inArray(chapters.id, chapterScope));
   const [row] = await database
     .select({
       total: sql<number>`count(*)::int`,
       active: sql<number>`count(*) filter (where ${chapters.deletedAt} is null)::int`,
     })
     .from(chapters)
-    .where(eq(chapters.zoneId, zoneId));
+    .where(and(...conditions));
   return { total: row?.total ?? 0, active: row?.active ?? 0 };
 }
 
@@ -192,6 +197,7 @@ async function fetchTopChapters(
   database: Database,
   zoneId: string,
   bounds: DateBounds,
+  chapterScope: string[] | undefined,
 ): Promise<DashboardTopChapter[]> {
   const rows = await database
     .select({
@@ -219,6 +225,7 @@ async function fetchTopChapters(
         sql`${contributions.contributionDate} >= ${bounds.start}::date`,
         sql`${contributions.contributionDate} < ${bounds.endExclusive}::date`,
         sql`${contributions.status} in ('posted', 'reversed')`,
+        ...(chapterScope ? [inArray(contributions.chapterId, chapterScope)] : []),
       ),
     )
     .groupBy(chapters.id, chapters.referenceCode, chapters.name, contributionLines.currencyCode);
@@ -238,6 +245,7 @@ async function fetchTopPartners(
   database: Database,
   zoneId: string,
   bounds: DateBounds,
+  chapterScope: string[] | undefined,
 ): Promise<DashboardTopPartner[]> {
   const rows = await database
     .select({
@@ -274,6 +282,7 @@ async function fetchTopPartners(
         sql`${contributions.contributionDate} < ${bounds.endExclusive}::date`,
         sql`${contributions.status} in ('posted', 'reversed')`,
         sql`${contributions.memberId} is not null`,
+        ...(chapterScope ? [inArray(contributions.chapterId, chapterScope)] : []),
       ),
     )
     .groupBy(
@@ -305,6 +314,7 @@ async function fetchTopPartners(
 async function fetchRecentImports(
   database: Database,
   zoneId: string,
+  chapterScope: string[] | undefined,
 ): Promise<DashboardRecentImport[]> {
   const jobs = await database
     .select({
@@ -321,7 +331,12 @@ async function fetchRecentImports(
         eq(importFiles.id, importJobs.importFileId),
       ),
     )
-    .where(eq(importJobs.zoneId, zoneId))
+    .where(
+      and(
+        eq(importJobs.zoneId, zoneId),
+        ...(chapterScope ? [inArray(importFiles.chapterId, chapterScope)] : []),
+      ),
+    )
     .orderBy(desc(importJobs.createdAt))
     .limit(RECENT_IMPORTS_N);
 

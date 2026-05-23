@@ -11,7 +11,8 @@
 import { Hono } from "hono";
 import type { AuthorizedContext } from "@stewardledger/shared";
 import { db } from "../db";
-import { hasAnyZoneRole } from "../services/reports/access";
+import { visibleChapterIds } from "../middleware/auth";
+import { REPORT_ZONE_READ_ROLES } from "../services/reports/access";
 import {
   buildChapterDashboard,
   ChapterDashboardError,
@@ -30,10 +31,17 @@ function forbidden(
 
 tenantDashboardRouter.get("/dashboard/zone", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
-  // Dashboard payload is zone-wide; chapter-only callers don't have
-  // a coherent view here.
-  if (!hasAnyZoneRole(ctx)) return forbidden(c);
-  const payload = await buildZoneDashboard(db, ctx);
+  const scope = await visibleChapterIds(ctx, REPORT_ZONE_READ_ROLES);
+  // Zone-wide readers see the full zone; group-tier readers see a view
+  // clamped to their groups' chapters. Chapter-only callers don't have
+  // a coherent zone-wide view.
+  if (scope.kind === "list") {
+    if (ctx.groupIds.length === 0) return forbidden(c);
+    if (scope.ids.length === 0) return forbidden(c);
+  }
+  const payload = await buildZoneDashboard(db, ctx, {
+    chapterScope: scope.kind === "list" ? scope.ids : undefined,
+  });
   // Payload carries member-level totals; treat as PII for caching
   // purposes and never store in shared caches / bfcache.
   c.header("cache-control", "no-store");
@@ -48,7 +56,8 @@ tenantDashboardRouter.get("/dashboard/chapter/:chapterId", async (c) => {
   // "unknown chapter" case into the same 403 prevents an
   // existence-oracle for chapter-only callers (mirrors the pattern
   // used by member-statement.ts).
-  if (!hasAnyZoneRole(ctx) && !ctx.chapterIds.includes(chapterId)) {
+  const scope = await visibleChapterIds(ctx, REPORT_ZONE_READ_ROLES);
+  if (scope.kind === "list" && !scope.ids.includes(chapterId)) {
     return forbidden(c);
   }
   try {

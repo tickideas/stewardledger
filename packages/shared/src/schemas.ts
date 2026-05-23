@@ -3,7 +3,7 @@
 
 import { z } from "zod";
 import { currencyCodeSchema } from "./money";
-import { CHAPTER_ROLES, ZONE_ROLES } from "./roles";
+import { CHAPTER_ROLES, GROUP_ROLES, ZONE_ROLES } from "./roles";
 
 /** UUID v4 / v7 schema. */
 export const uuidSchema = z.string().uuid();
@@ -85,11 +85,47 @@ export const regionPromoteSchema = z
   );
 export type RegionPromoteInput = z.infer<typeof regionPromoteSchema>;
 
+/** Slug for groups: 1–50 chars, lowercase kebab. */
+export const groupSlugSchema = z
+  .string()
+  .min(1)
+  .max(50)
+  .regex(/^[a-z0-9](-?[a-z0-9])*$/, "slug must be lowercase kebab-case");
+
+/** Create a group. */
+export const groupCreateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(100),
+    slug: groupSlugSchema,
+  })
+  .strict();
+export type GroupCreateInput = z.infer<typeof groupCreateSchema>;
+
+/** Update a group. All fields optional; an empty body is a no-op. */
+export const groupUpdateSchema = groupCreateSchema.partial();
+export type GroupUpdateInput = z.infer<typeof groupUpdateSchema>;
+
+/** Move a chapter to a different group. effectiveDate defaults to today (zone TZ) at the service layer. */
+export const chapterMoveGroupSchema = z
+  .object({
+    groupId: uuidSchema,
+    effectiveDate: z.string().date().optional(),
+  })
+  .strict();
+export type ChapterMoveGroupInput = z.infer<typeof chapterMoveGroupSchema>;
+
+/** Toggle a zone's `groups_enabled` flag. One-way — only `true` is accepted. */
+export const zoneEnableGroupsSchema = z
+  .object({ enabled: z.literal(true) })
+  .strict();
+export type ZoneEnableGroupsInput = z.infer<typeof zoneEnableGroupsSchema>;
+
 /** Chapter creation. */
 export const chapterCreateSchema = z.object({
   name: z.string().min(2).max(120),
   countryCode: countryCodeSchema.optional(),
   dateFrom: z.string().date().optional(),
+  groupId: uuidSchema.optional(),
 });
 export type ChapterCreateInput = z.infer<typeof chapterCreateSchema>;
 
@@ -202,21 +238,44 @@ export type ContributionBatchTemplateCreateInput = z.infer<
 /** Role codes that may be granted via an invitation (no platform roles). */
 export const invitableRoleSchema = z.enum([
   ...(Object.values(ZONE_ROLES) as [string, ...string[]]),
+  ...(Object.values(GROUP_ROLES) as [string, ...string[]]),
   ...(Object.values(CHAPTER_ROLES) as [string, ...string[]]),
 ]);
 
-/** Create an invitation. chapterId required for chapter_* roles, forbidden otherwise. */
+/** Create an invitation. chapterId required for chapter_* roles, groupId for group_* roles, neither for zone roles. */
 export const invitationCreateSchema = z
   .object({
     email: z.string().email(),
     roleCode: invitableRoleSchema,
     chapterId: uuidSchema.optional(),
+    groupId: uuidSchema.optional(),
   })
-  .refine(
-    (v) =>
-      v.roleCode.startsWith("chapter_") ? v.chapterId !== undefined : v.chapterId === undefined,
-    { message: "chapterId required for chapter roles, forbidden otherwise", path: ["chapterId"] },
-  );
+  .superRefine((v, ctx) => {
+    if (v.roleCode.startsWith("chapter_")) {
+      if (v.chapterId === undefined) {
+        ctx.addIssue({ code: "custom", path: ["chapterId"], message: "chapterId required for chapter roles" });
+      }
+      if (v.groupId !== undefined) {
+        ctx.addIssue({ code: "custom", path: ["groupId"], message: "groupId must be empty for chapter roles" });
+      }
+      return;
+    }
+    if (v.roleCode.startsWith("group_")) {
+      if (v.groupId === undefined) {
+        ctx.addIssue({ code: "custom", path: ["groupId"], message: "groupId required for group roles" });
+      }
+      if (v.chapterId !== undefined) {
+        ctx.addIssue({ code: "custom", path: ["chapterId"], message: "chapterId must be empty for group roles" });
+      }
+      return;
+    }
+    if (v.chapterId !== undefined) {
+      ctx.addIssue({ code: "custom", path: ["chapterId"], message: "chapterId must be empty for zone roles" });
+    }
+    if (v.groupId !== undefined) {
+      ctx.addIssue({ code: "custom", path: ["groupId"], message: "groupId must be empty for zone roles" });
+    }
+  });
 export type InvitationCreateInput = z.infer<typeof invitationCreateSchema>;
 
 /** Accepting an invitation — the token comes from the URL, body is the new user's identity. */

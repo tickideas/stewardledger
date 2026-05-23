@@ -13,6 +13,8 @@ export interface AuthorizedContext {
   roleCodes: string[];
   /** Chapter ids the user is bound to (empty = zone-wide bindings only). */
   chapterIds: UUID[];
+  /** Group ids the user is bound to (empty = no group-scoped bindings). */
+  groupIds: UUID[];
   /** True if the user is a platform-level admin (super_admin etc.). */
   isPlatformAdmin: boolean;
 }

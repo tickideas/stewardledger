@@ -125,7 +125,10 @@ export interface ReportSpec<F, R, S extends ZodTypeAny = ZodTypeAny> {
    * Used e.g. by `member-statement` to allow chapter-treasurers to
    * pull statements only for members in their chapters.
    */
-  accessCheck?: (ctx: AuthorizedContext, filters: F) => string | null;
+  accessCheck?: (
+    ctx: AuthorizedContext,
+    filters: F,
+  ) => string | null | Promise<string | null>;
 }
 
 /**

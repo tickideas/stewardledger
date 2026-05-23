@@ -104,7 +104,9 @@ describe("tenant periods routes", () => {
     cleanupUserIds.push(ownerA, outsider);
 
     await db.insert(userRoleBindings).values([
-      { userId: ownerA, zoneId: zoneA.id, roleId: zoneA.ownerRoleId },
+      { userId: ownerA, zoneId: zoneA.id, roleId: zoneA.ownerRoleId,
+  roleScope: "zone",
+},
     ]);
   });
 

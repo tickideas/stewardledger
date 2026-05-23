@@ -23,7 +23,7 @@ import {
   uuidSchema,
 } from "@stewardledger/shared";
 import { addBrandedSheet, escapeExcelText } from "./branding";
-import { hasAnyZoneRole } from "./access";
+import { reportVisibleScope } from "./access";
 import type { ReportColumn, ReportFetchResult, ReportSpec } from "./types";
 
 export const memberListFiltersSchema = z.object({
@@ -75,11 +75,12 @@ export const memberListReport: ReportSpec<MemberListFilters, MemberListRow> = {
     "Active and inactive members in scope, with chapter, member type, and contact details.",
   filtersSchema: memberListFiltersSchema,
   columns: () => COLUMNS,
-  accessCheck: (ctx, filters) => {
-    // Chapter-scoped readers can only pull their bound chapters.
-    if (hasAnyZoneRole(ctx)) return null;
-    if (ctx.chapterIds.length === 0) return "forbidden";
-    if (filters.chapterId && !ctx.chapterIds.includes(filters.chapterId)) {
+  async accessCheck(ctx, filters) {
+    // Chapter/group-scoped readers can only pull their bound chapters.
+    const scope = await reportVisibleScope(ctx);
+    if (scope.kind === "all") return null;
+    if (scope.ids.length === 0) return "forbidden";
+    if (filters.chapterId && !scope.ids.includes(filters.chapterId)) {
       return "forbidden";
     }
     return null;
@@ -88,15 +89,16 @@ export const memberListReport: ReportSpec<MemberListFilters, MemberListRow> = {
     const conditions = [eq(members.zoneId, ctx.zoneId), isNull(members.deletedAt)];
     if (filters.isActive !== undefined) conditions.push(eq(members.isActive, filters.isActive));
     if (filters.memberTypeId) conditions.push(eq(members.memberTypeId, filters.memberTypeId));
-    if (hasAnyZoneRole(ctx)) {
+    const scope = await reportVisibleScope(ctx);
+    if (scope.kind === "all") {
       if (filters.chapterId) conditions.push(eq(members.chapterId, filters.chapterId));
     } else {
-      // Chapter-scoped: filter to bound chapters (accessCheck has
+      // Chapter/group-scoped: filter to bound chapters (accessCheck has
       // already rejected an out-of-scope filters.chapterId).
       if (filters.chapterId) {
         conditions.push(eq(members.chapterId, filters.chapterId));
       } else {
-        conditions.push(inArray(members.chapterId, ctx.chapterIds));
+        conditions.push(inArray(members.chapterId, scope.ids));
       }
     }
 

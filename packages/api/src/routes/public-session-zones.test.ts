@@ -70,6 +70,7 @@ async function bind(userId: string, zoneId: string, roleId: string): Promise<voi
     zoneId,
     chapterId: null,
     roleId,
+    roleScope: "zone",
   });
 }
 

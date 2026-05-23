@@ -133,9 +133,15 @@ describe("tenant reports \u2014 async jobs", () => {
     cleanupUserIds.push(userA, userA2, userB);
 
     await db.insert(userRoleBindings).values([
-      { userId: userA, zoneId: zoneA.id, roleId: zoneA.ownerRoleId },
-      { userId: userA2, zoneId: zoneA.id, roleId: zoneA.ownerRoleId },
-      { userId: userB, zoneId: zoneB.id, roleId: zoneB.ownerRoleId },
+      { userId: userA, zoneId: zoneA.id, roleId: zoneA.ownerRoleId,
+  roleScope: "zone",
+},
+      { userId: userA2, zoneId: zoneA.id, roleId: zoneA.ownerRoleId,
+  roleScope: "zone",
+},
+      { userId: userB, zoneId: zoneB.id, roleId: zoneB.ownerRoleId,
+  roleScope: "zone",
+},
     ]);
   });
 

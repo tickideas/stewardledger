@@ -143,7 +143,41 @@ Lightweight per-chapter presets for the Sunday-close flow. Managed via
 `?templateId=` deep-links and a stale referenced id (e.g. a deleted
 payment method) is silently ignored at apply-time.
 
-### 2.5 Roles & bindings
+### 2.5 Groups (sub-grouping of chapters)
+
+Groups are an optional, **per-zone opt-in** tier between Zone and Chapter — a zone-scoped collection of chapters. See the full design in `docs/superpowers/specs/2026-05-22-groups-hierarchy-design.md`.
+
+The feature is gated by `zones.groups_enabled` (boolean, default `false`). The toggle is **one-way** (`false → true`); flipping it on requires every chapter in the zone to already be assigned to a group (enforced in the enable transaction).
+
+```sql
+groups
+  id uuid pk
+  zone_id uuid not null references zones(id)
+  slug text not null
+  name text not null
+  metadata jsonb not null default '{}'
+  created_at, updated_at, deleted_at timestamptz
+  unique (zone_id, id)                          -- composite FK target for chapter_group_history
+  -- partial unique (zone_id, slug)        where deleted_at is null
+  -- partial unique (zone_id, lower(name)) where deleted_at is null
+
+chapter_group_history
+  id uuid pk
+  chapter_id uuid not null references chapters(id)
+  zone_id uuid not null
+  group_id uuid not null
+  date_from date not null
+  date_to   date null                           -- null = currently open segment
+  foreign key (zone_id, group_id) references groups(zone_id, id)
+  index (chapter_id, date_from)
+  -- partial unique (chapter_id) where date_to is null  → exactly one open segment per chapter
+```
+
+Group roles (see PRD §6): `group_admin` (chapter-admin-equivalent edit rights restricted to chapters in the bound group(s)) and `group_pastor_viewer` (read-only across the bound group(s)).
+
+Service-layer invariants live in `packages/api/src/services/groups.ts`: name and slug uniqueness (case-insensitive on name), pre-enable vs. post-enable distinction, soft-delete only when the group has no open chapter assignments, and race-safety via Postgres advisory locks around assignment moves.
+
+### 2.6 Roles & bindings
 
 ```sql
 roles
@@ -151,7 +185,7 @@ roles
   zone_id uuid null                        -- null = platform-wide role
   code text not null                       -- e.g. "chapter_treasurer"
   name text not null
-  scope text not null                      -- platform | zone | chapter
+  scope text not null                      -- platform | zone | group | chapter
   permissions jsonb not null               -- e.g. ["contribution.read", "contribution.write"]
   is_system boolean not null default false
   unique (zone_id, code)
@@ -160,15 +194,16 @@ user_role_bindings
   id uuid pk
   user_id uuid not null
   zone_id uuid not null
-  chapter_id uuid null                     -- null = zone-wide
+  group_id uuid null                       -- set for group-scoped roles
+  chapter_id uuid null                     -- set for chapter-scoped roles
   role_id uuid not null
   granted_by_user_id uuid null
   granted_at timestamptz default now()
   revoked_at timestamptz null
-  unique (user_id, zone_id, chapter_id, role_id) where revoked_at is null
+  partial unique indexes per active scope (zone/group/chapter)
 ```
 
-Bindings are tenant-scoped (`zone_id`). Session zone lookup ignores revoked bindings and soft-deleted zones. The current implementation stores the super-admin bit on `users.is_super_admin`; the fuller platform-role model (`super_admin`, `support_admin`, `billing_admin`, `region_curator`) is represented by a small `platform_role_bindings` table when those distinct roles are needed:
+Bindings are tenant-scoped (`zone_id`). Zone roles carry neither `group_id` nor `chapter_id`; group roles require `group_id`; chapter roles require `chapter_id`. The `user_role_bindings_scope_shape` CHECK enforces this shape and partial unique indexes prevent duplicate active bindings per scope. Session zone lookup ignores revoked bindings and soft-deleted zones. The current implementation stores the super-admin bit on `users.is_super_admin`; the fuller platform-role model (`super_admin`, `support_admin`, `billing_admin`, `region_curator`) is represented by a small `platform_role_bindings` table when those distinct roles are needed:
 
 ```sql
 platform_role_bindings
@@ -179,15 +214,16 @@ platform_role_bindings
   granted_at, revoked_at
 ```
 
-### 2.6 Invitations
+### 2.7 Invitations
 
 ```sql
 invitations
   id uuid pk
   zone_id uuid not null references zones(id) on delete cascade
+  group_id uuid null references groups(id) on delete cascade       -- required for group_* roles, forbidden otherwise (CHECK)
   chapter_id uuid null references chapters(id) on delete cascade   -- required for chapter_* roles, forbidden otherwise (CHECK)
   email text not null                       -- always stored lowercase
-  role_code text not null                   -- one of ZONE_ROLES | CHAPTER_ROLES
+  role_code text not null                   -- one of ZONE_ROLES | GROUP_ROLES | CHAPTER_ROLES
   token_hash text not null unique           -- sha256 of 32-byte url-safe token; raw token only in the email URL
   expires_at timestamptz not null           -- default 7 days from creation
   created_by_user_id uuid null              -- platform admin who issued the invite (null only for seeded data)
@@ -196,13 +232,13 @@ invitations
   accepted_by_user_id uuid null
   revoked_at timestamptz null
   revoked_by_user_id uuid null
-  unique (zone_id, email, chapter_id, role_code) where accepted_at is null and revoked_at is null
+  partial unique indexes per open scope (zone/group/chapter)
 ```
 
 - A successful **admin-issued zone invite** (`POST /api/admin/zones/invite`, super-admin only) writes one invitation for the primary contact email pinned to `zone_owner` and emails them a magic-link-style accept URL. No Better Auth user is created at this stage. StewardLedger is invitation-only; there is no public signup endpoint.
 - On accept (`POST /api/public/invitations/accept`): the invited person supplies their name and chooses a password. Better Auth `signUpEmail` runs with the email pinned by the invitation, then `applyAcceptedInvitation` writes a `user_role_bindings` row, marks the invite accepted, and — for `zone_owner` invites — promotes the zone from `pending_setup` to `active`.
-- Team invitations follow the same shape but are created via `POST /api/tenant/invitations` (zone_owner / zone_admin for zone-wide or any chapter; chapter_admin only for chapter-scoped roles in their own chapter); the API forbids inviting a second `zone_owner`.
-- Active zone/chapter administrator access is read from `user_role_bindings` via `GET /api/tenant/administrators` and revoked via `DELETE /api/tenant/administrators/:bindingId` by `zone_owner` / `zone_admin`. Revocation sets `revoked_at`, writes `administrator.role_binding.revoke`, and refuses to revoke the caller's own `zone_owner` / `zone_admin` binding.
+- Team invitations follow the same shape but are created via `POST /api/tenant/invitations` (zone_owner / zone_admin for zone-wide, group-scoped, or any chapter; group_admin for chapter-scoped roles in chapters inside their bound groups; chapter_admin only for chapter-scoped roles in their own chapter); the API forbids inviting a second `zone_owner`.
+- Active zone/group/chapter administrator access is read from `user_role_bindings` via `GET /api/tenant/administrators` and revoked via `DELETE /api/tenant/administrators/:bindingId` by `zone_owner` / `zone_admin`. Revocation sets `revoked_at`, writes `administrator.role_binding.revoke`, and refuses to revoke the caller's own `zone_owner` / `zone_admin` binding.
 - Demo seeding creates tenant data only, not user accounts. Demo church/zone login accounts must be created by invitation acceptance, or accessed by a platform super-admin.
 
 ---
@@ -798,6 +834,8 @@ A billing party owning multiple zones holds one subscription per zone. There is 
 8. `members.reference_code` is unique within `zone_id`.
 9. A zone has either `region_id` or `region_name_unverified` set, never both, never neither (after onboarding).
 10. `processed_transactions` enforces idempotent imports per zone.
+11. `zones.groups_enabled` is one-way (`false → true` only). Enabling requires every active chapter to have a group assignment.
+12. `chapter_group_history` has at most one open (`date_to is null`) segment per chapter; group moves close the old segment and open the new one transactionally.
 
 ---
 
@@ -808,7 +846,7 @@ This is **not a migration map** — StewardLedger does not import legacy data. I
 | Legacy concept | StewardLedger concept |
 |---|---|
 | Single-DB per zone deployment | Multi-tenant `zones` rows in shared DB |
-| `ChurchGroup` (sub-grouping inside a zone, sometimes used as a region label) | Either dropped, or modeled as `region` (curated reference data) |
+| `ChurchGroup` (sub-grouping inside a zone) | Reintroduced as first-class `groups` table (see §2.5). Per-zone opt-in via `zones.groups_enabled`. |
 | `Chapter` | `chapters` |
 | `Member`, `MemberAddress` | `members`, `member_addresses` |
 | `GivingCategory`, `GivingType` | same names, multi-tenant |

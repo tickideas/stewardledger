@@ -32,7 +32,7 @@ import {
   escapeExcelText,
   moneyFormatForCurrency,
 } from "./branding";
-import { hasAnyZoneRole } from "./access";
+import { reportVisibleScope } from "./access";
 import {
   ReportError,
   type CurrencySubtotal,
@@ -110,13 +110,14 @@ export const memberStatementReport: ReportSpec<
     "All posted contributions for one member, grouped by line and totalled per currency.",
   filtersSchema: memberStatementFiltersSchema,
   columns: () => COLUMNS,
-  accessCheck: (ctx, _filters) => {
-    // Zone-wide readers can pull a statement for any member; chapter
+  async accessCheck(ctx, _filters) {
+    // Zone-wide readers can pull a statement for any member; chapter/group
     // readers must own at least one chapter binding (the per-member
     // home-chapter check happens in `fetch`, where we have a DB
     // handle). Without bindings there is no scope to evaluate.
-    if (hasAnyZoneRole(ctx)) return null;
-    if (ctx.chapterIds.length === 0) return "forbidden";
+    const scope = await reportVisibleScope(ctx);
+    if (scope.kind === "all") return null;
+    if (scope.ids.length === 0) return "forbidden";
     return null;
   },
   async fetch(database, ctx, filters): Promise<ReportFetchResult<MemberStatementRow>> {
@@ -145,8 +146,9 @@ export const memberStatementReport: ReportSpec<
     // ReportError("forbidden"). Zone-wide readers fall through to the
     // "not found" empty response — they can see every chapter, so the
     // empty result is the honest answer.
-    if (!hasAnyZoneRole(ctx)) {
-      if (!member?.chapterId || !ctx.chapterIds.includes(member.chapterId)) {
+    const scope = await reportVisibleScope(ctx);
+    if (scope.kind === "list") {
+      if (!member?.chapterId || !scope.ids.includes(member.chapterId)) {
         throw new ReportError("forbidden", "Member is not in your chapter scope.");
       }
     } else if (!member) {

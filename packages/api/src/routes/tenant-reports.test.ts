@@ -11,12 +11,13 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import {
   applyContributionTriggers,
   chapters,
+  groups,
   members,
   user as userTable,
   userRoleBindings,
   zones,
 } from "@stewardledger/db";
-import { CHAPTER_ROLES, ZONE_ROLES } from "@stewardledger/shared";
+import { CHAPTER_ROLES, GROUP_ROLES, ZONE_ROLES } from "@stewardledger/shared";
 void CHAPTER_ROLES;
 import { createApp } from "../app";
 import { auth } from "../auth";
@@ -40,6 +41,7 @@ interface SeededZone {
   ownerRoleId: string;
   auditorRoleId: string;
   treasurerRoleId: string;
+  groupPastorViewerRoleId: string;
 }
 
 async function seedZone(slug: string): Promise<SeededZone> {
@@ -100,6 +102,7 @@ async function seedZone(slug: string): Promise<SeededZone> {
     ownerRoleId: roleIds.get(ZONE_ROLES.ZONE_OWNER)!,
     auditorRoleId: roleIds.get(ZONE_ROLES.ZONE_AUDITOR)!,
     treasurerRoleId: roleIds.get("chapter_treasurer")!,
+    groupPastorViewerRoleId: roleIds.get(GROUP_ROLES.GROUP_PASTOR_VIEWER)!,
   };
 }
 
@@ -137,6 +140,7 @@ describe("tenant reports routes", () => {
   let ownerA: string;
   let auditorA: string;
   let treasurerB: string; // bound to zoneA chapter B only
+  let groupViewerA: string;
   let nobody: string; // authenticated but with no bindings in zoneA
   const today = new Date().toISOString().slice(0, 10);
   const cleanupSlugs: string[] = [];
@@ -155,20 +159,39 @@ describe("tenant reports routes", () => {
     ownerA = await seedUser(`rpt-owner+${unique()}@example.com`);
     auditorA = await seedUser(`rpt-auditor+${unique()}@example.com`);
     treasurerB = await seedUser(`rpt-treasurerB+${unique()}@example.com`);
+    groupViewerA = await seedUser(`rpt-group-viewer+${unique()}@example.com`);
     nobody = await seedUser(`rpt-nobody+${unique()}@example.com`);
-    cleanupUserIds.push(ownerA, auditorA, treasurerB, nobody);
+    cleanupUserIds.push(ownerA, auditorA, treasurerB, groupViewerA, nobody);
+
+    const [groupA] = await db
+      .insert(groups)
+      .values({ zoneId: zoneA.id, name: `Reports Group ${unique()}`, slug: `reports-group-${unique()}` })
+      .returning({ id: groups.id });
+    await db.update(chapters).set({ groupId: groupA.id }).where(sql`${chapters.id} = ${zoneA.chapterIdA}`);
 
     // nobody is intentionally absent from userRoleBindings: they have a
     // session but no role in zoneA, so the requireTenantAuth middleware
     // surfaces a 403 before the route handler ever runs.
     await db.insert(userRoleBindings).values([
-      { userId: ownerA, zoneId: zoneA.id, roleId: zoneA.ownerRoleId },
-      { userId: auditorA, zoneId: zoneA.id, roleId: zoneA.auditorRoleId },
+      { userId: ownerA, zoneId: zoneA.id, roleId: zoneA.ownerRoleId,
+  roleScope: "zone",
+},
+      { userId: auditorA, zoneId: zoneA.id, roleId: zoneA.auditorRoleId,
+  roleScope: "zone",
+},
       {
         userId: treasurerB,
         zoneId: zoneA.id,
         chapterId: zoneA.chapterIdB,
         roleId: zoneA.treasurerRoleId,
+        roleScope: "chapter",
+      },
+      {
+        userId: groupViewerA,
+        zoneId: zoneA.id,
+        groupId: groupA.id,
+        roleId: zoneA.groupPastorViewerRoleId,
+        roleScope: "group",
       },
     ]);
   });
@@ -194,6 +217,8 @@ describe("tenant reports routes", () => {
         await tx.execute(sql`delete from contributions where zone_id = ${z}`);
         await tx.execute(sql`delete from contribution_batches where zone_id = ${z}`);
         await tx.execute(sql`delete from members where zone_id = ${z}`);
+        await tx.execute(sql`update chapters set group_id = null where zone_id = ${z}`);
+        await tx.execute(sql`delete from groups where zone_id = ${z}`);
         await tx.execute(sql`delete from chapters where zone_id = ${z}`);
         await tx.execute(sql`delete from zones where slug = ${slug}`);
       }
@@ -235,6 +260,18 @@ describe("tenant reports routes", () => {
       "top-partners",
       "weekly-finance",
     ]);
+  });
+
+  it("group viewers can list reports and read report data narrowed to their group", async () => {
+    asUser(groupViewerA, "group-viewer@example.com");
+    const list = await get(zoneA.slug, "/api/tenant/reports");
+    expect(list.status).toBe(200);
+
+    const data = await get(zoneA.slug, `/api/tenant/reports/member-list/data?chapterId=${zoneA.chapterIdA}`);
+    expect(data.status).toBe(200);
+
+    const denied = await get(zoneA.slug, `/api/tenant/reports/member-list/data?chapterId=${zoneA.chapterIdB}`);
+    expect(denied.status).toBe(403);
   });
 
   it("returns member-statement data for an owner", async () => {

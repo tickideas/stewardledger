@@ -168,18 +168,22 @@ describe("tenant financial-targets routes", () => {
     cleanupUserIds.push(ownerA, chapterAdminA1, treasurerA1);
 
     await db.insert(userRoleBindings).values([
-      { userId: ownerA, zoneId: zoneA.id, roleId: zoneA.ownerRoleId },
+      { userId: ownerA, zoneId: zoneA.id, roleId: zoneA.ownerRoleId,
+  roleScope: "zone",
+},
       {
         userId: chapterAdminA1,
         zoneId: zoneA.id,
         chapterId: chapterA1,
         roleId: zoneA.chapterAdminRoleId,
+        roleScope: "chapter",
       },
       {
         userId: treasurerA1,
         zoneId: zoneA.id,
         chapterId: chapterA1,
         roleId: zoneA.chapterTreasurerRoleId,
+        roleScope: "chapter",
       },
     ]);
   });

@@ -5,12 +5,13 @@
 
 import { sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { CHAPTER_ROLES, ZONE_ROLES } from "@stewardledger/shared";
+import { CHAPTER_ROLES, GROUP_ROLES, ZONE_ROLES } from "@stewardledger/shared";
 import {
   accounts,
   applyContributionTriggers,
   chapters,
   contributions,
+  groups,
   givingTypes,
   members,
   user as userTable,
@@ -43,6 +44,7 @@ interface SeededZone {
   chapterTreasurerRoleId: string;
   chapterBookkeeperRoleId: string;
   chapterPastorRoleId: string;
+  groupAdminRoleId: string;
 }
 
 async function seedZone(slug: string, currency: string): Promise<SeededZone> {
@@ -106,6 +108,7 @@ async function seedZone(slug: string, currency: string): Promise<SeededZone> {
     chapterTreasurerRoleId: roleIds.get(CHAPTER_ROLES.CHAPTER_TREASURER)!,
     chapterBookkeeperRoleId: roleIds.get(CHAPTER_ROLES.CHAPTER_BOOKKEEPER)!,
     chapterPastorRoleId: roleIds.get(CHAPTER_ROLES.CHAPTER_PASTOR_VIEWER)!,
+    groupAdminRoleId: roleIds.get(GROUP_ROLES.GROUP_ADMIN)!,
   };
 }
 
@@ -153,6 +156,7 @@ describe("tenant contribution routes", () => {
   let treasurerA: string;
   let bookkeeperA: string;
   let pastorA: string;
+  let groupAdminA: string;
   const cleanupSlugs: string[] = [];
   const cleanupUserIds: string[] = [];
   const seededDate = `${new Date().getUTCFullYear()}-04-15`;
@@ -171,28 +175,49 @@ describe("tenant contribution routes", () => {
     treasurerA = await seedUser(`crt-treasurer+${unique()}@example.com`);
     bookkeeperA = await seedUser(`crt-bookkeeper+${unique()}@example.com`);
     pastorA = await seedUser(`crt-pastor+${unique()}@example.com`);
-    cleanupUserIds.push(ownerA, financeA, treasurerA, bookkeeperA, pastorA);
+    groupAdminA = await seedUser(`crt-group+${unique()}@example.com`);
+    cleanupUserIds.push(ownerA, financeA, treasurerA, bookkeeperA, pastorA, groupAdminA);
+
+    const [groupA] = await db
+      .insert(groups)
+      .values({ zoneId: zoneA.id, name: `Contrib Group ${unique()}`, slug: `contrib-group-${unique()}` })
+      .returning({ id: groups.id });
+    await db.update(chapters).set({ groupId: groupA.id }).where(sql`${chapters.id} = ${zoneA.chapterId}`);
 
     await db.insert(userRoleBindings).values([
-      { userId: ownerA, zoneId: zoneA.id, roleId: zoneA.ownerRoleId },
-      { userId: financeA, zoneId: zoneA.id, roleId: zoneA.financeAdminRoleId },
+      { userId: ownerA, zoneId: zoneA.id, roleId: zoneA.ownerRoleId,
+  roleScope: "zone",
+},
+      { userId: financeA, zoneId: zoneA.id, roleId: zoneA.financeAdminRoleId,
+  roleScope: "zone",
+},
       {
         userId: treasurerA,
         zoneId: zoneA.id,
         chapterId: zoneA.chapterId,
         roleId: zoneA.chapterTreasurerRoleId,
+        roleScope: "chapter",
       },
       {
         userId: bookkeeperA,
         zoneId: zoneA.id,
         chapterId: zoneA.chapterId,
         roleId: zoneA.chapterBookkeeperRoleId,
+        roleScope: "chapter",
       },
       {
         userId: pastorA,
         zoneId: zoneA.id,
         chapterId: zoneA.chapterId,
         roleId: zoneA.chapterPastorRoleId,
+        roleScope: "chapter",
+      },
+      {
+        userId: groupAdminA,
+        zoneId: zoneA.id,
+        groupId: groupA.id,
+        roleId: zoneA.groupAdminRoleId,
+        roleScope: "group",
       },
     ]);
   });
@@ -224,6 +249,8 @@ describe("tenant contribution routes", () => {
         await tx.execute(sql`delete from contributions where zone_id = ${z}`);
         await tx.execute(sql`delete from contribution_batches where zone_id = ${z}`);
         await tx.execute(sql`delete from members where zone_id = ${z}`);
+        await tx.execute(sql`update chapters set group_id = null where zone_id = ${z}`);
+        await tx.execute(sql`delete from groups where zone_id = ${z}`);
         await tx.execute(sql`delete from chapters where zone_id = ${z}`);
         await tx.execute(sql`delete from zones where slug = ${slug}`);
       }
@@ -279,6 +306,42 @@ describe("tenant contribution routes", () => {
     };
     expect(got.contribution.status).toBe("posted");
     expect(got.lines[0].amount).toBe("12.0000");
+  });
+
+  it("group admins can read but not write contributions in their group", async () => {
+    asUser(ownerA, "owner@example.com");
+    const create = await call(zoneA.slug, "/api/tenant/contributions", {
+      method: "POST",
+      body: {
+        chapterId: zoneA.chapterId,
+        memberId: zoneA.memberId,
+        sourceType: "manual",
+        contributionDate: seededDate,
+        lines: [{ givingTypeId: zoneA.givingTypeId, amount: "9.0000" }],
+      },
+    });
+    expect(create.status).toBe(201);
+    const created = (await create.json()) as { contribution: { id: string } };
+
+    asUser(groupAdminA, "group@example.com");
+    const list = await call(zoneA.slug, "/api/tenant/contributions");
+    expect(list.status).toBe(200);
+    const listBody = (await list.json()) as { items: Array<{ id: string }> };
+    expect(listBody.items.map((c) => c.id)).toContain(created.contribution.id);
+
+    const get = await call(zoneA.slug, `/api/tenant/contributions/${created.contribution.id}`);
+    expect(get.status).toBe(200);
+
+    const denied = await call(zoneA.slug, "/api/tenant/contributions", {
+      method: "POST",
+      body: {
+        chapterId: zoneA.chapterId,
+        sourceType: "manual",
+        contributionDate: seededDate,
+        lines: [{ givingTypeId: zoneA.givingTypeId, amount: "10.0000" }],
+      },
+    });
+    expect(denied.status).toBe(403);
   });
 
   // ─── Cross-tenant ──────────────────────────────────────────────────

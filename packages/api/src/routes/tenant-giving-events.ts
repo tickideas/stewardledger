@@ -18,7 +18,7 @@ import {
   serviceTypes,
 } from "@stewardledger/db/schema";
 import { db } from "../db";
-import { hasAnyRole } from "../middleware/auth";
+import { hasAnyRole, visibleChapterIds } from "../middleware/auth";
 import { writeAudit } from "../services/audit";
 import { deriveGivingPeriodForDate } from "../services/period-seed";
 import {
@@ -94,17 +94,18 @@ tenantGivingEventsRouter.get(
     const query = c.req.valid("query");
     const conditions = [eq(serviceEvents.zoneId, ctx.zoneId)];
 
-    if (hasZoneEventRead(ctx)) {
+    const scope = await visibleChapterIds(ctx, ZONE_GIVING_READ_ROLES);
+    if (scope.kind === "all") {
       if (query.chapterId) conditions.push(eq(serviceEvents.chapterId, query.chapterId));
     } else {
-      if (ctx.chapterIds.length === 0) {
+      if (scope.ids.length === 0) {
         return c.json({ items: [], limit: query.limit, offset: query.offset });
       }
-      if (query.chapterId && !ctx.chapterIds.includes(query.chapterId)) return forbidden(c);
+      if (query.chapterId && !scope.ids.includes(query.chapterId)) return forbidden(c);
       conditions.push(
         query.chapterId
           ? eq(serviceEvents.chapterId, query.chapterId)
-          : or(isNull(serviceEvents.chapterId), inArray(serviceEvents.chapterId, ctx.chapterIds))!,
+          : or(isNull(serviceEvents.chapterId), inArray(serviceEvents.chapterId, scope.ids))!,
       );
     }
     if (query.serviceTypeId) conditions.push(eq(serviceEvents.serviceTypeId, query.serviceTypeId));

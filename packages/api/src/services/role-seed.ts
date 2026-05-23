@@ -2,14 +2,14 @@
 // Seeds the system roles for a newly-created zone. Roles are zone-scoped rows
 // in `roles`; the canonical taxonomy lives in @stewardledger/shared/roles.
 
-import { CHAPTER_ROLES, ZONE_ROLES, type RoleCode } from "@stewardledger/shared";
+import { CHAPTER_ROLES, GROUP_ROLES, ZONE_ROLES, type RoleCode } from "@stewardledger/shared";
 import { roles } from "@stewardledger/db/schema";
 import type { Db } from "@stewardledger/db";
 
 interface SeedRow {
   code: RoleCode;
   name: string;
-  scope: "zone" | "chapter";
+  scope: "zone" | "group" | "chapter";
   permissions: string[];
 }
 
@@ -34,6 +34,37 @@ const SYSTEM_ROLES: SeedRow[] = [
     name: "Zone Pastor (Viewer)",
     scope: "zone",
     permissions: ["report.read"],
+  },
+  // Group-level
+  {
+    code: GROUP_ROLES.GROUP_ADMIN,
+    name: "Group Admin",
+    scope: "group",
+    permissions: [
+      "group.read",
+      "chapter.read",
+      "chapter.write",
+      "member.read",
+      "contribution.read",
+      "import.read",
+      "report.read",
+      "audit.read",
+      "target.read",
+      "invitation.write",
+    ],
+  },
+  {
+    code: GROUP_ROLES.GROUP_PASTOR_VIEWER,
+    name: "Group Pastor (Viewer)",
+    scope: "group",
+    permissions: [
+      "group.read",
+      "chapter.read",
+      "member.read",
+      "contribution.read",
+      "report.read",
+      "target.read",
+    ],
   },
   // Chapter-level
   {

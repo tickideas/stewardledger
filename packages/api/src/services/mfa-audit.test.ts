@@ -61,6 +61,7 @@ async function bind(userId: string, zoneId: string, roleId: string): Promise<voi
     zoneId,
     chapterId: null,
     roleId,
+    roleScope: "zone",
   });
 }
 
@@ -159,6 +160,7 @@ describe("mfa-audit", () => {
       chapterId: null,
       roleId: zoneRevoked.ownerRoleId,
       revokedAt: new Date(),
+      roleScope: "zone",
     });
 
     const ids = await scopedZoneIds(db, userId);

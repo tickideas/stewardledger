@@ -4,6 +4,7 @@
 
 import { sql } from "drizzle-orm";
 import {
+  boolean,
   check,
   index,
   integer,
@@ -49,6 +50,7 @@ export const zones = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
+    groupsEnabled: boolean("groups_enabled").notNull().default(false),
     activatedAt: timestamp("activated_at", { withTimezone: true }),
     primaryContactUserId: text("primary_contact_user_id").references(() => user.id, {
       onDelete: "set null",
