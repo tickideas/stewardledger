@@ -37,6 +37,7 @@ interface SeededZone {
   name: string;
   ownerRoleId: string;
   groupAdminRoleId: string;
+  groupPastorViewerRoleId: string;
   chapterAdminRoleId: string;
   chapterTreasurerRoleId: string;
 }
@@ -61,6 +62,7 @@ async function seedZone(slug: string, name: string): Promise<SeededZone> {
     name: zone.name,
     ownerRoleId: seeded.get(ZONE_ROLES.ZONE_OWNER)!,
     groupAdminRoleId: seeded.get(GROUP_ROLES.GROUP_ADMIN)!,
+    groupPastorViewerRoleId: seeded.get(GROUP_ROLES.GROUP_PASTOR_VIEWER)!,
     chapterAdminRoleId: seeded.get(CHAPTER_ROLES.CHAPTER_ADMIN)!,
     chapterTreasurerRoleId: seeded.get(CHAPTER_ROLES.CHAPTER_TREASURER)!,
   };
@@ -749,6 +751,56 @@ describe("tenant routes — cross-tenant fuzz", () => {
       body: { pastorName: "Outside Pastor" },
     });
     expect(outsidePatch.status).toBe(403);
+  });
+
+  it("group admin chapter writes require group_admin on the target group", async () => {
+    const adminChapter = await seedChapter(zoneA.id, `Admin Group Chapter ${unique()}`);
+    const viewerChapter = await seedChapter(zoneA.id, `Viewer Group Chapter ${unique()}`);
+    const [adminGroup, viewerGroup] = await db
+      .insert(groups)
+      .values([
+        { zoneId: zoneA.id, slug: `admin-${unique()}`, name: `Admin ${unique()}` },
+        { zoneId: zoneA.id, slug: `viewer-${unique()}`, name: `Viewer ${unique()}` },
+      ])
+      .returning({ id: groups.id });
+    await db.execute(sql`update chapters set group_id = ${adminGroup.id} where id = ${adminChapter}`);
+    await db.execute(sql`update chapters set group_id = ${viewerGroup.id} where id = ${viewerChapter}`);
+
+    const mixedGroupUser = await seedUser(`mixed-group+${unique()}@example.com`);
+    cleanupUserIds.push(mixedGroupUser);
+    await db.insert(userRoleBindings).values([
+      {
+        userId: mixedGroupUser,
+        zoneId: zoneA.id,
+        groupId: adminGroup.id,
+        roleId: zoneA.groupAdminRoleId,
+        roleScope: "group",
+      },
+      {
+        userId: mixedGroupUser,
+        zoneId: zoneA.id,
+        groupId: viewerGroup.id,
+        roleId: zoneA.groupPastorViewerRoleId,
+        roleScope: "group",
+      },
+    ]);
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(mixedGroupUser, "mixed-group@x"));
+
+    const adminGroupPatch = await call(zoneA.slug, `/api/tenant/chapters/${adminChapter}/profile`, {
+      method: "PATCH",
+      body: { pastorName: "Admin Group Pastor" },
+    });
+    expect(adminGroupPatch.status).toBe(200);
+
+    const viewerGroupPatch = await call(
+      zoneA.slug,
+      `/api/tenant/chapters/${viewerChapter}/profile`,
+      {
+        method: "PATCH",
+        body: { pastorName: "Viewer Group Pastor" },
+      },
+    );
+    expect(viewerGroupPatch.status).toBe(403);
   });
 
   it("GET /chapters/:id/roster lists active chapter-scope bindings", async () => {

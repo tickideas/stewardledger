@@ -166,18 +166,29 @@ function forbidden(c: { json: (b: unknown, s: number) => Response }, msg = "Insu
 async function canWriteChapterSettings(ctx: AuthorizedContext, chapterId: string): Promise<boolean> {
   if (hasAnyRole(ctx, ...CHAPTER_SETTINGS_ZONE_WRITE_ROLES)) return true;
   if (ctx.roleCodes.includes(GROUP_ROLES.GROUP_ADMIN)) {
-    const [chapter] = await db
-      .select({ groupId: chapters.groupId })
+    const [binding] = await db
+      .select({ id: userRoleBindings.id })
       .from(chapters)
+      .innerJoin(
+        userRoleBindings,
+        and(
+          eq(userRoleBindings.zoneId, chapters.zoneId),
+          eq(userRoleBindings.groupId, chapters.groupId),
+        ),
+      )
+      .innerJoin(rolesTable, eq(userRoleBindings.roleId, rolesTable.id))
       .where(
         and(
           eq(chapters.id, chapterId),
           eq(chapters.zoneId, ctx.zoneId),
           isNull(chapters.deletedAt),
+          eq(userRoleBindings.userId, ctx.userId),
+          eq(rolesTable.code, GROUP_ROLES.GROUP_ADMIN),
+          isNull(userRoleBindings.revokedAt),
         ),
       )
       .limit(1);
-    if (chapter?.groupId && ctx.groupIds.includes(chapter.groupId)) return true;
+    if (binding) return true;
   }
   if (!ctx.roleCodes.includes(CHAPTER_ROLES.CHAPTER_ADMIN)) return false;
   const [binding] = await db
