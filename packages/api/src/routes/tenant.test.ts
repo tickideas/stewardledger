@@ -718,6 +718,39 @@ describe("tenant routes — cross-tenant fuzz", () => {
     expect(foreignPatch.status).toBe(403);
   });
 
+  it("group admin can write chapter settings inside their group only", async () => {
+    const groupChapter = await seedChapter(zoneA.id, `Group Settings ${unique()}`);
+    const outsideChapter = await seedChapter(zoneA.id, `Outside Settings ${unique()}`);
+    const [group] = await db
+      .insert(groups)
+      .values({ zoneId: zoneA.id, slug: `settings-${unique()}`, name: `Settings ${unique()}` })
+      .returning({ id: groups.id });
+    await db.execute(sql`update chapters set group_id = ${group.id} where id = ${groupChapter}`);
+
+    const groupAdmin = await seedUser(`group-settings+${unique()}@example.com`);
+    cleanupUserIds.push(groupAdmin);
+    await db.insert(userRoleBindings).values({
+      userId: groupAdmin,
+      zoneId: zoneA.id,
+      groupId: group.id,
+      roleId: zoneA.groupAdminRoleId,
+      roleScope: "group",
+    });
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(groupAdmin, "group-settings@x"));
+
+    const ownPatch = await call(zoneA.slug, `/api/tenant/chapters/${groupChapter}/profile`, {
+      method: "PATCH",
+      body: { pastorName: "Group Pastor" },
+    });
+    expect(ownPatch.status).toBe(200);
+
+    const outsidePatch = await call(zoneA.slug, `/api/tenant/chapters/${outsideChapter}/profile`, {
+      method: "PATCH",
+      body: { pastorName: "Outside Pastor" },
+    });
+    expect(outsidePatch.status).toBe(403);
+  });
+
   it("GET /chapters/:id/roster lists active chapter-scope bindings", async () => {
     // Seed a chapter admin for chapterA and confirm they show up.
     const treasurer = await seedUser(`treasurer+${unique()}@example.com`);
