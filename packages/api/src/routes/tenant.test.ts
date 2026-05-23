@@ -924,6 +924,56 @@ describe("tenant routes — cross-tenant fuzz", () => {
     expect(outOfScope.status).toBe(403);
   });
 
+  it("group admin lists only invitations for chapters in their group", async () => {
+    const groupChapter = await seedChapter(zoneA.id, `Group List ${unique()}`);
+    const outsideChapter = await seedChapter(zoneA.id, `Outside List ${unique()}`);
+    const [group] = await db
+      .insert(groups)
+      .values({ zoneId: zoneA.id, slug: `list-${unique()}`, name: `List ${unique()}` })
+      .returning({ id: groups.id });
+    await db.execute(sql`update chapters set group_id = ${group.id} where id = ${groupChapter}`);
+
+    const groupAdmin = await seedUser(`group-list+${unique()}@example.com`);
+    cleanupUserIds.push(groupAdmin);
+    await db.insert(userRoleBindings).values({
+      userId: groupAdmin,
+      zoneId: zoneA.id,
+      groupId: group.id,
+      roleId: zoneA.groupAdminRoleId,
+      roleScope: "group",
+    });
+
+    const [groupInvite, outsideInvite] = await db
+      .insert(invitations)
+      .values([
+        {
+          zoneId: zoneA.id,
+          email: `list-group+${unique()}@example.com`,
+          roleCode: CHAPTER_ROLES.CHAPTER_TREASURER,
+          chapterId: groupChapter,
+          tokenHash: `hash-lg-${unique()}`,
+          expiresAt: new Date(Date.now() + 86_400_000),
+        },
+        {
+          zoneId: zoneA.id,
+          email: `list-out+${unique()}@example.com`,
+          roleCode: CHAPTER_ROLES.CHAPTER_TREASURER,
+          chapterId: outsideChapter,
+          tokenHash: `hash-lo-${unique()}`,
+          expiresAt: new Date(Date.now() + 86_400_000),
+        },
+      ])
+      .returning({ id: invitations.id });
+
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(groupAdmin, "group-list@x"));
+    const res = await call(zoneA.slug, "/api/tenant/invitations");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: { id: string }[] };
+    const ids = new Set(body.items.map((i) => i.id));
+    expect(ids.has(groupInvite.id)).toBe(true);
+    expect(ids.has(outsideInvite.id)).toBe(false);
+  });
+
   it("GET /invitations?chapterId= clamps zone-admin and chapter-admin to that chapter", async () => {
     // Use the existing invA (zone-scope) plus a fresh chapter-scope invite
     // pinned to chapterA. The ?chapterId=chapterA filter should exclude

@@ -967,7 +967,8 @@ tenantRouter.get("/invitations", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
   const isZoneAdmin = hasAnyRole(ctx, ZONE_ROLES.ZONE_OWNER, ZONE_ROLES.ZONE_ADMIN);
   const isChapterAdmin = ctx.roleCodes.includes(CHAPTER_ROLES.CHAPTER_ADMIN);
-  if (!isZoneAdmin && !isChapterAdmin) {
+  const isGroupAdmin = ctx.roleCodes.includes(GROUP_ROLES.GROUP_ADMIN);
+  if (!isZoneAdmin && !isChapterAdmin && !isGroupAdmin) {
     return c.json({ error: { code: "forbidden", message: "Admin role required" } }, 403);
   }
   // Optional `?chapterId=` filter for the church-admin surface, which
