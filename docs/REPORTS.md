@@ -21,7 +21,7 @@
 | Branding | Zone logo, name, address, currency on every export. |
 | Saved filters | Per user, per zone. |
 | Scheduling | Optional: weekly/monthly delivery via email. |
-| Permissions | Role-aware; viewers cannot export raw PII. Cross-zone reports are platform-admin only (v1.1). |
+| Permissions | Role-aware; viewers cannot export raw PII. Group-tier readers see report rows clamped through `visibleChapterIds(ctx)`. Cross-zone reports are platform-admin only (v1.1). |
 
 ---
 

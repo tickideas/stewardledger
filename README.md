@@ -39,7 +39,7 @@ Start here:
 ```
 stewardledger/
 ├── packages/
-│   ├── shared/    # Zod schemas, types, money utils, role taxonomy
+│   ├── shared/    # Zod schemas, types, money utils, role taxonomy (zone/group/chapter)
 │   ├── db/        # Drizzle schema, migrations, client
 │   ├── api/       # Hono API server (port 3000)
 │   └── web/       # SvelteKit app (port 5173)
@@ -97,7 +97,7 @@ pnpm make-super-admin -- you@example.com --confirm # Elevate an existing user af
 
 `pnpm seed:demo -- --reset` creates demo tenant data, not login accounts. The seeded demo zones are `demo-grace-uk`, `demo-lighthouse-us`, and `demo-river-ng`.
 
-Create a platform admin with `pnpm create-admin`, sign in at `/login`, then open `/onboarding/invites?zone=<demo-slug>` to invite a demo user. Choose a zone-wide role for zone access, or choose a chapter role and chapter for church-level access. The invitee opens the invitation URL, creates their own password, and then signs in with their email and chosen password. In local development, invitation URLs are printed in the API logs when email sending is not configured.
+Create a platform admin with `pnpm create-admin`, sign in at `/login`, then open `/onboarding/invites?zone=<demo-slug>` to invite a demo user. Choose a zone-wide role for zone access, a group role plus group for the `/group/*` surface, or a chapter role plus chapter for church-level access. The invitee opens the invitation URL, creates their own password, and then signs in with their email and chosen password. In local development, invitation URLs are printed in the API logs when email sending is not configured.
 
 ## Status
 
@@ -112,7 +112,10 @@ store, chapter-scope enforcement on tenant reads, and an editable
 `/church/settings` covering banking, roster, scoped invitations, and
 batch templates for the Sunday-close flow. Reports v1 (Phase 7) is the
 current focus — member-statement / import-reconciliation / member-list
-Excel exports have landed; PDF + the remaining reports come next. See
+Excel exports have landed; PDF + the remaining reports come next. The
+groups hierarchy (Phase 15) has also landed: zones can opt into an
+optional Group tier between Zone and Chapter via `zones.groups_enabled`,
+with group-scoped admin/viewer roles and a `/group/*` surface. See
 [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md)
 for the full plan.
 

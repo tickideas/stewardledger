@@ -5,7 +5,7 @@
 > The roadmap is in **phases**, not in calendar weeks. Each phase has explicit deliverables and an exit checklist. We move on when the checklist is green.
 >
 > Product name: **StewardLedger**. Primary domain: **`stewardledger.church`**.
-> Tenant model: **the zone is the tenant**. Region is platform-curated reference data.
+> Tenant model: **the zone is the tenant**. Region is platform-curated reference data; Groups are an optional per-zone tier between Zone and Chapter (Phase 15, `feat/groups-hierarchy`).
 
 ---
 

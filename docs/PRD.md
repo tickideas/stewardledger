@@ -18,7 +18,7 @@ The legacy Church Plus continues to run independently on its own infrastructure 
 Key product attributes:
 
 1. Built on the same modern stack you already operate for echurcher (TypeScript, Hono, SvelteKit, PostgreSQL, Drizzle, Better Auth, Docker, Dokploy) — in a **separate repo, separate Dokploy app**, with no shared monorepo.
-2. Multi-tenant from day one. Hierarchy: **Region (reference data) → Zone (tenant) → Chapter → Member**. The customer who signs up and pays is a zone.
+2. Multi-tenant from day one. Hierarchy: **Region (reference data) → Zone (tenant) → optional Group → Chapter → Member**. The customer who signs up and pays is a zone.
 3. Multi-currency from launch. Each zone picks a default currency; per-fund/account override allowed; reports use native amounts with per-currency subtotals; FX deferred to v1.2.
 4. Custom domains as a **paid feature** (CNAME-based, like echurcher).
 5. Pricing: **flat fee per active zone**. **No free trial** — instead, a public demo zone (`demo.stewardledger.church`) for evaluation, and high-touch guided onboarding at paid signup.
@@ -209,19 +209,21 @@ Platform (StewardLedger)
     └── Zone                (THE TENANT — signs up, pays, has subdomain, owns data)
         ├── Settings, branding, billing
         ├── Roles / Users
-        └── Chapter         (a local church / congregation)
-            ├── Services / Meetings
-            ├── Members
-            ├── Envelopes
-            ├── Contributions
-            └── Targets
+        └── Group             (optional, per-zone opt-in administrative tier)
+            └── Chapter       (a local church / congregation)
+                ├── Services / Meetings
+                ├── Members
+                ├── Envelopes
+                ├── Contributions
+                └── Targets
 ```
 
 Key principles:
 
 - **The Zone is the SaaS tenant.** A zone signs up, pays the per-zone fee, owns its subdomain, and isolates its data from every other tenant.
 - **Region is a categorization, not a tenant.** Every zone selects (or types) the region it belongs to during signup. Regions are reference data — a curated list maintained by platform admins, used for cross-zone grouping, comparison reports, and (when applicable) platform-level rollups.
-- A zone has many **chapters**.
+- A zone has many **chapters** and may opt into **groups** as an administrative tier between zone and chapter.
+- A group has many chapters; a chapter belongs to at most one current group.
 - A chapter has many **members**.
 - This mirrors how the legacy Church Plus is deployed today (one zone per database). We just take it multi-tenant.
 
@@ -243,10 +245,10 @@ Regions during sign-up:
 
 - **Single PostgreSQL cluster, single database, row-level multi-tenancy** (echurcher pattern).
 - Every domain table has `zone_id uuid not null` — the tenant boundary.
-- Chapter-scoped tables also have `chapter_id`.
+- Group/chapter-scoped tables also have `group_id` and/or `chapter_id` as appropriate.
 - Most tables denormalize `region_id` (nullable) for fast region-aware reports; a region change at the zone level fans out to update those columns.
 - Composite default indexes on `(zone_id, ...)` for hot tables.
-- API middleware resolves the tenant from the authenticated session and `Host` header (subdomain or attached custom domain).
+- API middleware resolves the tenant from the authenticated session and `Host` header (subdomain or attached custom domain). `visibleChapterIds(ctx)` is the central read-scope chokepoint: zone roles see all chapters, group roles see chapters in their bound groups, and chapter roles see their bound chapters.
 - Optional Postgres RLS policies for defence in depth (post-v1 hardening).
 - A platform-admin context can read across tenants but never silently writes.
 
@@ -266,7 +268,7 @@ Regions during sign-up:
 
 ## 6. Roles and permissions
 
-A user is bound to a role at one of three scopes: **platform**, **zone** (the tenant), or **chapter** (within a zone). There are no "region" roles; regions are reference data only.
+A user is bound to a role at one of four scopes: **platform**, **zone** (the tenant), **group** (optional tier within a zone), or **chapter** (within a zone). There are no "region" roles; regions are reference data only.
 
 ### 6.1 Platform-level roles
 
@@ -315,7 +317,7 @@ Apply to a group (a zone-scoped collection of chapters). Only meaningful when th
 
 ### 6.5 Permissions model
 
-Permissions are derived from role bindings (`user_id` × `zone_id` × optional `chapter_id` × `role`). The API middleware computes the effective permission set per request. Write actions on financial records always require an explicit role check; default is deny.
+Permissions are derived from role bindings (`user_id` × `zone_id` × optional `group_id` × optional `chapter_id` × `role`). The API middleware computes the effective permission set per request. Write actions on financial records always require an explicit role check; default is deny.
 
 A user can hold **multiple bindings** — e.g. `chapter_treasurer` at chapter A, plus `zone_pastor_viewer` zone-wide.
 
@@ -563,7 +565,7 @@ We deliberately mirror the echurcher stack so the operations playbook (build, de
 **Decided:**
 
 1. ✅ **Product name**: **StewardLedger**. Primary domain: **`stewardledger.church`**. Trademark search to run before launch.
-2. ✅ **Hierarchy**: Region (reference data) → Zone (tenant) → Chapter → Member. The zone is the SaaS customer.
+2. ✅ **Hierarchy**: Region (reference data) → Zone (tenant) → optional Group → Chapter → Member. The zone is the SaaS customer; groups are per-zone opt-in administrative units.
 3. ✅ **Currency**: multi-currency at launch. Each zone picks a default currency; per-fund/account override allowed; reports show native amounts with per-currency subtotals. **FX deferred to v1.2.**
 4. ✅ **Custom domains**: paid feature.
 5. ✅ **Plan structure**: flat fee per active zone.
