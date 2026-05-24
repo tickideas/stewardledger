@@ -325,61 +325,57 @@
   {/if}
 
   <!-- Filter bar. -->
-  <div class="sl-reveal sl-reveal-2 mt-8 rounded-xl border bg-white p-4 shadow-sm">
-    <div class="grid grid-cols-1 gap-3 sm:grid-cols-4">
-      <label class="text-sm">
-        <span class="block text-slate-600">Chapter</span>
-        <select
-          bind:value={chapterFilter}
-          class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-        >
+  <div class="sl-reveal sl-reveal-2 sl-card-warm mt-8 p-6">
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-4 sm:items-end">
+      <label class="block">
+        <span class="sl-eyebrow" style="font-size:10.5px">Chapter</span>
+        <select bind:value={chapterFilter} class="sl-select mt-1.5">
           <option value="">All in scope</option>
           {#each chapters as chapter (chapter.id)}
             <option value={chapter.id}>{chapterLabel(chapter.id)}</option>
           {/each}
         </select>
       </label>
-      <label class="text-sm">
-        <span class="block text-slate-600">Ministry year</span>
-        <select
-          bind:value={ministryYearFilter}
-          class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-        >
+      <label class="block">
+        <span class="sl-eyebrow" style="font-size:10.5px">Ministry year</span>
+        <select bind:value={ministryYearFilter} class="sl-select mt-1.5">
           <option value="">All years</option>
           {#each ministryYears as y (y.id)}
             <option value={y.id}>{y.yearLabel}</option>
           {/each}
         </select>
       </label>
-      <label class="text-sm">
-        <span class="block text-slate-600">Giving type</span>
-        <select
-          bind:value={givingTypeFilter}
-          class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-        >
+      <label class="block">
+        <span class="sl-eyebrow" style="font-size:10.5px">Giving type</span>
+        <select bind:value={givingTypeFilter} class="sl-select mt-1.5">
           <option value="">All types</option>
           {#each givingTypes as g (g.id)}
             <option value={g.id}>{givingTypeLabel(g.id)}</option>
           {/each}
         </select>
       </label>
-      <div class="flex items-end justify-between gap-3">
-        <label class="flex items-center gap-2 text-sm">
+      <div class="flex items-center justify-between gap-3">
+        <label class="flex items-center gap-2 text-[12.5px] text-[var(--ink-mute)]">
           <input
             type="checkbox"
             bind:checked={zoneWideOnly}
             disabled={chapterFilter !== ""}
             class="rounded"
           />
-          <span class="text-slate-600">Zone-wide only</span>
+          <span>Zone-wide only</span>
         </label>
         <button
           type="button"
           onclick={toggleCreate}
           disabled={!hasZoneWrite && !hasChapterWriteRole}
-          class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+          class="sl-btn sl-btn-primary"
         >
-          {createOpen ? "Cancel" : "New target"}
+          {#if createOpen}Cancel{:else}
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M7 3v8M3 7h8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+            </svg>
+            New target
+          {/if}
         </button>
       </div>
     </div>
@@ -387,17 +383,11 @@
 
   <!-- Create form. -->
   {#if createOpen}
-    <form
-      onsubmit={submitCreate}
-      class="sl-reveal sl-reveal-3 mt-4 rounded-xl border bg-white p-5 shadow-sm"
-    >
+    <form onsubmit={submitCreate} class="sl-reveal sl-card-warm mt-4 p-6">
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <label class="text-sm">
-          <span class="block text-slate-600">Chapter</span>
-          <select
-            bind:value={createChapterId}
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          >
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Chapter</span>
+          <select bind:value={createChapterId} class="sl-select mt-1.5">
             {#if hasZoneWrite}
               <option value="">Zone-wide (all chapters)</option>
             {/if}
@@ -408,113 +398,61 @@
             {/each}
           </select>
         </label>
-        <label class="text-sm">
-          <span class="block text-slate-600">Ministry year</span>
-          <select
-            bind:value={createMinistryYearId}
-            required
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          >
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Ministry year</span>
+          <select bind:value={createMinistryYearId} required class="sl-select mt-1.5">
             <option value="" disabled>Select a year</option>
             {#each ministryYears as y (y.id)}
               <option value={y.id}>{y.yearLabel}</option>
             {/each}
           </select>
         </label>
-        <label class="text-sm">
-          <span class="block text-slate-600">Giving type</span>
-          <select
-            bind:value={createGivingTypeId}
-            required
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          >
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Giving type</span>
+          <select bind:value={createGivingTypeId} required class="sl-select mt-1.5">
             <option value="" disabled>Select a type</option>
             {#each givingTypes as g (g.id)}
               <option value={g.id}>{givingTypeLabel(g.id)}</option>
             {/each}
           </select>
         </label>
-        <label class="text-sm">
-          <span class="block text-slate-600">Currency</span>
-          <input
-            type="text"
-            bind:value={createCurrency}
-            required
-            maxlength={3}
-            placeholder="GBP"
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 uppercase"
-          />
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Currency</span>
+          <input type="text" bind:value={createCurrency} required maxlength={3} placeholder="GBP" class="sl-input mt-1.5 uppercase" />
         </label>
-        <label class="text-sm">
-          <span class="block text-slate-600">Full target</span>
-          <input
-            type="text"
-            bind:value={createFullTarget}
-            required
-            inputmode="decimal"
-            placeholder="0.00"
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          />
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Full target</span>
+          <input type="text" bind:value={createFullTarget} required inputmode="decimal" placeholder="0.00" class="sl-input sl-num mt-1.5" />
         </label>
-        <label class="text-sm">
-          <span class="block text-slate-600">Monthly target (optional)</span>
-          <input
-            type="text"
-            bind:value={createMonthlyTarget}
-            inputmode="decimal"
-            placeholder="0.00"
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          />
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Monthly target (optional)</span>
+          <input type="text" bind:value={createMonthlyTarget} inputmode="decimal" placeholder="0.00" class="sl-input sl-num mt-1.5" />
         </label>
-        <label class="text-sm">
-          <span class="block text-slate-600">Weekly breakdown (optional)</span>
-          <input
-            type="text"
-            bind:value={createWeeklyBreakdown}
-            inputmode="decimal"
-            placeholder="0.00"
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          />
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Weekly breakdown (optional)</span>
+          <input type="text" bind:value={createWeeklyBreakdown} inputmode="decimal" placeholder="0.00" class="sl-input sl-num mt-1.5" />
         </label>
-        <label class="text-sm">
-          <span class="block text-slate-600">Target copies (optional)</span>
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Target copies (optional)</span>
           <!-- type="text" + inputmode keeps the bound value a string so
                the submit handler's .trim() / nullish-coalesce logic
                works the same way it does for the money fields. -->
-          <input
-            type="text"
-            bind:value={createFullTargetCopies}
-            inputmode="numeric"
-            pattern="[0-9]*"
-            placeholder="0"
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          />
+          <input type="text" bind:value={createFullTargetCopies} inputmode="numeric" pattern="[0-9]*" placeholder="0" class="sl-input sl-num mt-1.5" />
         </label>
-        <label class="text-sm">
-          <span class="block text-slate-600">Number of partners (optional)</span>
-          <input
-            type="text"
-            bind:value={createNumberOfPartners}
-            inputmode="numeric"
-            pattern="[0-9]*"
-            placeholder="0"
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          />
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Number of partners (optional)</span>
+          <input type="text" bind:value={createNumberOfPartners} inputmode="numeric" pattern="[0-9]*" placeholder="0" class="sl-input sl-num mt-1.5" />
         </label>
         <div class="flex items-end sm:col-span-2">
-          <button
-            type="submit"
-            disabled={creating}
-            class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-          >
+          <button type="submit" disabled={creating} class="sl-btn sl-btn-primary w-full justify-center">
             {creating ? "Saving…" : "Create target"}
           </button>
         </div>
       </div>
       {#if createError}
-        <p class="mt-3 text-sm text-rose-700">{createError}</p>
+        <p class="mt-3 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{createError}</p>
       {/if}
-      <p class="mt-2 text-[12px] text-slate-500">
+      <p class="mt-3 text-[11.5px] text-[var(--ink-mute)]">
         One target per (chapter or zone-wide, ministry year, giving
         type). Update an existing target instead of creating a duplicate.
       </p>
@@ -522,155 +460,109 @@
   {/if}
 
   <!-- Targets list. -->
-  <div class="sl-reveal sl-reveal-4 mt-6 overflow-x-auto rounded-xl border bg-white shadow-sm">
-    <table class="min-w-full text-sm" aria-label="Financial targets">
-      <thead class="bg-slate-50 text-left text-slate-600">
-        <tr>
-          <th class="px-3 py-2 font-medium">Scope</th>
-          <th class="px-3 py-2 font-medium">Ministry year</th>
-          <th class="px-3 py-2 font-medium">Giving type</th>
-          <th class="px-3 py-2 font-medium">Currency</th>
-          <th class="px-3 py-2 font-medium text-right">Full target</th>
-          <th class="px-3 py-2 font-medium text-right">Monthly</th>
-          <th class="px-3 py-2 font-medium text-right">Weekly</th>
-          <th class="px-3 py-2 font-medium text-right">Partners</th>
-          <th class="px-3 py-2 font-medium text-right">Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each targets as target (target.id)}
-          <tr class="border-t">
-            <td class="px-3 py-2 align-top">{chapterLabel(target.chapterId)}</td>
-            <td class="px-3 py-2 align-top">{ministryYearLabel(target.ministryYearId)}</td>
-            <td class="px-3 py-2 align-top">{givingTypeLabel(target.givingTypeId)}</td>
-            <td class="px-3 py-2 align-top">{target.currencyCode}</td>
-            {#if editingId === target.id}
-              <td class="px-3 py-2 align-top">
-                <input
-                  type="text"
-                  bind:value={editFullTarget}
-                  inputmode="decimal"
-                  class="w-full rounded border border-slate-300 px-2 py-1 text-right"
-                />
-              </td>
-              <td class="px-3 py-2 align-top">
-                <input
-                  type="text"
-                  bind:value={editMonthlyTarget}
-                  inputmode="decimal"
-                  class="w-full rounded border border-slate-300 px-2 py-1 text-right"
-                />
-              </td>
-              <td class="px-3 py-2 align-top">
-                <input
-                  type="text"
-                  bind:value={editWeeklyBreakdown}
-                  inputmode="decimal"
-                  class="w-full rounded border border-slate-300 px-2 py-1 text-right"
-                />
-              </td>
-              <td class="px-3 py-2 align-top">
-                <input
-                  type="text"
-                  bind:value={editNumberOfPartners}
-                  inputmode="numeric"
-                  pattern="[0-9]*"
-                  class="w-full rounded border border-slate-300 px-2 py-1 text-right"
-                />
-              </td>
-              <td class="px-3 py-2 align-top text-right">
-                <div class="flex justify-end gap-2">
-                  <button
-                    type="button"
-                    onclick={() => saveEdit(target)}
-                    disabled={saving}
-                    class="rounded border border-slate-300 px-2 py-1 text-xs font-medium hover:border-slate-400 disabled:opacity-50"
-                  >
-                    {saving ? "Saving…" : "Save"}
-                  </button>
-                  <button
-                    type="button"
-                    onclick={cancelEdit}
-                    class="rounded border border-slate-300 px-2 py-1 text-xs font-medium hover:border-slate-400"
-                  >
-                    Cancel
-                  </button>
-                </div>
-                {#if editError}
-                  <p class="mt-1 text-xs text-rose-700">{editError}</p>
-                {/if}
-              </td>
-            {:else}
-              <td class="px-3 py-2 align-top text-right font-mono">{target.fullTarget}</td>
-              <td class="px-3 py-2 align-top text-right text-slate-500">
-                {target.monthlyTarget ?? "—"}
-              </td>
-              <td class="px-3 py-2 align-top text-right text-slate-500">
-                {target.weeklyBreakdown ?? "—"}
-              </td>
-              <td class="px-3 py-2 align-top text-right text-slate-500">
-                {target.numberOfPartners ?? "—"}
-              </td>
-              <td class="px-3 py-2 align-top text-right">
-                {#if canWriteForChapter(target.chapterId)}
+  <div class="sl-reveal sl-reveal-4 mt-8">
+    <div class="mb-3 flex items-center justify-between">
+      <span class="sl-eyebrow">Targets on file</span>
+      <span class="sl-mono text-[10.5px] text-[var(--ink-mute)]" style="letter-spacing:0.06em">
+        {pageCount} {pageCount === 1 ? "row" : "rows"}{hasMore ? " · more available" : ""}
+      </span>
+    </div>
+    <div class="sl-card overflow-hidden">
+      <table class="sl-table" aria-label="Financial targets">
+        <thead>
+          <tr>
+            <th>Scope</th>
+            <th>Ministry year</th>
+            <th>Giving type</th>
+            <th>Currency</th>
+            <th class="!text-right">Full target</th>
+            <th class="!text-right">Monthly</th>
+            <th class="!text-right">Weekly</th>
+            <th class="!text-right">Partners</th>
+            <th class="!text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each targets as target (target.id)}
+            <tr>
+              <td>{chapterLabel(target.chapterId)}</td>
+              <td>{ministryYearLabel(target.ministryYearId)}</td>
+              <td>{givingTypeLabel(target.givingTypeId)}</td>
+              <td class="sl-mono text-[12px] text-[var(--ink-soft)]">{target.currencyCode}</td>
+              {#if editingId === target.id}
+                <td>
+                  <input type="text" bind:value={editFullTarget} inputmode="decimal" class="sl-input sl-num text-right" />
+                </td>
+                <td>
+                  <input type="text" bind:value={editMonthlyTarget} inputmode="decimal" class="sl-input sl-num text-right" />
+                </td>
+                <td>
+                  <input type="text" bind:value={editWeeklyBreakdown} inputmode="decimal" class="sl-input sl-num text-right" />
+                </td>
+                <td>
+                  <input type="text" bind:value={editNumberOfPartners} inputmode="numeric" pattern="[0-9]*" class="sl-input sl-num text-right" />
+                </td>
+                <td class="text-right">
                   <div class="flex justify-end gap-2">
-                    <button
-                      type="button"
-                      onclick={() => beginEdit(target)}
-                      class="rounded border border-slate-300 px-2 py-1 text-xs font-medium hover:border-slate-400"
-                    >
-                      Edit
+                    <button type="button" onclick={() => saveEdit(target)} disabled={saving} class="sl-btn sl-btn-primary">
+                      {saving ? "Saving…" : "Save"}
                     </button>
-                    <button
-                      type="button"
-                      onclick={() => deleteTarget(target)}
-                      class="rounded border border-slate-300 px-2 py-1 text-xs font-medium text-rose-700 hover:border-rose-400"
-                    >
-                      Delete
+                    <button type="button" onclick={cancelEdit} class="sl-btn sl-btn-ghost">
+                      Cancel
                     </button>
                   </div>
-                {/if}
+                  {#if editError}
+                    <p class="mt-2 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-2 py-1 text-[12px] text-[var(--bad)]">{editError}</p>
+                  {/if}
+                </td>
+              {:else}
+                <td class="sl-num text-right text-[var(--ink)]">{target.fullTarget}</td>
+                <td class="sl-num text-right text-[var(--ink-mute)]">{target.monthlyTarget ?? "—"}</td>
+                <td class="sl-num text-right text-[var(--ink-mute)]">{target.weeklyBreakdown ?? "—"}</td>
+                <td class="sl-num text-right text-[var(--ink-mute)]">{target.numberOfPartners ?? "—"}</td>
+                <td class="text-right">
+                  {#if canWriteForChapter(target.chapterId)}
+                    <div class="flex justify-end gap-2">
+                      <button type="button" onclick={() => beginEdit(target)} class="sl-btn sl-btn-ghost">
+                        Edit
+                      </button>
+                      <button type="button" onclick={() => deleteTarget(target)} class="sl-btn sl-btn-danger-ghost">
+                        Delete
+                      </button>
+                    </div>
+                  {/if}
+                </td>
+              {/if}
+            </tr>
+          {/each}
+          {#if targets.length === 0 && !loading}
+            <tr>
+              <td colspan={9} class="py-12 text-center text-[13px] text-[var(--ink-mute)]">
+                No targets match the current filters.
               </td>
-            {/if}
-          </tr>
-        {/each}
-        {#if targets.length === 0 && !loading}
-          <tr>
-            <td colspan={9} class="px-3 py-8 text-center text-slate-500">
-              No targets match the current filters.
-            </td>
-          </tr>
-        {/if}
-        {#if loading && targets.length === 0}
-          <tr>
-            <td colspan={9} class="px-3 py-8 text-center text-slate-500">Loading…</td>
-          </tr>
-        {/if}
-      </tbody>
-    </table>
+            </tr>
+          {/if}
+          {#if loading && targets.length === 0}
+            <tr>
+              <td colspan={9} class="py-12 text-center text-[13px] text-[var(--ink-mute)]">Loading…</td>
+            </tr>
+          {/if}
+        </tbody>
+      </table>
+    </div>
   </div>
 
   {#if pageCount > 0 || offset > 0}
-    <div class="sl-reveal sl-reveal-5 mt-4 flex items-center justify-between text-[13px] text-slate-600">
-      <span>
+    <div class="sl-reveal sl-reveal-5 mt-4 flex items-center justify-between text-[13px] text-[var(--ink-mute)]">
+      <span class="sl-mono text-[11.5px]" style="letter-spacing:0.04em">
         Showing rows {offset + 1}–{offset + pageCount}
         {#if hasMore}(more available){/if}
       </span>
       <div class="flex items-center gap-2">
-        <button
-          type="button"
-          onclick={prevPage}
-          disabled={offset === 0 || loading}
-          class="rounded border border-slate-300 px-2 py-1 text-xs font-medium hover:border-slate-400 disabled:opacity-50"
-        >
+        <button type="button" onclick={prevPage} disabled={offset === 0 || loading} class="sl-btn sl-btn-ghost">
           Previous
         </button>
-        <button
-          type="button"
-          onclick={nextPage}
-          disabled={!hasMore || loading}
-          class="rounded border border-slate-300 px-2 py-1 text-xs font-medium hover:border-slate-400 disabled:opacity-50"
-        >
+        <button type="button" onclick={nextPage} disabled={!hasMore || loading} class="sl-btn sl-btn-ghost">
           Next
         </button>
       </div>

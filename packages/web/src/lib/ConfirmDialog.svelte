@@ -117,9 +117,9 @@
   );
   const confirmClasses = $derived(
     tone === "danger"
-      ? "sl-btn border-[var(--bad)] bg-[var(--bad)] text-white hover:bg-[#742f26] disabled:opacity-45"
+      ? "sl-btn sl-btn-danger"
       : tone === "warn"
-        ? "sl-btn border-[var(--warn)] bg-[var(--warn)] text-white hover:opacity-90 disabled:opacity-45"
+        ? "sl-btn sl-btn-warn"
         : "sl-btn sl-btn-primary",
   );
 </script>
@@ -128,7 +128,8 @@
 
 {#if open}
   <div
-    class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 sm:p-8"
+    class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8"
+    style="background: rgba(21, 22, 26, 0.42);"
     role="presentation"
     onclick={(e) => {
       if (e.target === e.currentTarget) cancel();

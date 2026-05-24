@@ -128,30 +128,24 @@
     {placeholder}
     {disabled}
     autocomplete="off"
-    class="block w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm disabled:bg-slate-100"
+    class="sl-input"
   />
   {#if showRecentTruncatedHint && query.trim() === ""}
-    <p class="mt-1 text-xs text-slate-500">
+    <p class="mt-1.5 text-[11.5px] text-[var(--ink-mute)]">
       Showing recent members. Type to search the full directory.
     </p>
   {/if}
   {#if query.trim() !== "" && !memberId}
-    <ul
-      class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow"
-    >
+    <ul class="absolute z-10 mt-1 max-h-60 w-full overflow-auto border border-[var(--rule)] bg-[var(--card)] shadow-[var(--shadow-lift)]">
       {#each dropdownItems as m (m.id)}
         <li>
-          <button
-            type="button"
-            onclick={() => pick(m)}
-            class="block w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50"
-          >
+          <button type="button" onclick={() => pick(m)} class="block w-full px-3 py-2 text-left text-[13px] text-[var(--ink)] hover:bg-[var(--paper-soft)]">
             {memberLabel(m)}
           </button>
         </li>
       {/each}
       {#if dropdownItems.length === 0}
-        <li class="px-3 py-1.5 text-sm text-slate-500">No matches</li>
+        <li class="px-3 py-2 text-[13px] text-[var(--ink-mute)]">No matches</li>
       {/if}
     </ul>
   {/if}

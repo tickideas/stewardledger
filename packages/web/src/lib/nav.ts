@@ -72,7 +72,7 @@ export const ZONAL_NAV: NavGroup[] = [
     label: "Membership",
     items: [
       { href: "/zone/members", label: "Members" },
-      { href: "/zone/merge", label: "Merge proposals" },
+      { href: "/zone/duplicates", label: "Duplicate members" },
     ],
   },
   {

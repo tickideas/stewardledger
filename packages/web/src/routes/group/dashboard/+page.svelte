@@ -27,11 +27,20 @@
   onMount(refresh);
 </script>
 
-<h1 class="text-2xl font-bold mb-4">Group dashboard</h1>
+<svelte:head><title>Group dashboard · StewardLedger</title></svelte:head>
+
+<div class="sl-reveal sl-reveal-1">
+  <span class="sl-eyebrow">§ Insight · Group</span>
+  <h1 class="mt-3 sl-display text-[40px] leading-[1] text-[var(--ink)]">
+    Group <span class="sl-serif-italic font-light text-[var(--brass-deep)]">dashboard</span>
+  </h1>
+  <p class="mt-2 text-[14px] text-[var(--ink-mute)]">Aggregated view across the chapters bound to this group.</p>
+</div>
+
 {#if loading}
-  <p class="text-[var(--ink-mute)]">Loading…</p>
+  <p class="mt-8 text-[13px] text-[var(--ink-mute)]">Loading…</p>
 {:else if error}
-  <p class="text-red-600">{error}</p>
+  <p class="mt-8 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{error}</p>
 {:else}
-  <pre class="text-xs bg-[var(--paper-soft)] p-3 rounded overflow-x-auto">{JSON.stringify(data, null, 2)}</pre>
+  <pre class="sl-card sl-mono mt-8 max-h-[60vh] overflow-auto p-4 text-[11.5px] text-[var(--ink-soft)]">{JSON.stringify(data, null, 2)}</pre>
 {/if}

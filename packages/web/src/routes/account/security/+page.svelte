@@ -266,7 +266,7 @@
               class="sl-btn"
             >Regenerate recovery codes</button>
           {:else}
-            <form onsubmit={regenerateCodes} class="grid max-w-md gap-4 rounded-lg border bg-white p-4">
+            <form onsubmit={regenerateCodes} class="sl-card-warm grid max-w-md gap-4 p-5">
               <p class="text-[13px] text-[var(--ink-mute)]">
                 Confirm your password. Old recovery codes stop working
                 immediately.
@@ -310,8 +310,7 @@
                 regenPassword = "";
                 errorMsg = null;
               }}
-              class="sl-btn"
-              style="border-color: var(--bad); color: var(--bad)"
+              class="sl-btn sl-btn-danger-ghost"
             >Disable two-factor</button>
           {:else}
             <form onsubmit={disableMfa} class="grid max-w-md gap-4 rounded-lg border border-[var(--bad)] bg-[var(--bad-soft)] p-4">
@@ -330,7 +329,7 @@
                 />
               </label>
               <div class="flex items-center gap-3">
-                <button type="submit" disabled={busy} class="sl-btn sl-btn-primary" style="background:var(--bad)">
+                <button type="submit" disabled={busy} class="sl-btn sl-btn-danger">
                   {busy ? "Disabling…" : "Disable MFA"}
                 </button>
                 <button

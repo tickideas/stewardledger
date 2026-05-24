@@ -176,106 +176,83 @@
   }
 </script>
 
-<div class="py-8">
+<svelte:head><title>Member · StewardLedger</title></svelte:head>
+
+<div class="pt-2 pb-10 lg:pt-0">
   {#if loadError}
-    <p class="text-sm text-red-600">{loadError}</p>
+    <p class="mt-6 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{loadError}</p>
   {:else if member}
-    <div class="flex items-baseline justify-between">
+    <div class="sl-reveal sl-reveal-1 flex flex-wrap items-end justify-between gap-6">
       <div>
-        <p class="text-xs font-mono text-slate-500">{member.referenceCode}</p>
-        <h1 class="text-2xl font-semibold tracking-tight">
+        <span class="sl-eyebrow">§ II · Identity record</span>
+        <p class="mt-3 sl-mono text-[11.5px] text-[var(--ink-mute)]" style="letter-spacing:0.08em">{member.referenceCode}</p>
+        <h1 class="mt-1 sl-display text-[40px] leading-[1] text-[var(--ink)]">
           {member.fullName ?? `${member.firstName} ${member.lastName ?? ""}`.trim()}
         </h1>
+        <p class="mt-2 text-[14px] text-[var(--ink-mute)]">
+          {#if member.isActive}
+            <span class="sl-badge sl-badge-ok">active</span>
+          {:else}
+            <span class="sl-badge sl-badge-mute">inactive</span>
+          {/if}
+        </p>
       </div>
-      <button
-        class="text-sm text-red-600 hover:underline"
-        onclick={softDelete}
-      >
-        Soft-delete
-      </button>
+      <div class="flex items-center gap-3">
+        <a href="/zone/members" class="sl-btn sl-btn-ghost">← Back to directory</a>
+        <button type="button" class="sl-btn sl-btn-danger-ghost" onclick={softDelete}>
+          Soft-delete
+        </button>
+      </div>
     </div>
 
-    <form class="mt-6 grid grid-cols-12 gap-4" onsubmit={save}>
-      <label class="col-span-12 sm:col-span-2 text-sm">
-        <span class="block font-medium text-slate-700">Title</span>
-        <select
-          bind:value={member.titleId}
-          class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        >
+    <form class="sl-reveal sl-reveal-2 sl-card-warm mt-8 grid grid-cols-12 gap-3 p-6" onsubmit={save}>
+      <label class="col-span-12 sm:col-span-2">
+        <span class="sl-eyebrow" style="font-size:10.5px">Title</span>
+        <select bind:value={member.titleId} class="sl-select mt-1.5">
           <option value={null}>—</option>
           {#each titles as t}
             <option value={t.id}>{t.name}</option>
           {/each}
         </select>
       </label>
-      <label class="col-span-12 sm:col-span-3 text-sm">
-        <span class="block font-medium text-slate-700">First name</span>
-        <input
-          type="text"
-          required
-          minlength="1"
-          maxlength="120"
-          bind:value={member.firstName}
-          class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        />
+      <label class="col-span-12 sm:col-span-3">
+        <span class="sl-eyebrow" style="font-size:10.5px">First name</span>
+        <input type="text" required minlength="1" maxlength="120" bind:value={member.firstName} class="sl-input mt-1.5" />
       </label>
-      <label class="col-span-12 sm:col-span-3 text-sm">
-        <span class="block font-medium text-slate-700">Middle names</span>
-        <input
-          type="text"
-          maxlength="200"
-          bind:value={member.middleNames}
-          class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        />
+      <label class="col-span-12 sm:col-span-3">
+        <span class="sl-eyebrow" style="font-size:10.5px">Middle names</span>
+        <input type="text" maxlength="200" bind:value={member.middleNames} class="sl-input mt-1.5" />
       </label>
-      <label class="col-span-12 sm:col-span-4 text-sm">
-        <span class="block font-medium text-slate-700">Last name</span>
-        <input
-          type="text"
-          maxlength="120"
-          bind:value={member.lastName}
-          class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        />
+      <label class="col-span-12 sm:col-span-4">
+        <span class="sl-eyebrow" style="font-size:10.5px">Last name</span>
+        <input type="text" maxlength="120" bind:value={member.lastName} class="sl-input mt-1.5" />
       </label>
 
-      <label class="col-span-6 sm:col-span-3 text-sm">
-        <span class="block font-medium text-slate-700">Gender</span>
-        <select
-          bind:value={member.gender}
-          class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        >
+      <label class="col-span-6 sm:col-span-3">
+        <span class="sl-eyebrow" style="font-size:10.5px">Gender</span>
+        <select bind:value={member.gender} class="sl-select mt-1.5">
           <option value={null}>—</option>
           <option value="M">M</option>
           <option value="F">F</option>
           <option value="U">U</option>
         </select>
       </label>
-      <label class="col-span-6 sm:col-span-3 text-sm">
-        <span class="block font-medium text-slate-700">DOB</span>
-        <input
-          type="date"
-          bind:value={member.dateOfBirth}
-          class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        />
+      <label class="col-span-6 sm:col-span-3">
+        <span class="sl-eyebrow" style="font-size:10.5px">Date of birth</span>
+        <input type="date" bind:value={member.dateOfBirth} class="sl-input mt-1.5" />
       </label>
-      <label class="col-span-12 sm:col-span-3 text-sm">
-        <span class="block font-medium text-slate-700">Marital status</span>
-        <select
-          bind:value={member.maritalStatusId}
-          class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        >
+      <label class="col-span-12 sm:col-span-3">
+        <span class="sl-eyebrow" style="font-size:10.5px">Marital status</span>
+        <select bind:value={member.maritalStatusId} class="sl-select mt-1.5">
           <option value={null}>—</option>
           {#each maritalStatuses as ms}
             <option value={ms.id}>{ms.name}</option>
           {/each}
         </select>
       </label>
-      <label class="col-span-12 sm:col-span-3 text-sm">
-        <span class="block font-medium text-slate-700">Member type</span>
-        <select
-          bind:value={member.memberTypeId}
-          class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        >
+      <label class="col-span-12 sm:col-span-3">
+        <span class="sl-eyebrow" style="font-size:10.5px">Member type</span>
+        <select bind:value={member.memberTypeId} class="sl-select mt-1.5">
           <option value={null}>—</option>
           {#each memberTypes as mt}
             <option value={mt.id}>{mt.name}</option>
@@ -283,46 +260,29 @@
         </select>
       </label>
 
-      <label class="col-span-12 sm:col-span-4 text-sm">
-        <span class="block font-medium text-slate-700">Email</span>
-        <input
-          type="email"
-          bind:value={member.email}
-          class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        />
+      <label class="col-span-12 sm:col-span-4">
+        <span class="sl-eyebrow" style="font-size:10.5px">Email</span>
+        <input type="email" bind:value={member.email} class="sl-input mt-1.5" />
       </label>
-      <label class="col-span-6 sm:col-span-4 text-sm">
-        <span class="block font-medium text-slate-700">Mobile</span>
-        <input
-          type="text"
-          maxlength="40"
-          bind:value={member.mobile}
-          class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        />
+      <label class="col-span-6 sm:col-span-4">
+        <span class="sl-eyebrow" style="font-size:10.5px">Mobile</span>
+        <input type="text" maxlength="40" bind:value={member.mobile} class="sl-input mt-1.5" />
       </label>
-      <label class="col-span-6 sm:col-span-4 text-sm">
-        <span class="block font-medium text-slate-700">Telephone</span>
-        <input
-          type="text"
-          maxlength="40"
-          bind:value={member.telephone}
-          class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        />
+      <label class="col-span-6 sm:col-span-4">
+        <span class="sl-eyebrow" style="font-size:10.5px">Telephone</span>
+        <input type="text" maxlength="40" bind:value={member.telephone} class="sl-input mt-1.5" />
       </label>
 
-      <label class="col-span-12 sm:col-span-6 text-sm">
-        <span class="block font-medium text-slate-700">Chapter</span>
-        <select
-          bind:value={member.chapterId}
-          class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        >
+      <label class="col-span-12 sm:col-span-6">
+        <span class="sl-eyebrow" style="font-size:10.5px">Chapter</span>
+        <select bind:value={member.chapterId} class="sl-select mt-1.5">
           <option value={null}>No chapter</option>
           {#each chapters as ch}
             <option value={ch.id}>{ch.name}</option>
           {/each}
         </select>
       </label>
-      <div class="col-span-12 sm:col-span-6 text-sm flex items-end gap-6 pb-1">
+      <div class="col-span-12 flex flex-wrap items-end gap-6 pb-1 text-[13px] text-[var(--ink-soft)] sm:col-span-6">
         <label class="inline-flex items-center gap-2">
           <input type="checkbox" bind:checked={member.isActive} /> Active
         </label>
@@ -335,95 +295,82 @@
       </div>
 
       {#if saveError}
-        <p class="col-span-12 text-sm text-red-600">{saveError}</p>
+        <p class="col-span-12 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{saveError}</p>
       {/if}
       <div class="col-span-12">
-        <button
-          type="submit"
-          disabled={saving}
-          class="inline-flex items-center px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-700 disabled:opacity-50"
-        >
-          {saving ? "Saving…" : "Save"}
+        <button type="submit" disabled={saving} class="sl-btn sl-btn-primary">
+          {saving ? "Saving…" : "Save changes"}
         </button>
       </div>
     </form>
 
-    <section class="mt-12">
-      <h2 class="text-lg font-semibold tracking-tight">Addresses</h2>
-      <ul class="mt-4 divide-y divide-slate-200 border rounded-lg">
+    <section class="sl-reveal sl-reveal-3 mt-12">
+      <div class="mb-3 flex items-center justify-between">
+        <span class="sl-eyebrow">Addresses</span>
+        <span class="sl-mono text-[10.5px] text-[var(--ink-mute)]" style="letter-spacing:0.06em">
+          {addresses.length} on file
+        </span>
+      </div>
+      <ul class="sl-card divide-y divide-[var(--rule)] overflow-hidden">
         {#each addresses as a}
-          <li class="px-4 py-3 text-sm flex items-center justify-between">
-            <div>
-              <p class="font-medium text-slate-800">
-                {a.line1 ?? ""}
+          <li class="flex items-center justify-between gap-4 px-5 py-4">
+            <div class="min-w-0">
+              <p class="flex flex-wrap items-center gap-2 text-[14px] text-[var(--ink)]">
+                <span>{a.line1 ?? "—"}</span>
                 {#if a.isPrimary}
-                  <span class="ml-2 text-xs text-green-700">primary</span>
+                  <span class="sl-badge sl-badge-accent">primary</span>
                 {/if}
                 {#if a.dateTo}
-                  <span class="ml-2 text-xs text-slate-400">archived {a.dateTo}</span>
+                  <span class="sl-badge sl-badge-mute">archived {a.dateTo}</span>
                 {/if}
               </p>
-              <p class="text-slate-500 text-xs">
-                {[a.line2, a.city, a.regionText, a.postcode, a.countryCode]
-                  .filter(Boolean)
-                  .join(", ")}
+              <p class="mt-1 text-[12px] text-[var(--ink-mute)]">
+                {[a.line2, a.city, a.regionText, a.postcode, a.countryCode].filter(Boolean).join(", ")}
               </p>
             </div>
             {#if !a.dateTo}
-              <button class="text-xs text-red-600 hover:underline" onclick={() => archiveAddress(a.id)}>
-                archive
+              <button type="button" class="sl-btn sl-btn-danger-ghost" onclick={() => archiveAddress(a.id)}>
+                Archive
               </button>
             {/if}
           </li>
         {/each}
         {#if addresses.length === 0}
-          <li class="px-4 py-6 text-sm text-slate-500 text-center">No addresses on file.</li>
+          <li class="px-5 py-10 text-center text-[13px] text-[var(--ink-mute)]">No addresses on file.</li>
         {/if}
       </ul>
 
-      <form class="mt-4 grid grid-cols-12 gap-3" onsubmit={addAddress}>
-        <input
-          type="text"
-          bind:value={addrForm.line1}
-          placeholder="Address line 1"
-          class="col-span-12 sm:col-span-4 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        />
-        <input
-          type="text"
-          bind:value={addrForm.line2}
-          placeholder="Address line 2"
-          class="col-span-12 sm:col-span-4 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        />
-        <input
-          type="text"
-          bind:value={addrForm.city}
-          placeholder="City"
-          class="col-span-6 sm:col-span-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        />
-        <input
-          type="text"
-          bind:value={addrForm.postcode}
-          placeholder="Postcode"
-          class="col-span-6 sm:col-span-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        />
-        <input
-          type="text"
-          maxlength="2"
-          bind:value={addrForm.countryCode}
-          placeholder="GB"
-          class="col-span-3 sm:col-span-2 rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase"
-        />
-        <label class="col-span-6 sm:col-span-2 text-xs flex items-center gap-2">
+      <form class="sl-card-warm mt-4 grid grid-cols-12 gap-3 p-6" onsubmit={addAddress}>
+        <label class="col-span-12 sm:col-span-4">
+          <span class="sl-eyebrow" style="font-size:10.5px">Address line 1</span>
+          <input type="text" bind:value={addrForm.line1} class="sl-input mt-1.5" />
+        </label>
+        <label class="col-span-12 sm:col-span-4">
+          <span class="sl-eyebrow" style="font-size:10.5px">Address line 2</span>
+          <input type="text" bind:value={addrForm.line2} class="sl-input mt-1.5" />
+        </label>
+        <label class="col-span-6 sm:col-span-2">
+          <span class="sl-eyebrow" style="font-size:10.5px">City</span>
+          <input type="text" bind:value={addrForm.city} class="sl-input mt-1.5" />
+        </label>
+        <label class="col-span-6 sm:col-span-2">
+          <span class="sl-eyebrow" style="font-size:10.5px">Postcode</span>
+          <input type="text" bind:value={addrForm.postcode} class="sl-input mt-1.5" />
+        </label>
+        <label class="col-span-6 sm:col-span-2">
+          <span class="sl-eyebrow" style="font-size:10.5px">Country</span>
+          <input type="text" maxlength="2" placeholder="GB" bind:value={addrForm.countryCode} class="sl-input mt-1.5 uppercase" />
+        </label>
+        <label class="col-span-6 flex items-end gap-2 pb-2 text-[12.5px] text-[var(--ink-soft)] sm:col-span-2">
           <input type="checkbox" bind:checked={addrForm.isPrimary} /> Primary
         </label>
-        <button
-          type="submit"
-          class="col-span-12 sm:col-span-2 inline-flex items-center justify-center px-3 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-700"
-        >
-          Add address
-        </button>
+        <div class="col-span-12 sm:col-span-8 flex items-end">
+          <button type="submit" class="sl-btn sl-btn-primary w-full justify-center sm:w-auto">
+            Add address
+          </button>
+        </div>
         {#if addrError}
-          <p class="col-span-12 text-sm text-red-600">{addrError}</p>
+          <p class="col-span-12 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{addrError}</p>
         {/if}
       </form>
     </section>

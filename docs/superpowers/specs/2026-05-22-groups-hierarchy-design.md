@@ -304,7 +304,7 @@ A new `/group/*` route group mirroring `/zone/*` narrowed to the bound group, pl
 **Out of `/group/*` by design:**
 
 - `/zone/lookups` — zone-wide reference data.
-- `/zone/merge` — zone-wide member-merge tool.
+- `/zone/duplicates` — zone-wide duplicate-member merge tool.
 - Group creation / chapter-move / chapter create — those stay on `/zone/*`.
 
 ### 6.2 Modified `/zone/*`

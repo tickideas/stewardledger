@@ -222,44 +222,44 @@
   }
 </script>
 
-<div class="max-w-2xl mx-auto px-6 py-8">
-  <a href="/zone/contributions" class="text-sm text-slate-500 hover:underline">← Back to contributions</a>
-  <h1 class="mt-2 text-2xl font-semibold tracking-tight">New batch</h1>
-  <p class="mt-1 text-sm text-slate-600">
-    Open the Sunday close. After this you'll add member rows and split by giving type.
-  </p>
+<svelte:head><title>New batch · StewardLedger</title></svelte:head>
+
+<div class="pt-2 pb-10 lg:pt-0">
+  <a href="/zone/contributions" class="sl-btn sl-btn-ghost">← Back to contributions</a>
+
+  <div class="sl-reveal sl-reveal-1 mt-4">
+    <span class="sl-eyebrow">§ Daily ledger · New batch</span>
+    <h1 class="mt-3 sl-display text-[40px] leading-[1] text-[var(--ink)]">
+      New <span class="sl-serif-italic font-light text-[var(--brass-deep)]">batch</span>
+    </h1>
+    <p class="mt-2 max-w-2xl text-[14px] text-[var(--ink-mute)]">
+      Open the Sunday close. After this you'll add member rows and split by giving type.
+    </p>
+  </div>
 
   {#if loadError}
-    <p class="mt-3 text-sm text-amber-700">{loadError}</p>
+    <p class="mt-4 border-l-2 border-[var(--warn)] bg-[var(--warn-soft)] px-3 py-2 text-[13px] text-[var(--warn)]">{loadError}</p>
   {/if}
 
-  <form class="mt-6 space-y-4" onsubmit={submit}>
+  <form class="sl-reveal sl-reveal-2 sl-card-warm mt-8 max-w-3xl space-y-5 p-6" onsubmit={submit}>
     {#if templates.length > 0}
       <label class="block">
-        <span class="text-sm font-medium text-slate-700">Template (optional)</span>
-        <select
-          bind:value={templateId}
-          onchange={onTemplateChange}
-          class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        >
+        <span class="sl-eyebrow" style="font-size:10.5px">Template (optional)</span>
+        <select bind:value={templateId} onchange={onTemplateChange} class="sl-select mt-1.5">
           <option value="">No template</option>
           {#each templates as t (t.id)}
             <option value={t.id}>{t.name}</option>
           {/each}
         </select>
-        <p class="mt-1 text-xs text-slate-500">
+        <p class="mt-1.5 text-[11.5px] text-[var(--ink-mute)]">
           Picks the source, currency, reference, and notes from this preset.
         </p>
       </label>
     {/if}
 
     <label class="block">
-      <span class="text-sm font-medium text-slate-700">Chapter</span>
-      <select
-        bind:value={chapterId}
-        required
-        class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-      >
+      <span class="sl-eyebrow" style="font-size:10.5px">Chapter</span>
+      <select bind:value={chapterId} required class="sl-select mt-1.5">
         <option value="" disabled>Pick a chapter</option>
         {#each chapters as ch (ch.id)}
           <option value={ch.id}>{ch.name}</option>
@@ -268,11 +268,8 @@
     </label>
 
     <label class="block">
-      <span class="text-sm font-medium text-slate-700">Service event (optional)</span>
-      <select
-        bind:value={serviceEventId}
-        class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-      >
+      <span class="sl-eyebrow" style="font-size:10.5px">Service event (optional)</span>
+      <select bind:value={serviceEventId} class="sl-select mt-1.5">
         <option value="">No service event</option>
         {#each events as ev (ev.id)}
           <option value={ev.id}>{eventLabel(ev)}</option>
@@ -282,22 +279,16 @@
 
     <div class="grid grid-cols-2 gap-3">
       <label class="block">
-        <span class="text-sm font-medium text-slate-700">Source</span>
-        <select
-          bind:value={sourceType}
-          class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        >
+        <span class="sl-eyebrow" style="font-size:10.5px">Source</span>
+        <select bind:value={sourceType} class="sl-select mt-1.5">
           {#each SOURCE_TYPES as s (s)}
             <option value={s}>{s}</option>
           {/each}
         </select>
       </label>
       <label class="block">
-        <span class="text-sm font-medium text-slate-700">Payment method (optional)</span>
-        <select
-          bind:value={paymentMethodId}
-          class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        >
+        <span class="sl-eyebrow" style="font-size:10.5px">Payment method (optional)</span>
+        <select bind:value={paymentMethodId} class="sl-select mt-1.5">
           <option value="">—</option>
           {#each paymentMethods as pm (pm.id)}
             <option value={pm.id}>{pm.name}</option>
@@ -307,35 +298,31 @@
     </div>
 
     <label class="block">
-      <span class="text-sm font-medium text-slate-700">Reference code (optional)</span>
+      <span class="sl-eyebrow" style="font-size:10.5px">Reference code (optional)</span>
       <input
         type="text"
         maxlength="80"
         bind:value={referenceCode}
         placeholder="e.g. paying-in book number"
-        class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        class="sl-input sl-mono mt-1.5 text-[12.5px]"
       />
     </label>
 
     <label class="block">
-      <span class="text-sm font-medium text-slate-700">Notes (optional)</span>
+      <span class="sl-eyebrow" style="font-size:10.5px">Notes (optional)</span>
       <textarea
         maxlength="4000"
         rows="3"
         bind:value={notes}
-        class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        class="sl-input mt-1.5"
       ></textarea>
     </label>
 
     {#if createError}
-      <p class="text-sm text-red-600">{createError}</p>
+      <p class="border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{createError}</p>
     {/if}
 
-    <button
-      type="submit"
-      disabled={creating}
-      class="inline-flex items-center px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-700 disabled:opacity-50"
-    >
+    <button type="submit" disabled={creating} class="sl-btn sl-btn-primary">
       {creating ? "Creating…" : "Create batch"}
     </button>
   </form>

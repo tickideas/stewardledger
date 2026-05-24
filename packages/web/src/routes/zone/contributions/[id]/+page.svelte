@@ -198,74 +198,73 @@
     }
   }
 
-  function statusClass(s: string): string {
+  function statusBadge(s: string): string {
     switch (s) {
       case "posted":
-        return "bg-green-100 text-green-700";
+        return "sl-badge-ok";
       case "voided":
-        return "bg-slate-100 text-slate-500";
+        return "sl-badge-mute";
       case "reversed":
-        return "bg-rose-100 text-rose-700";
+        return "sl-badge-bad";
       default:
-        return "bg-slate-100 text-slate-700";
+        return "sl-badge-mute";
     }
   }
 </script>
 
-<div class="max-w-3xl mx-auto px-6 py-8">
-  <a href="/zone/contributions" class="text-sm text-slate-500 hover:underline">← Back to contributions</a>
+<svelte:head><title>Contribution · StewardLedger</title></svelte:head>
+
+<div class="pt-2 pb-10 lg:pt-0">
+  <a href="/zone/contributions" class="sl-btn sl-btn-ghost">← Back to contributions</a>
 
   {#if loadError}
-    <p class="mt-6 text-sm text-red-600">{loadError}</p>
+    <p class="mt-6 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{loadError}</p>
   {:else if !contribution}
-    <p class="mt-6 text-sm text-slate-500">Loading…</p>
+    <p class="mt-6 text-[13px] text-[var(--ink-mute)]">Loading…</p>
   {:else}
-    <div class="mt-2 flex items-baseline justify-between gap-4">
+    <div class="sl-reveal sl-reveal-1 mt-4 flex flex-wrap items-end justify-between gap-6">
       <div>
-        <h1 class="text-2xl font-semibold tracking-tight">{memberName()}</h1>
-        <p class="mt-1 text-sm text-slate-600">
-          {contribution.contributionDate} · {contribution.sourceType} · {contribution.currencyCode}
+        <span class="sl-eyebrow">§ Daily ledger · Contribution</span>
+        <h1 class="mt-3 sl-display text-[40px] leading-[1] text-[var(--ink)]">{memberName()}</h1>
+        <p class="mt-2 text-[13px] text-[var(--ink-mute)]">
+          <span class="sl-mono">{contribution.contributionDate}</span>
+          <span class="mx-2">·</span>
+          {contribution.sourceType}
+          <span class="mx-2">·</span>
+          <span class="sl-mono">{contribution.currencyCode}</span>
         </p>
       </div>
-      <span class={`inline-block px-3 py-1 rounded-full text-xs font-medium ${statusClass(contribution.status)}`}>
-        {contribution.status}
-      </span>
+      <span class={`sl-badge ${statusBadge(contribution.status)}`}>{contribution.status}</span>
     </div>
 
     {#if lookupNotice}
-      <p class="mt-3 text-sm text-amber-700">{lookupNotice}</p>
+      <p class="mt-4 border-l-2 border-[var(--warn)] bg-[var(--warn-soft)] px-3 py-2 text-[13px] text-[var(--warn)]">{lookupNotice}</p>
     {/if}
     {#if contribution.batchId}
-      <p class="mt-3 text-sm">
+      <p class="mt-4 text-[13px] text-[var(--ink-soft)]">
         Part of batch
-        <a
-          href={`/zone/contributions/batches/${contribution.batchId}`}
-          class="font-mono text-xs text-slate-700 hover:underline"
-        >
+        <a href={`/zone/contributions/batches/${contribution.batchId}`} class="sl-mono text-[12px] text-[var(--brass-deep)] hover:underline">
           {contribution.batchId.slice(0, 8)}
         </a>
       </p>
     {/if}
     {#if contribution.reversalOfContributionId}
-      <p class="mt-1 text-sm text-rose-700">
+      <p class="mt-1 text-[13px] text-[var(--bad)]">
         Reversal of
-        <a
-          href={`/zone/contributions/${contribution.reversalOfContributionId}`}
-          class="hover:underline"
-        >
+        <a href={`/zone/contributions/${contribution.reversalOfContributionId}`} class="sl-mono text-[12px] hover:underline">
           {contribution.reversalOfContributionId.slice(0, 8)}
         </a>
       </p>
     {/if}
     {#if contribution.voidReason}
-      <p class="mt-1 text-sm text-rose-700">Voided: {contribution.voidReason}</p>
+      <p class="mt-1 text-[13px] text-[var(--bad)]">Voided: {contribution.voidReason}</p>
     {/if}
     {#if contribution.description}
-      <p class="mt-3 text-sm italic text-slate-600">{contribution.description}</p>
+      <p class="mt-3 sl-serif-italic text-[14px] text-[var(--ink-soft)]">{contribution.description}</p>
     {/if}
 
     <!-- Audit affordance: every reviewer wants to see "who did what when". -->
-    <p class="mt-3 text-xs text-slate-500">
+    <p class="mt-3 text-[11.5px] text-[var(--ink-mute)]">
       Created {new Date(contribution.createdAt).toLocaleString()}
       {#if contribution.postedAt}
         · posted {new Date(contribution.postedAt).toLocaleString()}
@@ -275,80 +274,66 @@
       {/if}
     </p>
 
-    <div class="mt-6 rounded-lg border border-slate-200 p-4 bg-slate-50">
-      <p class="text-xs uppercase text-slate-500">Total</p>
-      <p class="mt-1 text-3xl font-mono">{fmt(contribution.totalAmount, contribution.currencyCode)}</p>
+    <div class="sl-reveal sl-reveal-2 sl-card mt-8 p-6">
+      <p class="sl-eyebrow" style="font-size:10px">Total</p>
+      <p class="sl-num mt-2 sl-display text-[36px] text-[var(--ink)]">{fmt(contribution.totalAmount, contribution.currencyCode)}</p>
     </div>
 
-    <h2 class="mt-8 text-lg font-medium">Lines</h2>
-    <table class="mt-3 w-full text-sm">
-      <thead class="text-left text-xs uppercase tracking-wide text-slate-500 border-b">
-        <tr>
-          <th class="py-2">Giving type</th>
-          <th class="py-2 text-right">Amount</th>
-          <th class="py-2">Note</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-slate-200">
-        {#each lines as l (l.id)}
-          <tr>
-            <td class="py-2 text-slate-700">{givingTypeName(l.givingTypeId)}</td>
-            <td class="py-2 text-right font-mono">{fmt(l.amount, l.currencyCode)}</td>
-            <td class="py-2 text-slate-500">{l.note ?? "—"}</td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
+    <div class="sl-reveal sl-reveal-3 mt-10">
+      <div class="mb-3 flex items-center justify-between">
+        <span class="sl-eyebrow">Lines</span>
+        <span class="sl-mono text-[10.5px] text-[var(--ink-mute)]" style="letter-spacing:0.06em">
+          {lines.length} {lines.length === 1 ? "row" : "rows"}
+        </span>
+      </div>
+      <div class="sl-card overflow-hidden">
+        <table class="sl-table">
+          <thead>
+            <tr>
+              <th>Giving type</th>
+              <th class="!text-right">Amount</th>
+              <th>Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each lines as l (l.id)}
+              <tr>
+                <td>{givingTypeName(l.givingTypeId)}</td>
+                <td class="sl-num text-right text-[var(--ink)]">{fmt(l.amount, l.currencyCode)}</td>
+                <td class="text-[var(--ink-mute)]">{l.note ?? "—"}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    </div>
 
     <div class="mt-8 flex flex-wrap gap-2">
       {#if contribution.status === "draft"}
-        <button
-          type="button"
-          disabled={busy}
-          onclick={postRow}
-          class="inline-flex items-center px-3 py-1.5 rounded-lg bg-green-700 text-white text-sm hover:bg-green-600 disabled:opacity-50"
-        >
+        <button type="button" disabled={busy} onclick={postRow} class="sl-btn sl-btn-primary">
           Post
         </button>
-        <button
-          type="button"
-          disabled={busy}
-          onclick={deleteDraft}
-          class="inline-flex items-center px-3 py-1.5 rounded-lg border border-rose-300 text-rose-700 text-sm hover:bg-rose-50 disabled:opacity-50"
-        >
+        <button type="button" disabled={busy} onclick={deleteDraft} class="sl-btn sl-btn-danger-ghost">
           Delete draft
         </button>
       {/if}
       {#if contribution.status === "posted"}
-        <button
-          type="button"
-          disabled={busy}
-          onclick={voidRow}
-          class="inline-flex items-center px-3 py-1.5 rounded-lg border border-rose-300 text-rose-700 text-sm hover:bg-rose-50 disabled:opacity-50"
-        >
+        <button type="button" disabled={busy} onclick={voidRow} class="sl-btn sl-btn-danger-ghost">
           Void
         </button>
-        <button
-          type="button"
-          disabled={busy}
-          onclick={reverseRow}
-          class="inline-flex items-center px-3 py-1.5 rounded-lg border border-amber-300 text-amber-700 text-sm hover:bg-amber-50 disabled:opacity-50"
-        >
+        <button type="button" disabled={busy} onclick={reverseRow} class="sl-btn sl-btn-warn-ghost">
           Reverse
         </button>
       {/if}
       {#if contribution.memberId}
-        <a
-          href={`/zone/members/${contribution.memberId}/statement`}
-          class="inline-flex items-center px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 text-sm hover:bg-slate-100"
-        >
+        <a href={`/zone/members/${contribution.memberId}/statement`} class="sl-btn sl-btn-ghost">
           Member statement
         </a>
       {/if}
     </div>
 
     {#if actionError}
-      <p class="mt-3 text-sm text-red-600">{actionError}</p>
+      <p class="mt-3 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{actionError}</p>
     {/if}
   {/if}
 </div>
