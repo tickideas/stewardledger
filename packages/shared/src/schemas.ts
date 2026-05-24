@@ -105,6 +105,24 @@ export type GroupCreateInput = z.infer<typeof groupCreateSchema>;
 export const groupUpdateSchema = groupCreateSchema.partial();
 export type GroupUpdateInput = z.infer<typeof groupUpdateSchema>;
 
+/**
+ * Group list / search query. Mirrors `memberListQuerySchema` so the
+ * "Groups directory" page on the zonal surface can paginate + search by
+ * name or slug.
+ *
+ * `limit` is **optional** by design: callers that omit it (the dozen
+ * existing pickers — chapter→group dropdowns, contributions filter,
+ * batches form, etc.) get every row they're allowed to see. The hard
+ * cap when a value *is* supplied protects against a hand-edited URL
+ * asking for absurd page sizes; the directory page passes 25.
+ */
+export const groupListQuerySchema = z.object({
+  q: z.string().max(120).optional(),
+  limit: z.coerce.number().int().min(1).max(1000).optional(),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type GroupListQuery = z.infer<typeof groupListQuerySchema>;
+
 /** Move a chapter to a different group. effectiveDate defaults to today (zone TZ) at the service layer. */
 export const chapterMoveGroupSchema = z
   .object({
@@ -128,6 +146,26 @@ export const chapterCreateSchema = z.object({
   groupId: uuidSchema.optional(),
 });
 export type ChapterCreateInput = z.infer<typeof chapterCreateSchema>;
+
+/**
+ * Chapter list / search query. Powers the "Chapters directory" page on
+ * the zonal surface. `q` matches by reference code, name, and country
+ * code; `groupId` filters to a single group.
+ *
+ * `limit` is **optional**: omitting it returns every row the caller can
+ * see, which the many picker call sites — members, contributions,
+ * imports, paying-in-books, targets, reports, the church layout
+ * switcher, onboarding, the group/chapters page — depend on. The
+ * directory page passes 25; the hard cap of 1000 is a sanity bound for
+ * hand-edited URLs.
+ */
+export const chapterListQuerySchema = z.object({
+  q: z.string().max(120).optional(),
+  groupId: uuidSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(1000).optional(),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type ChapterListQuery = z.infer<typeof chapterListQuerySchema>;
 
 /**
  * Chapter banking reference. Free-form per chapter — a chapter typically

@@ -262,6 +262,149 @@ describe("tenant routes — cross-tenant fuzz", () => {
     expect(body.items.map((c) => c.id)).not.toContain(chapterB);
   });
 
+  it("GET /chapters?q=… filters by name / reference code / country", async () => {
+    // Seed three extra chapters in zone A so we can prove the `q` filter
+    // narrows the result set rather than just returning everything.
+    // (Rows are cleaned up by the suite-level afterAll — the test trusts
+    // the existing `delete from chapters where zone_id = ...` hook.)
+    const nameMatch = `Loveworld North ${unique()}`;
+    const codeMatch = `C-LIKELY-${unique()}`;
+    const [byName] = await db
+      .insert(chapters)
+      .values({
+        zoneId: zoneA.id,
+        referenceCode: `C${unique()}`,
+        name: nameMatch,
+        countryCode: "GB",
+        dateFrom: new Date().toISOString().slice(0, 10),
+      })
+      .returning({ id: chapters.id });
+    const [byCode] = await db
+      .insert(chapters)
+      .values({
+        zoneId: zoneA.id,
+        referenceCode: codeMatch,
+        name: "Misnamed chapter",
+        countryCode: "NG",
+        dateFrom: new Date().toISOString().slice(0, 10),
+      })
+      .returning({ id: chapters.id });
+
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+
+    // Name match — case-insensitive substring.
+    const byNameRes = await call(zoneA.slug, "/api/tenant/chapters?q=loveworld%20north");
+    expect(byNameRes.status).toBe(200);
+    const byNameBody = (await byNameRes.json()) as {
+      items: Array<{ id: string }>;
+      total: number;
+    };
+    expect(byNameBody.items.map((c) => c.id)).toContain(byName.id);
+    expect(byNameBody.items.map((c) => c.id)).not.toContain(byCode.id);
+    expect(byNameBody.total).toBe(byNameBody.items.length);
+
+    // Reference code match.
+    const byCodeRes = await call(zoneA.slug, `/api/tenant/chapters?q=${codeMatch.toLowerCase()}`);
+    const byCodeBody = (await byCodeRes.json()) as { items: Array<{ id: string }> };
+    expect(byCodeBody.items.map((c) => c.id)).toEqual([byCode.id]);
+
+    // Country code match.
+    const byCountryRes = await call(zoneA.slug, "/api/tenant/chapters?q=ng");
+    const byCountryBody = (await byCountryRes.json()) as { items: Array<{ id: string }> };
+    expect(byCountryBody.items.map((c) => c.id)).toContain(byCode.id);
+  });
+
+  it("GET /chapters paginates with limit + offset and returns total", async () => {
+    // Insert enough chapters that two pages of `limit=2` only cover a
+    // subset. (Cleaned up by the suite-level afterAll.)
+    const extraIds: string[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      const [row] = await db
+        .insert(chapters)
+        .values({
+          zoneId: zoneA.id,
+          referenceCode: `C-PAGE-${i}-${unique()}`,
+          name: `Paginated chapter ${i}`,
+          dateFrom: new Date().toISOString().slice(0, 10),
+        })
+        .returning({ id: chapters.id });
+      extraIds.push(row.id);
+    }
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+    const page1 = await call(zoneA.slug, "/api/tenant/chapters?limit=2&offset=0");
+    const page1Body = (await page1.json()) as {
+      items: Array<{ id: string }>;
+      total: number;
+      limit: number;
+      offset: number;
+    };
+    expect(page1Body.items.length).toBe(2);
+    expect(page1Body.limit).toBe(2);
+    expect(page1Body.offset).toBe(0);
+    // Total counts every chapter in zone A (the listing-isolation test
+    // added some earlier so we assert >= rather than exact).
+    expect(page1Body.total).toBeGreaterThanOrEqual(extraIds.length + 1);
+
+    const page2 = await call(zoneA.slug, "/api/tenant/chapters?limit=2&offset=2");
+    const page2Body = (await page2.json()) as { items: Array<{ id: string }> };
+    expect(page2Body.items.length).toBe(2);
+    // No overlap between page 1 and page 2.
+    const overlap = page1Body.items.filter((p1) =>
+      page2Body.items.some((p2) => p2.id === p1.id),
+    );
+    expect(overlap).toEqual([]);
+  });
+
+  it("GET /chapters with no limit returns every row the caller can see", async () => {
+    // Regression test for the silent-truncation risk flagged in PR #54
+    // review: the dozen existing picker call sites (members, contributions,
+    // imports, batches, layout switchers, onboarding) call /chapters
+    // without a `limit` and expect every row in scope.
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+    const res = await call(zoneA.slug, "/api/tenant/chapters");
+    const body = (await res.json()) as {
+      items: Array<{ id: string }>;
+      total: number;
+      limit: number | undefined;
+    };
+    // limit is undefined in the response when the caller omitted it.
+    expect(body.limit).toBeUndefined();
+    // items.length matches total because no window was applied.
+    expect(body.items.length).toBe(body.total);
+  });
+
+  it("GET /chapters?q=… escapes SQL LIKE wildcards in the needle", async () => {
+    // A reference code containing an underscore must only match exactly
+    // that code, not the underscore-as-wildcard interpretation. (Cleaned
+    // up by the suite-level afterAll.)
+    const literalCode = `C_DASH_${unique()}`.toLowerCase();
+    const wildCandidate = `${literalCode.replace(/_/g, "X")}`;
+    const [literal] = await db
+      .insert(chapters)
+      .values({
+        zoneId: zoneA.id,
+        referenceCode: literalCode.toUpperCase(),
+        name: "Literal underscore chapter",
+        dateFrom: new Date().toISOString().slice(0, 10),
+      })
+      .returning({ id: chapters.id });
+    const [decoy] = await db
+      .insert(chapters)
+      .values({
+        zoneId: zoneA.id,
+        referenceCode: wildCandidate.toUpperCase(),
+        name: "Wildcard decoy chapter",
+        dateFrom: new Date().toISOString().slice(0, 10),
+      })
+      .returning({ id: chapters.id });
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+    const res = await call(zoneA.slug, `/api/tenant/chapters?q=${encodeURIComponent(literalCode)}`);
+    const body = (await res.json()) as { items: Array<{ id: string }> };
+    const ids = body.items.map((c) => c.id);
+    expect(ids).toContain(literal.id);
+    expect(ids).not.toContain(decoy.id);
+  });
+
   it("does not resolve a soft-deleted zone as a tenant", async () => {
     const removed = await seedZone(`removed-${unique()}`, `Removed Zone ${unique()}`);
     cleanupSlugs.push(removed.slug);

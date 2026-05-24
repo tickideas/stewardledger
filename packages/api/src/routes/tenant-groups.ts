@@ -15,10 +15,11 @@ import {
   type AuthorizedContext,
   chapterMoveGroupSchema,
   groupCreateSchema,
+  groupListQuerySchema,
   groupUpdateSchema,
   ZONE_ROLES,
 } from "@stewardledger/shared";
-import { and, asc, count, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
 import { hasAnyRole, requireChapterScope } from "../middleware/auth";
@@ -62,32 +63,64 @@ function forbidden(c: Context) {
   return c.json({ error: { code: "forbidden", message: "Zone admin required" } }, 403);
 }
 
-tenantGroupsRouter.get("/groups", async (c) => {
-  const ctx = c.get("auth") as AuthorizedContext;
-  const zoneWide = hasAnyRole(ctx, ...ZONE_GROUP_READ_ROLES);
-  const conditions = [eq(groups.zoneId, ctx.zoneId), isNull(groups.deletedAt)];
-  if (!zoneWide) {
-    if (ctx.groupIds.length === 0) return c.json({ items: [] });
-    conditions.push(inArray(groups.id, ctx.groupIds));
-  }
-  const rows = await db
-    .select({
-      id: groups.id,
-      slug: groups.slug,
-      name: groups.name,
-      createdAt: groups.createdAt,
-      chapterCount: sql<number>`(
-        select count(*)::int from ${chapters}
-        where ${chapters.zoneId} = ${ctx.zoneId}
-          and ${chapters.groupId} = ${groups.id}
-          and ${chapters.deletedAt} is null
-      )`,
-    })
-    .from(groups)
-    .where(and(...conditions))
-    .orderBy(asc(groups.name));
-  return c.json({ items: rows });
-});
+tenantGroupsRouter.get(
+  "/groups",
+  zValidator("query", groupListQuerySchema),
+  async (c) => {
+    const ctx = c.get("auth") as AuthorizedContext;
+    const q = c.req.valid("query");
+    const zoneWide = hasAnyRole(ctx, ...ZONE_GROUP_READ_ROLES);
+    const conditions = [eq(groups.zoneId, ctx.zoneId), isNull(groups.deletedAt)];
+    if (!zoneWide) {
+      if (ctx.groupIds.length === 0) {
+        return c.json({ items: [], total: 0, limit: q.limit, offset: q.offset });
+      }
+      conditions.push(inArray(groups.id, ctx.groupIds));
+    }
+    if (q.q) {
+      // Lower-cased pattern + LIKE-wildcard escape so a search for
+      // `north_region` doesn't also match `northXregion`.
+      const escaped = q.q.toLowerCase().replace(/[\\%_]/g, (m) => `\\${m}`);
+      const needle = `%${escaped}%`;
+      conditions.push(
+        or(
+          sql`lower(${groups.name}) like ${needle} escape '\\'`,
+          sql`lower(${groups.slug}) like ${needle} escape '\\'`,
+        )!,
+      );
+    }
+    const where = and(...conditions);
+    // Skip limit/offset entirely when the caller didn't ask for a
+    // window. This keeps the picker call sites (chapter→group dropdowns,
+    // contributions filter, batches, etc.) at the pre-PR behaviour of
+    // "every group in this zone in one round-trip".
+    const baseRowsQuery = db
+      .select({
+        id: groups.id,
+        slug: groups.slug,
+        name: groups.name,
+        createdAt: groups.createdAt,
+        chapterCount: sql<number>`(
+          select count(*)::int from ${chapters}
+          where ${chapters.zoneId} = ${ctx.zoneId}
+            and ${chapters.groupId} = ${groups.id}
+            and ${chapters.deletedAt} is null
+        )`,
+      })
+      .from(groups)
+      .where(where)
+      .orderBy(asc(groups.name));
+    const rowsQuery =
+      q.limit !== undefined
+        ? baseRowsQuery.limit(q.limit).offset(q.offset)
+        : baseRowsQuery;
+    const [rows, [{ total }]] = await Promise.all([
+      rowsQuery,
+      db.select({ total: sql<number>`count(*)::int` }).from(groups).where(where),
+    ]);
+    return c.json({ items: rows, total, limit: q.limit, offset: q.offset });
+  },
+);
 
 tenantGroupsRouter.post("/groups", zValidator("json", groupCreateSchema), async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;

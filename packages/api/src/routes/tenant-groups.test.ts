@@ -353,8 +353,93 @@ describe("tenant-groups router", () => {
       asUser(chapterAdminA, "chadm@example.com");
       const res = await call(zoneA.slug, "/api/tenant/groups");
       expect(res.status).toBe(200);
-      const body = (await res.json()) as { items: unknown[] };
+      const body = (await res.json()) as { items: unknown[]; total: number };
       expect(body.items).toEqual([]);
+      expect(body.total).toBe(0);
+    });
+
+    it("filters by q (name or slug, case-insensitive)", async () => {
+      asUser(ownerA, "owner@example.com");
+      // Two groups: one with a unique slug, one with a unique name. The
+      // search should hit each by the right needle without bleeding into
+      // the other zone's seed data. (Cleaned up by the suite-level
+      // afterAll — `delete from groups where zone_id = ...`.)
+      const matchSlug = `match-slug-${unique()}`;
+      const matchName = `Match Name ${unique()}`;
+      const byName = await seedGroup(zoneA.id, matchName, `other-${unique()}`);
+      const bySlug = await seedGroup(zoneA.id, `Other ${unique()}`, matchSlug);
+
+      const slugRes = await call(zoneA.slug, `/api/tenant/groups?q=${matchSlug}`);
+      const slugBody = (await slugRes.json()) as { items: Array<{ id: string }> };
+      expect(slugBody.items.map((g) => g.id)).toEqual([bySlug]);
+
+      const nameRes = await call(zoneA.slug, `/api/tenant/groups?q=${encodeURIComponent(matchName.toLowerCase())}`);
+      const nameBody = (await nameRes.json()) as { items: Array<{ id: string }> };
+      expect(nameBody.items.map((g) => g.id)).toEqual([byName]);
+    });
+
+    it("paginates with limit + offset and reports total", async () => {
+      asUser(ownerA, "owner@example.com");
+      // Seed four groups in zone A so two-per-page pagination meaningfully
+      // splits them; assert total counts every group in the zone.
+      // (Cleaned up by the suite-level afterAll.)
+      const ids: string[] = [];
+      for (let i = 0; i < 4; i += 1) {
+        ids.push(
+          await seedGroup(zoneA.id, `Page ${i} ${unique()}`, `page-${i}-${unique()}`),
+        );
+      }
+      const page1 = await call(zoneA.slug, "/api/tenant/groups?limit=2&offset=0");
+      const page1Body = (await page1.json()) as {
+        items: Array<{ id: string }>;
+        total: number;
+        limit: number;
+        offset: number;
+      };
+      expect(page1Body.items.length).toBe(2);
+      expect(page1Body.limit).toBe(2);
+      expect(page1Body.offset).toBe(0);
+      expect(page1Body.total).toBeGreaterThanOrEqual(ids.length);
+
+      const page2 = await call(zoneA.slug, "/api/tenant/groups?limit=2&offset=2");
+      const page2Body = (await page2.json()) as { items: Array<{ id: string }> };
+      const overlap = page1Body.items.filter((p1) =>
+        page2Body.items.some((p2) => p2.id === p1.id),
+      );
+      expect(overlap).toEqual([]);
+    });
+
+    it("with no limit returns every row the caller can see", async () => {
+      // Regression test for the silent-truncation risk in the original
+      // PR #54 review — picker call sites (chapter→group dropdowns,
+      // contributions filter, batches) call /groups without a limit and
+      // expect every row in scope.
+      asUser(ownerA, "owner@example.com");
+      // Make sure there's a baseline of rows in the zone before we ask.
+      await seedGroup(zoneA.id, `Cap ${unique()}`, `cap-${unique()}`);
+      const res = await call(zoneA.slug, "/api/tenant/groups");
+      const body = (await res.json()) as {
+        items: Array<{ id: string }>;
+        total: number;
+        limit: number | undefined;
+      };
+      expect(body.limit).toBeUndefined();
+      expect(body.items.length).toBe(body.total);
+    });
+
+    it("escapes SQL LIKE wildcards in the q needle", async () => {
+      // A slug containing an underscore should only match that literal
+      // slug, not the underscore-as-wildcard interpretation.
+      asUser(ownerA, "owner@example.com");
+      const literalSlug = `north_${unique()}`;
+      const wildCandidate = literalSlug.replace(/_/g, "x");
+      const literal = await seedGroup(zoneA.id, `Literal ${unique()}`, literalSlug);
+      const decoy = await seedGroup(zoneA.id, `Decoy ${unique()}`, wildCandidate);
+      const res = await call(zoneA.slug, `/api/tenant/groups?q=${encodeURIComponent(literalSlug)}`);
+      const body = (await res.json()) as { items: Array<{ id: string }> };
+      const ids = body.items.map((g) => g.id);
+      expect(ids).toContain(literal);
+      expect(ids).not.toContain(decoy);
     });
   });
 

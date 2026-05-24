@@ -3,6 +3,13 @@
 // Keeps repeated UI mapping logic consistent across redesigned dashboards.
 // RELEVANT FILES: ../app.css, ../routes/admin/zones/+page.svelte, ../routes/contributions/+page.svelte, ../routes/imports/+page.svelte
 
+/**
+ * Default page size for paginated directory views (members, chapters,
+ * groups). Kept here so the three pages stay in lockstep and any future
+ * directory page picks up the same default without re-deriving it.
+ */
+export const DIRECTORY_PAGE_SIZE = 25;
+
 export function statusBadgeClass(status: string): string {
   switch (status) {
     case "active":
