@@ -4,9 +4,12 @@
 <!-- RELEVANT FILES: packages/web/src/routes/zone/members/+page.svelte, packages/web/src/routes/zone/groups/+page.svelte, packages/api/src/routes/tenant.ts -->
 
 <script lang="ts">
+  import { goto } from "$app/navigation";
+  import { page as pageState } from "$app/state";
   import { setActiveChapter } from "$lib/active-chapter.svelte";
-  import { api, ApiError } from "$lib/api";
+  import { api, ApiError, isAbortError } from "$lib/api";
   import { INVITABLE_CHAPTER_ROLE_OPTIONS } from "$lib/role-options";
+  import { DIRECTORY_PAGE_SIZE } from "$lib/ui";
   import type { AuthorizedContext } from "@stewardledger/shared";
 
   type Chapter = {
@@ -31,15 +34,19 @@
   };
 
   const adminRoles = new Set(["zone_owner", "zone_admin"]);
-  const PAGE_SIZE = 25;
+
+  // ─── URL-backed filter state ────────────────────────────────────────
+  // Read once on mount; subsequent edits push back via pushFiltersToUrl()
+  // so bookmarks, share links, and back/forward all "just work".
+  const initialUrl = new URL(pageState.url);
+  let q = $state(initialUrl.searchParams.get("q") ?? "");
+  let groupFilter = $state(initialUrl.searchParams.get("groupId") ?? "");
+  let page = $state(Math.max(0, Number(initialUrl.searchParams.get("page") ?? "0") | 0));
 
   let chapters = $state<Chapter[]>([]);
   let groups = $state<GroupRow[]>([]);
   let auth = $state<AuthorizedContext | null>(null);
   let total = $state<number | null>(null);
-  let q = $state("");
-  let groupFilter = $state("");
-  let page = $state(0);
   let assignGroupSelection = $state<Record<string, string>>({});
   let assignBusyId = $state<string | null>(null);
   let assignErrorById = $state<Record<string, string>>({});
@@ -57,14 +64,25 @@
   let createError = $state<string | null>(null);
   let createFlash = $state<string | null>(null);
 
+  // Monotonic token: every refresh() call captures the value at start and
+  // discards its result if a newer call has incremented the token in the
+  // meantime. Pair with an AbortController on the in-flight fetch so we
+  // don't pay for a response we're going to throw away.
+  let refreshToken = 0;
+  let activeController: AbortController | null = null;
+
   const canCreate = $derived(
     auth?.isPlatformAdmin === true || auth?.roleCodes.some((role) => adminRoles.has(role)) === true,
   );
   const groupNameById = $derived(new Map(groups.map((g) => [g.id, g.name])));
   const hasGroups = $derived(groups.length > 0);
-  const pageCount = $derived(total === null ? 0 : Math.max(1, Math.ceil(total / PAGE_SIZE)));
-  const fromRow = $derived(total === null || total === 0 ? 0 : page * PAGE_SIZE + 1);
-  const toRow = $derived(total === null ? 0 : Math.min(total, page * PAGE_SIZE + chapters.length));
+  const pageCount = $derived(
+    total === null ? 0 : Math.max(1, Math.ceil(total / DIRECTORY_PAGE_SIZE)),
+  );
+  const fromRow = $derived(total === null || total === 0 ? 0 : page * DIRECTORY_PAGE_SIZE + 1);
+  const toRow = $derived(
+    total === null ? 0 : Math.min(total, page * DIRECTORY_PAGE_SIZE + chapters.length),
+  );
 
   async function assignGroup(chapterId: string) {
     const groupId = assignGroupSelection[chapterId];
@@ -120,48 +138,98 @@
   }
 
   /**
+   * Push current filter state back into the address bar. `replaceState`
+   * + `keepFocus` + `noScroll` so a quick keystroke doesn't shove the
+   * page around or steal focus from the search input.
+   */
+  function pushFiltersToUrl() {
+    const next = new URL(pageState.url);
+    if (q.trim()) next.searchParams.set("q", q.trim());
+    else next.searchParams.delete("q");
+    if (groupFilter) next.searchParams.set("groupId", groupFilter);
+    else next.searchParams.delete("groupId");
+    if (page > 0) next.searchParams.set("page", String(page));
+    else next.searchParams.delete("page");
+    if (next.search !== pageState.url.search) {
+      void goto(`${next.pathname}${next.search}`, {
+        replaceState: true,
+        keepFocus: true,
+        noScroll: true,
+      });
+    }
+  }
+
+  /**
    * Reload the chapter list. `resetPage` is true on filter changes and
    * search submissions, false on inline mutations (assign-group) and
    * page navigation so the user stays on the page they were viewing.
+   * Stale responses are dropped via the `refreshToken` monotonic counter.
    */
   async function refresh(resetPage = false) {
     if (resetPage) page = 0;
+    pushFiltersToUrl();
+    const my = ++refreshToken;
+    activeController?.abort();
+    const controller = new AbortController();
+    activeController = controller;
     loading = true;
     try {
       const params = new URLSearchParams();
       if (q.trim()) params.set("q", q.trim());
       if (groupFilter) params.set("groupId", groupFilter);
-      params.set("limit", String(PAGE_SIZE));
-      params.set("offset", String(page * PAGE_SIZE));
-      const [chapterRes, meRes, groupsRes] = await Promise.all([
-        api.get<{ items: Chapter[]; total: number }>(`/api/tenant/chapters?${params.toString()}`),
-        // me + groups don't change between filter applications, but the
-        // page-load path is the same and the responses are tiny — the
-        // extra round-trip avoids a separate "loaded once" state branch.
-        api.get<{ auth: AuthorizedContext }>("/api/tenant/me"),
-        api.get<{ items: GroupRow[] }>("/api/tenant/groups?limit=200"),
-      ]);
-      chapters = chapterRes.items;
-      total = chapterRes.total;
-      auth = meRes.auth;
-      groups = groupsRes.items;
+      params.set("limit", String(DIRECTORY_PAGE_SIZE));
+      params.set("offset", String(page * DIRECTORY_PAGE_SIZE));
+      const res = await api.get<{ items: Chapter[]; total: number }>(
+        `/api/tenant/chapters?${params.toString()}`,
+        controller.signal,
+      );
+      if (my !== refreshToken) return;
+      chapters = res.items;
+      total = res.total;
       loadError = null;
     } catch (err) {
+      if (isAbortError(err)) return;
+      if (my !== refreshToken) return;
       loadError = err instanceof ApiError ? err.message : "Could not load chapters.";
     } finally {
-      loading = false;
+      if (my === refreshToken) loading = false;
+    }
+  }
+
+  /**
+   * One-shot load of the supporting data (current user + groups list).
+   * Pulled out of `refresh()` so search keystrokes and page navigation
+   * don't re-fetch /me + /groups on every click — see review feedback
+   * P2 #3.
+   */
+  async function loadSupporting(signal: AbortSignal) {
+    try {
+      const [meRes, groupsRes] = await Promise.all([
+        api.get<{ auth: AuthorizedContext }>("/api/tenant/me", signal),
+        // No limit → API returns every group the caller can see, which
+        // is what the filter dropdown and group-assign picker need.
+        api.get<{ items: GroupRow[] }>("/api/tenant/groups", signal),
+      ]);
+      auth = meRes.auth;
+      groups = groupsRes.items;
+    } catch (err) {
+      if (isAbortError(err)) return;
+      loadError = err instanceof ApiError ? err.message : "Could not load supporting data.";
     }
   }
 
   $effect(() => {
-    refresh();
+    const controller = new AbortController();
+    void loadSupporting(controller.signal);
+    void refresh();
+    return () => controller.abort();
   });
 
   function gotoPage(next: number) {
     const target = Math.max(0, Math.min(pageCount - 1, next));
     if (target === page) return;
     page = target;
-    refresh();
+    void refresh();
   }
 
   async function create(e: SubmitEvent) {
@@ -213,6 +281,10 @@
       resetCreateForm();
       createOpen = false;
       createFlash = inviteText;
+      // Clear search/filter on successful create so the brand-new row
+      // is guaranteed to appear in the first page of results.
+      q = "";
+      groupFilter = "";
       await refresh(true);
     } catch (err) {
       createError =
@@ -362,8 +434,14 @@
   {/if}
 
   <!-- Search bar. Same shape as /zone/members so the surfaces feel like
-       one product: typeahead input + filter dropdown + explicit submit. -->
-  <div class="sl-reveal sl-reveal-2 mt-8 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(18rem,1fr)_14rem_auto] lg:items-center">
+       one product: typeahead input + filter dropdown + explicit submit.
+       The grid template collapses the middle column when the zone has
+       no groups so we don't render an empty slot. -->
+  <div
+    class={hasGroups
+      ? "sl-reveal sl-reveal-2 mt-8 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(18rem,1fr)_14rem_auto] lg:items-center"
+      : "sl-reveal sl-reveal-2 mt-8 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(18rem,1fr)_auto] lg:items-center"}
+  >
     <div class="relative min-w-0">
       <svg class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[var(--ink-mute)]" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
         <circle cx="6" cy="6" r="4" stroke="currentColor" stroke-width="1.25"/>
@@ -382,8 +460,6 @@
         <option value="">All groups</option>
         {#each groups as g (g.id)}<option value={g.id}>{g.name}</option>{/each}
       </select>
-    {:else}
-      <div></div>
     {/if}
     <button class="sl-btn sl-btn-ghost justify-center" onclick={() => refresh(true)}>Search</button>
   </div>

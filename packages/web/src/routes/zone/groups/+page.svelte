@@ -4,8 +4,11 @@
 <!-- RELEVANT FILES: packages/api/src/routes/tenant-groups.ts, packages/web/src/routes/zone/chapters/+page.svelte, packages/web/src/lib/ConfirmDialog.svelte -->
 
 <script lang="ts">
-  import { api, ApiError } from "$lib/api";
+  import { goto } from "$app/navigation";
+  import { page as pageState } from "$app/state";
+  import { api, ApiError, isAbortError } from "$lib/api";
   import ConfirmDialog from "$lib/ConfirmDialog.svelte";
+  import { DIRECTORY_PAGE_SIZE } from "$lib/ui";
   import type { AuthorizedContext } from "@stewardledger/shared";
 
   type Group = {
@@ -22,15 +25,17 @@
   type ChapterRow = { id: string; name: string; groupId: string | null };
 
   const adminRoles = new Set(["zone_owner", "zone_admin"]);
-  const PAGE_SIZE = 25;
+
+  // URL-backed filter state (see /zone/chapters for the same shape).
+  const initialUrl = new URL(pageState.url);
+  let q = $state(initialUrl.searchParams.get("q") ?? "");
+  let page = $state(Math.max(0, Number(initialUrl.searchParams.get("page") ?? "0") | 0));
 
   let groups = $state<Group[]>([]);
   let auth = $state<AuthorizedContext | null>(null);
   let zone = $state<ZoneInfo | null>(null);
   let unassignedChapters = $state<ChapterRow[]>([]);
   let total = $state<number | null>(null);
-  let q = $state("");
-  let page = $state(0);
   let loading = $state(true);
   let loadError = $state<string | null>(null);
   let createOpen = $state(false);
@@ -46,15 +51,22 @@
   let enableError = $state<string | null>(null);
   let enableConfirmOpen = $state(false);
 
+  let refreshToken = 0;
+  let activeController: AbortController | null = null;
+
   const canManage = $derived(
     auth?.isPlatformAdmin === true || auth?.roleCodes.some((role) => adminRoles.has(role)) === true,
   );
   const isZoneOwner = $derived(
     auth?.isPlatformAdmin === true || auth?.roleCodes.includes("zone_owner") === true,
   );
-  const pageCount = $derived(total === null ? 0 : Math.max(1, Math.ceil(total / PAGE_SIZE)));
-  const fromRow = $derived(total === null || total === 0 ? 0 : page * PAGE_SIZE + 1);
-  const toRow = $derived(total === null ? 0 : Math.min(total, page * PAGE_SIZE + groups.length));
+  const pageCount = $derived(
+    total === null ? 0 : Math.max(1, Math.ceil(total / DIRECTORY_PAGE_SIZE)),
+  );
+  const fromRow = $derived(total === null || total === 0 ? 0 : page * DIRECTORY_PAGE_SIZE + 1);
+  const toRow = $derived(
+    total === null ? 0 : Math.min(total, page * DIRECTORY_PAGE_SIZE + groups.length),
+  );
 
   function toggleCreate() {
     if (createOpen) {
@@ -67,40 +79,77 @@
     createOpen = true;
   }
 
+  function pushFiltersToUrl() {
+    const next = new URL(pageState.url);
+    if (q.trim()) next.searchParams.set("q", q.trim());
+    else next.searchParams.delete("q");
+    if (page > 0) next.searchParams.set("page", String(page));
+    else next.searchParams.delete("page");
+    if (next.search !== pageState.url.search) {
+      void goto(`${next.pathname}${next.search}`, {
+        replaceState: true,
+        keepFocus: true,
+        noScroll: true,
+      });
+    }
+  }
+
   /**
-   * Reload the directory + zone + unassigned-chapter list. `resetPage`
-   * is true on search submissions so the user always lands on the first
-   * page of results; inline mutations (delete, enable-groups) keep the
-   * current page.
+   * Reload the paginated group list. `resetPage` is true on search
+   * submissions; inline mutations (delete, enable-groups) and page
+   * navigation keep the current page. Stale responses are dropped via
+   * the `refreshToken` monotonic counter so a rapid Enter doesn't let
+   * an older response overwrite a newer one.
    */
   async function refresh(resetPage = false) {
     if (resetPage) page = 0;
+    pushFiltersToUrl();
+    const my = ++refreshToken;
+    activeController?.abort();
+    const controller = new AbortController();
+    activeController = controller;
     loading = true;
     try {
       const params = new URLSearchParams();
       if (q.trim()) params.set("q", q.trim());
-      params.set("limit", String(PAGE_SIZE));
-      params.set("offset", String(page * PAGE_SIZE));
-      const [groupRes, meRes, zoneRes, chapterRes] = await Promise.all([
-        api.get<{ items: Group[]; total: number }>(`/api/tenant/groups?${params.toString()}`),
-        api.get<{ auth: AuthorizedContext }>("/api/tenant/me"),
-        api.get<{ zone: ZoneInfo }>("/api/tenant/zone"),
-        // The enable-groups banner needs to know which chapters are
-        // ungrouped. We only need a flat list, so a generous cap is
-        // fine — a zone with >200 chapters is already a different UX
-        // problem and we'd surface it differently.
-        api.get<{ items: ChapterRow[] }>("/api/tenant/chapters?limit=200"),
+      params.set("limit", String(DIRECTORY_PAGE_SIZE));
+      params.set("offset", String(page * DIRECTORY_PAGE_SIZE));
+      const res = await api.get<{ items: Group[]; total: number }>(
+        `/api/tenant/groups?${params.toString()}`,
+        controller.signal,
+      );
+      if (my !== refreshToken) return;
+      groups = res.items;
+      total = res.total;
+      loadError = null;
+    } catch (err) {
+      if (isAbortError(err)) return;
+      if (my !== refreshToken) return;
+      loadError = err instanceof ApiError ? err.message : "Could not load groups.";
+    } finally {
+      if (my === refreshToken) loading = false;
+    }
+  }
+
+  /**
+   * One-shot load of /me, zone status, and the unassigned-chapter list
+   * for the enable-groups banner. The chapters call passes no limit so
+   * the API returns every chapter in scope — the banner's invariant
+   * (every chapter has a group) is only honest if we see all of them.
+   */
+  async function loadSupporting(signal: AbortSignal) {
+    try {
+      const [meRes, zoneRes, chapterRes] = await Promise.all([
+        api.get<{ auth: AuthorizedContext }>("/api/tenant/me", signal),
+        api.get<{ zone: ZoneInfo }>("/api/tenant/zone", signal),
+        api.get<{ items: ChapterRow[]; total: number }>("/api/tenant/chapters", signal),
       ]);
-      groups = groupRes.items;
-      total = groupRes.total;
       auth = meRes.auth;
       zone = zoneRes.zone;
       unassignedChapters = chapterRes.items.filter((c) => c.groupId === null);
-      loadError = null;
     } catch (err) {
-      loadError = err instanceof ApiError ? err.message : "Could not load groups.";
-    } finally {
-      loading = false;
+      if (isAbortError(err)) return;
+      loadError = err instanceof ApiError ? err.message : "Could not load supporting data.";
     }
   }
 
@@ -114,6 +163,10 @@
     enabling = true;
     try {
       await api.post("/api/tenant/zones/groups-enabled", { enabled: true });
+      // Re-load both the directory and the supporting state — the zone
+      // flag flipped, which changes how the banner renders.
+      const controller = new AbortController();
+      await loadSupporting(controller.signal);
       await refresh();
     } catch (err) {
       if (err instanceof ApiError) {
@@ -136,14 +189,17 @@
   }
 
   $effect(() => {
-    refresh();
+    const controller = new AbortController();
+    void loadSupporting(controller.signal);
+    void refresh();
+    return () => controller.abort();
   });
 
   function gotoPage(next: number) {
     const target = Math.max(0, Math.min(pageCount - 1, next));
     if (target === page) return;
     page = target;
-    refresh();
+    void refresh();
   }
 
   async function create(e: SubmitEvent) {
@@ -160,6 +216,8 @@
       name = "";
       slug = "";
       createOpen = false;
+      // Clear search so the new row is guaranteed to appear on page 1.
+      q = "";
       await refresh(true);
     } catch (err) {
       createError = err instanceof ApiError ? err.message : "Could not create group.";
@@ -436,7 +494,7 @@
   body="Enabling groups is one-way — once on, every new chapter requires a group. Existing chapters keep their assignment."
   confirmLabel="Enable groups"
   cancelLabel="Cancel"
-  tone="warn"
+  tone="danger"
   submitting={enabling}
   onconfirm={confirmEnableGroups}
   oncancel={() => (enableConfirmOpen = false)}

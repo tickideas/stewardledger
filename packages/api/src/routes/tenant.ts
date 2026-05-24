@@ -223,15 +223,17 @@ tenantRouter.get(
     if (scope.kind === "list") conditions.push(inArray(chapters.id, scope.ids));
     if (q.groupId) conditions.push(eq(chapters.groupId, q.groupId));
     if (q.q) {
-      // Lowercase needle once; pg's `lower(text)` is index-friendly and
-      // the values we filter on are already short. Reference codes are
-      // already uppercase, so we lower both sides for a single predicate.
-      const needle = `%${q.q.toLowerCase()}%`;
+      // Lowercase the needle once and escape SQL `LIKE` wildcards (`%`,
+      // `_`, `\`) so a search for `C0001_LDN` doesn't match `C0001XLDN`
+      // and `100%` isn't treated as "any string". Postgres needs an
+      // explicit `escape` clause when we use a non-default escape char.
+      const escaped = q.q.toLowerCase().replace(/[\\%_]/g, (m) => `\\${m}`);
+      const needle = `%${escaped}%`;
       conditions.push(
         or(
-          sql`lower(${chapters.name}) like ${needle}`,
-          sql`lower(${chapters.referenceCode}) like ${needle}`,
-          sql`lower(${chapters.countryCode}) like ${needle}`,
+          sql`lower(${chapters.name}) like ${needle} escape '\\'`,
+          sql`lower(${chapters.referenceCode}) like ${needle} escape '\\'`,
+          sql`lower(${chapters.countryCode}) like ${needle} escape '\\'`,
         )!,
       );
     }
@@ -239,34 +241,42 @@ tenantRouter.get(
     // The list query joins members for an aggregate, so the count has to
     // come from a separate query against the same predicate — a `count(*)`
     // wrapped around the join would over-count by the join cardinality.
+    // Build the rows query conditionally: `limit`/`offset` are only
+    // applied when the caller asked for a window. Omitting them keeps
+    // the dozens of picker call sites (members, contributions, imports,
+    // batches, reports, layout switchers, onboarding) at their
+    // pre-PR behaviour of "all rows in one call".
+    const baseRowsQuery = db
+      .select({
+        id: chapters.id,
+        referenceCode: chapters.referenceCode,
+        name: chapters.name,
+        countryCode: chapters.countryCode,
+        dateFrom: chapters.dateFrom,
+        dateTo: chapters.dateTo,
+        createdAt: chapters.createdAt,
+        groupId: chapters.groupId,
+        activeMemberCount: sql<number>`count(${members.id})::int`,
+      })
+      .from(chapters)
+      .leftJoin(
+        members,
+        and(
+          eq(members.zoneId, chapters.zoneId),
+          eq(members.chapterId, chapters.id),
+          eq(members.isActive, true),
+          isNull(members.deletedAt),
+        ),
+      )
+      .where(where)
+      .groupBy(chapters.id)
+      .orderBy(asc(chapters.referenceCode));
+    const rowsQuery =
+      q.limit !== undefined
+        ? baseRowsQuery.limit(q.limit).offset(q.offset)
+        : baseRowsQuery;
     const [rows, [{ total }]] = await Promise.all([
-      db
-        .select({
-          id: chapters.id,
-          referenceCode: chapters.referenceCode,
-          name: chapters.name,
-          countryCode: chapters.countryCode,
-          dateFrom: chapters.dateFrom,
-          dateTo: chapters.dateTo,
-          createdAt: chapters.createdAt,
-          groupId: chapters.groupId,
-          activeMemberCount: sql<number>`count(${members.id})::int`,
-        })
-        .from(chapters)
-        .leftJoin(
-          members,
-          and(
-            eq(members.zoneId, chapters.zoneId),
-            eq(members.chapterId, chapters.id),
-            eq(members.isActive, true),
-            isNull(members.deletedAt),
-          ),
-        )
-        .where(where)
-        .groupBy(chapters.id)
-        .orderBy(asc(chapters.referenceCode))
-        .limit(q.limit)
-        .offset(q.offset),
+      rowsQuery,
       db.select({ total: sql<number>`count(*)::int` }).from(chapters).where(where),
     ]);
     return c.json({ items: rows, total, limit: q.limit, offset: q.offset });

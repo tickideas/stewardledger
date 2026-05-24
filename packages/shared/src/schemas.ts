@@ -108,14 +108,17 @@ export type GroupUpdateInput = z.infer<typeof groupUpdateSchema>;
 /**
  * Group list / search query. Mirrors `memberListQuerySchema` so the
  * "Groups directory" page on the zonal surface can paginate + search by
- * name or slug. Default `limit` is the same as the hard cap (200)
- * because the existing picker call sites (chapter → group, contributions
- * filter, batches) assume "every group I can see comes back in one call"
- * — a zone with more than 200 groups would need a different UX anyway.
+ * name or slug.
+ *
+ * `limit` is **optional** by design: callers that omit it (the dozen
+ * existing pickers — chapter→group dropdowns, contributions filter,
+ * batches form, etc.) get every row they're allowed to see. The hard
+ * cap when a value *is* supplied protects against a hand-edited URL
+ * asking for absurd page sizes; the directory page passes 25.
  */
 export const groupListQuerySchema = z.object({
   q: z.string().max(120).optional(),
-  limit: z.coerce.number().int().min(1).max(200).default(200),
+  limit: z.coerce.number().int().min(1).max(1000).optional(),
   offset: z.coerce.number().int().min(0).default(0),
 });
 export type GroupListQuery = z.infer<typeof groupListQuerySchema>;
@@ -147,16 +150,19 @@ export type ChapterCreateInput = z.infer<typeof chapterCreateSchema>;
 /**
  * Chapter list / search query. Powers the "Chapters directory" page on
  * the zonal surface. `q` matches by reference code, name, and country
- * code; `groupId` filters to a single group. Default `limit` matches
- * the hard cap (200) so the many existing picker call sites — members,
- * contributions, imports, paying-in-books, targets, reports, the church
- * layout switcher, onboarding — keep their "all chapters in one call"
- * behaviour. Paginated directory views pass `limit` explicitly.
+ * code; `groupId` filters to a single group.
+ *
+ * `limit` is **optional**: omitting it returns every row the caller can
+ * see, which the many picker call sites — members, contributions,
+ * imports, paying-in-books, targets, reports, the church layout
+ * switcher, onboarding, the group/chapters page — depend on. The
+ * directory page passes 25; the hard cap of 1000 is a sanity bound for
+ * hand-edited URLs.
  */
 export const chapterListQuerySchema = z.object({
   q: z.string().max(120).optional(),
   groupId: uuidSchema.optional(),
-  limit: z.coerce.number().int().min(1).max(200).default(200),
+  limit: z.coerce.number().int().min(1).max(1000).optional(),
   offset: z.coerce.number().int().min(0).default(0),
 });
 export type ChapterListQuery = z.infer<typeof chapterListQuerySchema>;
