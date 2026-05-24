@@ -1,7 +1,7 @@
 // packages/web/src/lib/nav.ts
-// Role-scoped navigation config. Each dashboard (platform / zonal / church)
-// has its own shell layout and its own NavGroup list. The root layout uses
-// `roleForPath` to know which surface a URL belongs to.
+// Defines role-scoped navigation groups for each dashboard shell.
+// Keeps sidebar order and labels consistent across desktop and mobile.
+// RELEVANT FILES: packages/web/src/routes/zone/+layout.svelte, packages/web/src/lib/session-paths.ts, docs/ARCHITECTURE.md
 
 export type NavItem = {
   href: string;
@@ -57,16 +57,20 @@ export const PLATFORM_NAV: NavGroup[] = [
 
 /**
  * Zonal sidebar. The zonal admin reads across every chapter in their zone,
- * so the navigation is the zone's editorial structure: people, giving,
- * insight.
+ * so the navigation starts with the zone's organisational structure, then
+ * separates membership, giving, insight, and settings tasks.
  */
 export const ZONAL_NAV: NavGroup[] = [
   {
-    label: "People",
+    label: "Organization",
     items: [
-      { href: "/zone/chapters", label: "Chapters" },
       { href: "/zone/groups", label: "Groups" },
-      { href: "/zone/administrators", label: "Administrators" },
+      { href: "/zone/chapters", label: "Chapters" },
+    ],
+  },
+  {
+    label: "Membership",
+    items: [
       { href: "/zone/members", label: "Members" },
       { href: "/zone/merge", label: "Merge proposals" },
     ],
@@ -85,8 +89,14 @@ export const ZONAL_NAV: NavGroup[] = [
     items: [
       { href: "/zone/dashboard", label: "Dashboard" },
       { href: "/zone/partnership-progress", label: "Partnership progress" },
-      { href: "/zone/audit", label: "Audit search" },
       { href: "/zone/reports", label: "Reports" },
+    ],
+  },
+  {
+    label: "Settings",
+    items: [
+      { href: "/zone/administrators", label: "Team access" },
+      { href: "/zone/audit", label: "Audit search" },
     ],
   },
 ];
