@@ -45,7 +45,7 @@
       </button>
     {/if}
     {#if status !== "posted" && status !== "voided"}
-      <button type="button" disabled={busy} onclick={() => onaction("void")} class="sl-btn sl-btn-ghost" style="color:var(--bad)">
+      <button type="button" disabled={busy} onclick={() => onaction("void")} class="sl-btn sl-btn-danger-ghost">
         Void
       </button>
     {/if}

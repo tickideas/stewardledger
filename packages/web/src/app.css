@@ -245,6 +245,54 @@ body::before {
   border-color: var(--brass-deep);
 }
 
+/* Destructive solid — use for confirm-step buttons that destroy data
+   (rollback, revoke, hard delete). Pair sparingly; only one per dialog. */
+.sl-btn-danger {
+  background: var(--bad);
+  color: #fffdf8;
+  border-color: var(--bad);
+}
+.sl-btn-danger:hover:not(:disabled) {
+  background: #742f26;
+  border-color: #742f26;
+}
+
+/* Cautionary solid — confirm-step for reversible-but-significant actions. */
+.sl-btn-warn {
+  background: var(--warn);
+  color: #fffdf8;
+  border-color: var(--warn);
+}
+.sl-btn-warn:hover:not(:disabled) {
+  background: #7a541a;
+  border-color: #7a541a;
+}
+
+/* Destructive ghost — inline destructive affordances (Delete, Revoke,
+   Soft-delete) sitting in tables or alongside non-destructive ghosts. */
+.sl-btn-danger-ghost {
+  background: transparent;
+  color: var(--bad);
+  border-color: var(--rule-strong);
+}
+.sl-btn-danger-ghost:hover:not(:disabled) {
+  background: var(--bad-soft);
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+/* Cautionary ghost — reversible-but-significant actions (Reverse, Resend). */
+.sl-btn-warn-ghost {
+  background: transparent;
+  color: var(--warn);
+  border-color: var(--rule-strong);
+}
+.sl-btn-warn-ghost:hover:not(:disabled) {
+  background: var(--warn-soft);
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
 .sl-input, .sl-select {
   width: 100%;
   background: var(--card);

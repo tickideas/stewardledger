@@ -199,7 +199,7 @@
       </div>
       <div class="flex items-center gap-3">
         <a href="/zone/members" class="sl-btn sl-btn-ghost">← Back to directory</a>
-        <button type="button" class="sl-btn sl-btn-ghost" style="color:var(--bad)" onclick={softDelete}>
+        <button type="button" class="sl-btn sl-btn-danger-ghost" onclick={softDelete}>
           Soft-delete
         </button>
       </div>
@@ -329,7 +329,7 @@
               </p>
             </div>
             {#if !a.dateTo}
-              <button type="button" class="sl-btn sl-btn-ghost" style="color:var(--bad)" onclick={() => archiveAddress(a.id)}>
+              <button type="button" class="sl-btn sl-btn-danger-ghost" onclick={() => archiveAddress(a.id)}>
                 Archive
               </button>
             {/if}

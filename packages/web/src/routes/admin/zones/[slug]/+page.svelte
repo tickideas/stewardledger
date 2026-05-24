@@ -340,7 +340,7 @@
                       {#if inv.roleCode === "zone_owner" && data.zone.status === "pending_setup"}
                         <button type="button" onclick={openResend} class="sl-btn sl-btn-ghost">Resend</button>
                       {/if}
-                      <button type="button" onclick={() => requestRevoke(inv)} class="sl-btn sl-btn-ghost" style="color:var(--bad)">Revoke</button>
+                      <button type="button" onclick={() => requestRevoke(inv)} class="sl-btn sl-btn-danger-ghost">Revoke</button>
                     </div>
                   </td>
                 </tr>
@@ -356,7 +356,7 @@
           <span>
             This zone is awaiting owner setup but has no open invitation. The previous one may have been revoked or expired.
           </span>
-          <button type="button" onclick={openResend} class="sl-btn sl-btn-ghost" style="color:var(--warn);border-color:var(--warn)">
+          <button type="button" onclick={openResend} class="sl-btn sl-btn-warn-ghost">
             Send owner invitation
           </button>
         </div>
@@ -461,7 +461,7 @@
             <button type="button" onclick={closeRevokeConfirm} disabled={revokeSubmitting} class="sl-btn sl-btn-ghost">
               Cancel
             </button>
-            <button type="button" onclick={confirmRevoke} disabled={revokeSubmitting} class="sl-btn" style="background:var(--bad);color:#fff;border-color:var(--bad)">
+            <button type="button" onclick={confirmRevoke} disabled={revokeSubmitting} class="sl-btn sl-btn-danger">
               {revokeSubmitting ? "Revoking…" : "Revoke"}
             </button>
           </div>

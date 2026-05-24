@@ -429,7 +429,7 @@
                       <button type="button" onclick={() => beginEdit(book)} class="sl-btn sl-btn-ghost">
                         Edit
                       </button>
-                      <button type="button" onclick={() => deleteBook(book)} class="sl-btn sl-btn-ghost" style="color:var(--bad)">
+                      <button type="button" onclick={() => deleteBook(book)} class="sl-btn sl-btn-danger-ghost">
                         Delete
                       </button>
                     </div>

@@ -313,15 +313,15 @@
         <button type="button" disabled={busy} onclick={postRow} class="sl-btn sl-btn-primary">
           Post
         </button>
-        <button type="button" disabled={busy} onclick={deleteDraft} class="sl-btn sl-btn-ghost" style="color:var(--bad)">
+        <button type="button" disabled={busy} onclick={deleteDraft} class="sl-btn sl-btn-danger-ghost">
           Delete draft
         </button>
       {/if}
       {#if contribution.status === "posted"}
-        <button type="button" disabled={busy} onclick={voidRow} class="sl-btn sl-btn-ghost" style="color:var(--bad)">
+        <button type="button" disabled={busy} onclick={voidRow} class="sl-btn sl-btn-danger-ghost">
           Void
         </button>
-        <button type="button" disabled={busy} onclick={reverseRow} class="sl-btn sl-btn-ghost" style="color:var(--warn)">
+        <button type="button" disabled={busy} onclick={reverseRow} class="sl-btn sl-btn-warn-ghost">
           Reverse
         </button>
       {/if}

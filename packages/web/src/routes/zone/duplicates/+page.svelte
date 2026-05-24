@@ -5,6 +5,7 @@
 
 <script lang="ts">
   import { api, ApiError } from "$lib/api";
+  import ConfirmDialog from "$lib/ConfirmDialog.svelte";
 
   type Proposal = {
     id: string;
@@ -27,6 +28,11 @@
   let formError = $state<string | null>(null);
   let submitting = $state(false);
   let applyingId = $state<string | null>(null);
+
+  // Pending-merge dialog state. We hold the row that triggered the
+  // dialog so the confirm-step handler knows which proposal to apply.
+  let confirmTarget = $state<Proposal | null>(null);
+  const confirmOpen = $derived(confirmTarget !== null);
 
   async function refresh() {
     loading = true;
@@ -65,19 +71,26 @@
     }
   }
 
-  async function apply(p: Proposal) {
-    if (
-      !confirm(
-        "Merge these two members? The duplicate will be archived and its giving history, addresses, and references will move to the kept member. This can be reviewed in the audit log.",
-      )
-    )
-      return;
+  function requestApply(p: Proposal) {
+    confirmTarget = p;
+  }
+
+  function cancelApply() {
+    if (applyingId) return;
+    confirmTarget = null;
+  }
+
+  async function confirmApply() {
+    const p = confirmTarget;
+    if (!p) return;
     applyingId = p.id;
     try {
       await api.post("/api/tenant/members/merge/apply", { proposalId: p.id });
+      confirmTarget = null;
       await refresh();
     } catch (err) {
       loadError = err instanceof ApiError ? err.message : "Could not complete the merge.";
+      confirmTarget = null;
     } finally {
       applyingId = null;
     }
@@ -228,7 +241,7 @@
                     type="button"
                     class="sl-btn sl-btn-ghost justify-center"
                     disabled={applyingId === p.id}
-                    onclick={() => apply(p)}
+                    onclick={() => requestApply(p)}
                   >
                     {applyingId === p.id ? "Merging…" : "Merge now"}
                   </button>
@@ -252,3 +265,15 @@
     </div>
   </div>
 </div>
+
+<ConfirmDialog
+  open={confirmOpen}
+  title="Merge these two members?"
+  body="The duplicate is archived (not deleted) and its giving history, addresses, and references move to the kept member. Every merge is recorded in the audit log."
+  confirmLabel="Merge now"
+  cancelLabel="Keep separate"
+  tone="danger"
+  submitting={applyingId !== null}
+  onconfirm={confirmApply}
+  oncancel={cancelApply}
+/>

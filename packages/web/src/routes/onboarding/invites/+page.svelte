@@ -144,7 +144,7 @@
               </p>
             </div>
             {#if !inv.acceptedAt && !inv.revokedAt}
-              <button type="button" class="sl-btn sl-btn-ghost" style="color:var(--bad)" onclick={() => revoke(inv.id)}>
+              <button type="button" class="sl-btn sl-btn-danger-ghost" onclick={() => revoke(inv.id)}>
                 Revoke
               </button>
             {/if}

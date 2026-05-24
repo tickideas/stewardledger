@@ -234,7 +234,7 @@
         </button>
       {/if}
       {#if job.status === "committed"}
-        <button disabled={busy} onclick={() => (rollbackOpen = !rollbackOpen)} class="sl-btn sl-btn-ghost" style="color:var(--bad)">
+        <button disabled={busy} onclick={() => (rollbackOpen = !rollbackOpen)} class="sl-btn sl-btn-danger-ghost">
           Roll back
         </button>
       {/if}
@@ -257,8 +257,7 @@
           <button
             disabled={busy || !rollbackReason.trim()}
             onclick={() => doAction(`/api/tenant/imports/${job!.id}/rollback`, { reason: rollbackReason })}
-            class="sl-btn"
-            style="background:var(--bad);color:#fff;border-color:var(--bad)"
+            class="sl-btn sl-btn-danger"
           >
             Confirm rollback
           </button>

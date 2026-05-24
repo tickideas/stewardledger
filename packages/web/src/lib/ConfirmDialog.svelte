@@ -117,9 +117,9 @@
   );
   const confirmClasses = $derived(
     tone === "danger"
-      ? "sl-btn border-[var(--bad)] bg-[var(--bad)] text-white hover:bg-[#742f26] disabled:opacity-45"
+      ? "sl-btn sl-btn-danger"
       : tone === "warn"
-        ? "sl-btn border-[var(--warn)] bg-[var(--warn)] text-white hover:opacity-90 disabled:opacity-45"
+        ? "sl-btn sl-btn-warn"
         : "sl-btn sl-btn-primary",
   );
 </script>

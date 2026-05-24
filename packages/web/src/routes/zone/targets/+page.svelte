@@ -526,7 +526,7 @@
                       <button type="button" onclick={() => beginEdit(target)} class="sl-btn sl-btn-ghost">
                         Edit
                       </button>
-                      <button type="button" onclick={() => deleteTarget(target)} class="sl-btn sl-btn-ghost" style="color:var(--bad)">
+                      <button type="button" onclick={() => deleteTarget(target)} class="sl-btn sl-btn-danger-ghost">
                         Delete
                       </button>
                     </div>
