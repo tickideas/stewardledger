@@ -132,15 +132,10 @@
     </p>
   </div>
 
-  <form onsubmit={submitUpload} class="sl-reveal sl-reveal-2 mt-8 sl-card overflow-hidden">
-    <div class="flex items-center gap-3 border-b border-[var(--rule)] bg-[var(--paper-soft)] px-6 py-3.5">
-      <span class="inline-block h-1.5 w-1.5 rounded-full" style="background:var(--brass);box-shadow:0 0 0 3px rgba(168,116,50,0.18)"></span>
-      <span class="sl-eyebrow">New upload</span>
-      <span class="text-[12px] text-[var(--ink-mute)]">
-        — staged for {chapter()?.name ?? "this chapter"} only
-      </span>
-    </div>
-    <div class="grid grid-cols-1 gap-5 p-6 sm:grid-cols-4">
+  <!-- New upload. Same form-shaped wrapper as the zonal /zone/imports page
+       (mirrors the "Filter bar" pattern on /zone/paying-in-books). -->
+  <form onsubmit={submitUpload} class="sl-reveal sl-reveal-2 sl-card-warm mt-8 p-6">
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-end lg:grid-cols-4">
       <label class="block">
         <span class="sl-eyebrow" style="font-size:10.5px">File</span>
         <input
@@ -148,33 +143,34 @@
           accept=".csv,.tsv"
           onchange={onFileChange}
           required
-          class="mt-2 block w-full text-[12px] file:mr-3 file:rounded-[2px] file:border file:border-[var(--rule-strong)] file:bg-[var(--card)] file:px-3 file:py-2 file:text-[12px] file:text-[var(--ink)] hover:file:bg-[var(--paper-soft)]"
+          class="mt-1.5 block w-full text-[12px] text-[var(--ink-mute)] file:mr-3 file:rounded-[2px] file:border file:border-[var(--rule-strong)] file:bg-[var(--card)] file:px-3 file:py-2 file:text-[12px] file:text-[var(--ink)] hover:file:bg-[var(--paper-soft)]"
         />
       </label>
       <label class="block">
         <span class="sl-eyebrow" style="font-size:10.5px">File type</span>
-        <select bind:value={fileType} class="sl-select mt-2">
+        <select bind:value={fileType} class="sl-select mt-1.5">
           <option value="statement">Bank statement</option>
         </select>
       </label>
       <label class="block">
         <span class="sl-eyebrow" style="font-size:10.5px">Source</span>
-        <select bind:value={sourceType} class="sl-select mt-2">
+        <select bind:value={sourceType} class="sl-select mt-1.5">
           <option value="generic_csv">Generic CSV</option>
           <option value="bank_csv">Bank CSV</option>
           <option value="online_giving">Online giving export</option>
         </select>
       </label>
-      <div class="flex items-end">
-        <button type="submit" disabled={!canSubmitUpload} class="sl-btn sl-btn-primary w-full justify-center">
+      <div class="flex justify-end">
+        <button type="submit" disabled={!canSubmitUpload} class="sl-btn sl-btn-primary">
           {uploading ? "Uploading…" : "Upload + parse"}
         </button>
       </div>
     </div>
+    <p class="mt-3 text-[11px] text-[var(--ink-mute)]">
+      Staged for {chapter()?.name ?? "this chapter"} only — files are reviewed before any rows commit.
+    </p>
     {#if uploadError}
-      <div class="border-t border-[var(--rule)] px-6 py-3">
-        <p class="border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{uploadError}</p>
-      </div>
+      <p class="mt-3 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{uploadError}</p>
     {/if}
   </form>
 
