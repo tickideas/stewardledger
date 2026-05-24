@@ -1,6 +1,6 @@
 # AGENTS — StewardLedger
 
-Read before changing code. Full normative docs live in `docs/` (`PRD.md`, `ARCHITECTURE.md`, `DOMAIN-MODEL.md`, `REPORTS.md`, `ROADMAP.md`, `BRAND.md`). Update the relevant doc in the same PR as any behaviour change.
+Read before changing code. Full normative docs live in `docs/` (`PRD.md`, `ARCHITECTURE.md`, `DOMAIN-MODEL.md`, `REPORTS.md`, `ROADMAP.md`, `BRAND.md`, `DESIGN.md`). Update the relevant doc in the same PR as any behaviour change.
 
 ## Hard rules
 1. Money is `numeric(19,4)` + `currency_code`; use `decimal.js` from `@stewardledger/shared`. Positive = inflow, negative = reversal; reversal abs amount must equal original.
@@ -8,6 +8,7 @@ Read before changing code. Full normative docs live in `docs/` (`PRD.md`, `ARCHI
 3. Posted contributions are immutable — correct via `reversal_of_contribution_id`.
 4. No stored-proc business logic; triggers only for audit, posted-record immutability, and invariants a CHECK can't express.
 5. No secrets in repo (`.env.example`); no legacy Church Plus data import (reference only).
+6. All web UI follows `docs/DESIGN.md` ("Ledger Editorial"): use `sl-*` primitives and `var(--*)` tokens from `packages/web/src/app.css`. No raw Tailwind slate/rose/emerald/amber colors, no `rounded-xl border bg-white` cards, no ad-hoc button/input styling. Copy a sibling page's skeleton before writing a new one.
 
 ## Code & workflow
 - TS strict, Zod at API boundaries, Drizzle for DB (no raw SQL outside audit triggers). kebab-case files, camelCase vars, PascalCase types, UPPER_SNAKE env. Tests next to code (`foo.ts` + `foo.test.ts`). Split files >~400 lines.
