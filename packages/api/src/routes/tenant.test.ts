@@ -262,6 +262,96 @@ describe("tenant routes — cross-tenant fuzz", () => {
     expect(body.items.map((c) => c.id)).not.toContain(chapterB);
   });
 
+  it("GET /chapters?q=… filters by name / reference code / country", async () => {
+    // Seed three extra chapters in zone A so we can prove the `q` filter
+    // narrows the result set rather than just returning everything.
+    const nameMatch = `Loveworld North ${unique()}`;
+    const codeMatch = `C-LIKELY-${unique()}`;
+    const [byName] = await db
+      .insert(chapters)
+      .values({
+        zoneId: zoneA.id,
+        referenceCode: `C${unique()}`,
+        name: nameMatch,
+        countryCode: "GB",
+        dateFrom: new Date().toISOString().slice(0, 10),
+      })
+      .returning({ id: chapters.id });
+    const [byCode] = await db
+      .insert(chapters)
+      .values({
+        zoneId: zoneA.id,
+        referenceCode: codeMatch,
+        name: "Misnamed chapter",
+        countryCode: "NG",
+        dateFrom: new Date().toISOString().slice(0, 10),
+      })
+      .returning({ id: chapters.id });
+
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+
+    // Name match — case-insensitive substring.
+    const byNameRes = await call(zoneA.slug, "/api/tenant/chapters?q=loveworld%20north");
+    expect(byNameRes.status).toBe(200);
+    const byNameBody = (await byNameRes.json()) as {
+      items: Array<{ id: string }>;
+      total: number;
+    };
+    expect(byNameBody.items.map((c) => c.id)).toContain(byName.id);
+    expect(byNameBody.items.map((c) => c.id)).not.toContain(byCode.id);
+    expect(byNameBody.total).toBe(byNameBody.items.length);
+
+    // Reference code match.
+    const byCodeRes = await call(zoneA.slug, `/api/tenant/chapters?q=${codeMatch.toLowerCase()}`);
+    const byCodeBody = (await byCodeRes.json()) as { items: Array<{ id: string }> };
+    expect(byCodeBody.items.map((c) => c.id)).toEqual([byCode.id]);
+
+    // Country code match.
+    const byCountryRes = await call(zoneA.slug, "/api/tenant/chapters?q=ng");
+    const byCountryBody = (await byCountryRes.json()) as { items: Array<{ id: string }> };
+    expect(byCountryBody.items.map((c) => c.id)).toContain(byCode.id);
+  });
+
+  it("GET /chapters paginates with limit + offset and returns total", async () => {
+    // Insert enough chapters that two pages of `limit=2` only cover a subset.
+    const extraIds: string[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      const [row] = await db
+        .insert(chapters)
+        .values({
+          zoneId: zoneA.id,
+          referenceCode: `C-PAGE-${i}-${unique()}`,
+          name: `Paginated chapter ${i}`,
+          dateFrom: new Date().toISOString().slice(0, 10),
+        })
+        .returning({ id: chapters.id });
+      extraIds.push(row.id);
+    }
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "ua@x"));
+    const page1 = await call(zoneA.slug, "/api/tenant/chapters?limit=2&offset=0");
+    const page1Body = (await page1.json()) as {
+      items: Array<{ id: string }>;
+      total: number;
+      limit: number;
+      offset: number;
+    };
+    expect(page1Body.items.length).toBe(2);
+    expect(page1Body.limit).toBe(2);
+    expect(page1Body.offset).toBe(0);
+    // Total counts every chapter in zone A (the listing-isolation test
+    // added some earlier so we assert >= rather than exact).
+    expect(page1Body.total).toBeGreaterThanOrEqual(extraIds.length + 1);
+
+    const page2 = await call(zoneA.slug, "/api/tenant/chapters?limit=2&offset=2");
+    const page2Body = (await page2.json()) as { items: Array<{ id: string }> };
+    expect(page2Body.items.length).toBe(2);
+    // No overlap between page 1 and page 2.
+    const overlap = page1Body.items.filter((p1) =>
+      page2Body.items.some((p2) => p2.id === p1.id),
+    );
+    expect(overlap).toEqual([]);
+  });
+
   it("does not resolve a soft-deleted zone as a tenant", async () => {
     const removed = await seedZone(`removed-${unique()}`, `Removed Zone ${unique()}`);
     cleanupSlugs.push(removed.slug);

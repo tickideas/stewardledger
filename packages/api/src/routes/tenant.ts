@@ -20,6 +20,7 @@ import {
   GROUP_ROLES,
   chapterBankingSettingsSchema,
   chapterCreateSchema,
+  chapterListQuerySchema,
   chapterProfileSchema,
   contributionBatchTemplateCreateSchema,
   invitationCreateSchema,
@@ -27,7 +28,7 @@ import {
   ZONE_ROLES,
 } from "@stewardledger/shared";
 import { z } from "zod";
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
 import {
@@ -208,39 +209,69 @@ async function canWriteChapterSettings(ctx: AuthorizedContext, chapterId: string
   return Boolean(binding);
 }
 
-tenantRouter.get("/chapters", async (c) => {
-  const ctx = c.get("auth") as AuthorizedContext;
-  const scope = await visibleChapterIds(ctx, CHAPTER_READ_ZONE_ROLES);
-  if (scope.kind === "list" && scope.ids.length === 0) return c.json({ items: [] });
-  const conditions = [eq(chapters.zoneId, ctx.zoneId), isNull(chapters.deletedAt)];
-  if (scope.kind === "list") conditions.push(inArray(chapters.id, scope.ids));
-  const rows = await db
-    .select({
-      id: chapters.id,
-      referenceCode: chapters.referenceCode,
-      name: chapters.name,
-      countryCode: chapters.countryCode,
-      dateFrom: chapters.dateFrom,
-      dateTo: chapters.dateTo,
-      createdAt: chapters.createdAt,
-      groupId: chapters.groupId,
-      activeMemberCount: sql<number>`count(${members.id})::int`,
-    })
-    .from(chapters)
-    .leftJoin(
-      members,
-      and(
-        eq(members.zoneId, chapters.zoneId),
-        eq(members.chapterId, chapters.id),
-        eq(members.isActive, true),
-        isNull(members.deletedAt),
-      ),
-    )
-    .where(and(...conditions))
-    .groupBy(chapters.id)
-    .orderBy(asc(chapters.referenceCode));
-  return c.json({ items: rows });
-});
+tenantRouter.get(
+  "/chapters",
+  zValidator("query", chapterListQuerySchema),
+  async (c) => {
+    const ctx = c.get("auth") as AuthorizedContext;
+    const q = c.req.valid("query");
+    const scope = await visibleChapterIds(ctx, CHAPTER_READ_ZONE_ROLES);
+    if (scope.kind === "list" && scope.ids.length === 0) {
+      return c.json({ items: [], total: 0, limit: q.limit, offset: q.offset });
+    }
+    const conditions = [eq(chapters.zoneId, ctx.zoneId), isNull(chapters.deletedAt)];
+    if (scope.kind === "list") conditions.push(inArray(chapters.id, scope.ids));
+    if (q.groupId) conditions.push(eq(chapters.groupId, q.groupId));
+    if (q.q) {
+      // Lowercase needle once; pg's `lower(text)` is index-friendly and
+      // the values we filter on are already short. Reference codes are
+      // already uppercase, so we lower both sides for a single predicate.
+      const needle = `%${q.q.toLowerCase()}%`;
+      conditions.push(
+        or(
+          sql`lower(${chapters.name}) like ${needle}`,
+          sql`lower(${chapters.referenceCode}) like ${needle}`,
+          sql`lower(${chapters.countryCode}) like ${needle}`,
+        )!,
+      );
+    }
+    const where = and(...conditions);
+    // The list query joins members for an aggregate, so the count has to
+    // come from a separate query against the same predicate — a `count(*)`
+    // wrapped around the join would over-count by the join cardinality.
+    const [rows, [{ total }]] = await Promise.all([
+      db
+        .select({
+          id: chapters.id,
+          referenceCode: chapters.referenceCode,
+          name: chapters.name,
+          countryCode: chapters.countryCode,
+          dateFrom: chapters.dateFrom,
+          dateTo: chapters.dateTo,
+          createdAt: chapters.createdAt,
+          groupId: chapters.groupId,
+          activeMemberCount: sql<number>`count(${members.id})::int`,
+        })
+        .from(chapters)
+        .leftJoin(
+          members,
+          and(
+            eq(members.zoneId, chapters.zoneId),
+            eq(members.chapterId, chapters.id),
+            eq(members.isActive, true),
+            isNull(members.deletedAt),
+          ),
+        )
+        .where(where)
+        .groupBy(chapters.id)
+        .orderBy(asc(chapters.referenceCode))
+        .limit(q.limit)
+        .offset(q.offset),
+      db.select({ total: sql<number>`count(*)::int` }).from(chapters).where(where),
+    ]);
+    return c.json({ items: rows, total, limit: q.limit, offset: q.offset });
+  },
+);
 
 tenantRouter.post("/chapters", zValidator("json", chapterCreateSchema), async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;

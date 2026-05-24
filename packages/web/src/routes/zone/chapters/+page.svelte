@@ -1,7 +1,7 @@
 <!-- packages/web/src/routes/zone/chapters/+page.svelte -->
-<!-- Zonal chapter register with chapter creation for zone-level administrators. -->
-<!-- Exists as the main zonal dashboard entry point for managing churches in a zone. -->
-<!-- RELEVANT FILES: packages/web/src/routes/zone/+layout.svelte, packages/api/src/routes/tenant.ts, packages/web/src/routes/church/overview/+page.svelte -->
+<!-- Zonal "Chapters directory" — searchable, paginated register with inline create + group assignment. -->
+<!-- Mirrors /zone/members for shape; admin-only writes are gated client-side and server-side. -->
+<!-- RELEVANT FILES: packages/web/src/routes/zone/members/+page.svelte, packages/web/src/routes/zone/groups/+page.svelte, packages/api/src/routes/tenant.ts -->
 
 <script lang="ts">
   import { setActiveChapter } from "$lib/active-chapter.svelte";
@@ -31,10 +31,15 @@
   };
 
   const adminRoles = new Set(["zone_owner", "zone_admin"]);
+  const PAGE_SIZE = 25;
 
   let chapters = $state<Chapter[]>([]);
   let groups = $state<GroupRow[]>([]);
   let auth = $state<AuthorizedContext | null>(null);
+  let total = $state<number | null>(null);
+  let q = $state("");
+  let groupFilter = $state("");
+  let page = $state(0);
   let assignGroupSelection = $state<Record<string, string>>({});
   let assignBusyId = $state<string | null>(null);
   let assignErrorById = $state<Record<string, string>>({});
@@ -57,6 +62,9 @@
   );
   const groupNameById = $derived(new Map(groups.map((g) => [g.id, g.name])));
   const hasGroups = $derived(groups.length > 0);
+  const pageCount = $derived(total === null ? 0 : Math.max(1, Math.ceil(total / PAGE_SIZE)));
+  const fromRow = $derived(total === null || total === 0 ? 0 : page * PAGE_SIZE + 1);
+  const toRow = $derived(total === null ? 0 : Math.min(total, page * PAGE_SIZE + chapters.length));
 
   async function assignGroup(chapterId: string) {
     const groupId = assignGroupSelection[chapterId];
@@ -111,15 +119,30 @@
     createOpen = true;
   }
 
-  async function refresh() {
+  /**
+   * Reload the chapter list. `resetPage` is true on filter changes and
+   * search submissions, false on inline mutations (assign-group) and
+   * page navigation so the user stays on the page they were viewing.
+   */
+  async function refresh(resetPage = false) {
+    if (resetPage) page = 0;
     loading = true;
     try {
+      const params = new URLSearchParams();
+      if (q.trim()) params.set("q", q.trim());
+      if (groupFilter) params.set("groupId", groupFilter);
+      params.set("limit", String(PAGE_SIZE));
+      params.set("offset", String(page * PAGE_SIZE));
       const [chapterRes, meRes, groupsRes] = await Promise.all([
-        api.get<{ items: Chapter[] }>("/api/tenant/chapters"),
+        api.get<{ items: Chapter[]; total: number }>(`/api/tenant/chapters?${params.toString()}`),
+        // me + groups don't change between filter applications, but the
+        // page-load path is the same and the responses are tiny — the
+        // extra round-trip avoids a separate "loaded once" state branch.
         api.get<{ auth: AuthorizedContext }>("/api/tenant/me"),
-        api.get<{ items: GroupRow[] }>("/api/tenant/groups"),
+        api.get<{ items: GroupRow[] }>("/api/tenant/groups?limit=200"),
       ]);
       chapters = chapterRes.items;
+      total = chapterRes.total;
       auth = meRes.auth;
       groups = groupsRes.items;
       loadError = null;
@@ -133,6 +156,13 @@
   $effect(() => {
     refresh();
   });
+
+  function gotoPage(next: number) {
+    const target = Math.max(0, Math.min(pageCount - 1, next));
+    if (target === page) return;
+    page = target;
+    refresh();
+  }
 
   async function create(e: SubmitEvent) {
     e.preventDefault();
@@ -164,7 +194,7 @@
           sentInvites += 1;
           inviteRows = inviteRows.filter((existing) => existing.id !== row.id);
         } catch (err) {
-          await refresh();
+          await refresh(true);
           createFlash =
             sentInvites > 0
               ? `${sentInvites} ${sentInvites === 1 ? "invitation" : "invitations"} sent.`
@@ -183,7 +213,7 @@
       resetCreateForm();
       createOpen = false;
       createFlash = inviteText;
-      await refresh();
+      await refresh(true);
     } catch (err) {
       createError =
         err instanceof ApiError
@@ -215,13 +245,13 @@
     <div>
       <span class="sl-eyebrow">§ I · Church administration</span>
       <h1 class="mt-3 sl-display text-[44px] leading-[1] text-[var(--ink)]">
-        Chapters <span class="sl-serif-italic font-light text-[var(--brass-deep)]">register</span>
+        Chapters <span class="sl-serif-italic font-light text-[var(--brass-deep)]">directory</span>
       </h1>
       <p class="mt-2 text-[14px] text-[var(--ink-mute)]">
-        {#if loading}
+        {#if total === null}
           <span class="sl-mono text-[12px]" style="letter-spacing:0.1em">LOADING…</span>
         {:else}
-          {chapters.length} {chapters.length === 1 ? "chapter" : "chapters"} on file
+          {total} {total === 1 ? "chapter" : "chapters"} on file
         {/if}
       </p>
     </div>
@@ -331,24 +361,55 @@
     <p class="mt-6 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{createError}</p>
   {/if}
 
+  <!-- Search bar. Same shape as /zone/members so the surfaces feel like
+       one product: typeahead input + filter dropdown + explicit submit. -->
+  <div class="sl-reveal sl-reveal-2 mt-8 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(18rem,1fr)_14rem_auto] lg:items-center">
+    <div class="relative min-w-0">
+      <svg class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[var(--ink-mute)]" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+        <circle cx="6" cy="6" r="4" stroke="currentColor" stroke-width="1.25"/>
+        <path d="M9 9l3 3" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+      </svg>
+      <input
+        type="search"
+        bind:value={q}
+        placeholder="Search chapter name, reference, country…"
+        onkeydown={(e) => e.key === "Enter" && refresh(true)}
+        class="sl-input pr-9"
+      />
+    </div>
+    {#if hasGroups}
+      <select bind:value={groupFilter} onchange={() => refresh(true)} class="sl-select">
+        <option value="">All groups</option>
+        {#each groups as g (g.id)}<option value={g.id}>{g.name}</option>{/each}
+      </select>
+    {:else}
+      <div></div>
+    {/if}
+    <button class="sl-btn sl-btn-ghost justify-center" onclick={() => refresh(true)}>Search</button>
+  </div>
+
   {#if loadError}
     <p class="mt-6 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{loadError}</p>
-  {:else if loading}
+  {:else if loading && chapters.length === 0}
     <div class="mt-10 sl-card p-12 text-center text-[var(--ink-mute)]">
       <span class="sl-mono text-[12px]" style="letter-spacing:0.16em">LOADING CHAPTERS…</span>
     </div>
-  {:else if chapters.length === 0}
+  {:else if total === 0 && !q && !groupFilter}
     <div class="sl-reveal mt-10 sl-card flex flex-col items-center justify-center p-16 text-center">
       <span class="sl-display text-[36px] italic text-[var(--brass-deep)]">∅</span>
       <p class="mt-4 sl-display text-[18px] italic text-[var(--ink)]">No chapters yet.</p>
       <p class="mt-2 text-[13px] text-[var(--ink-mute)]">Add the first one above.</p>
     </div>
   {:else}
-    <div class="sl-reveal sl-reveal-3 mt-10">
+    <div class="sl-reveal sl-reveal-3 mt-8">
       <div class="mb-3 flex items-center justify-between">
-        <span class="sl-eyebrow">Roster</span>
+        <span class="sl-eyebrow">Index of chapters</span>
         <span class="sl-mono text-[10.5px] text-[var(--ink-mute)]" style="letter-spacing:0.06em">
-          {chapters.length} {chapters.length === 1 ? "row" : "rows"}
+          {#if total !== null && total > 0}
+            {fromRow}–{toRow} of {total}
+          {:else}
+            0 results
+          {/if}
         </span>
       </div>
       <div class="sl-card overflow-hidden">
@@ -424,9 +485,36 @@
                 </td>
               </tr>
             {/each}
+            {#if !loading && chapters.length === 0}
+              <tr>
+                <td colspan={hasGroups ? 8 : 7} class="py-12 text-center text-[13px] text-[var(--ink-mute)]">
+                  No chapters match this search. Try a different name, reference, or clear the filter.
+                </td>
+              </tr>
+            {/if}
           </tbody>
         </table>
       </div>
+
+      {#if pageCount > 1}
+        <div class="mt-4 flex items-center justify-between text-[12px] text-[var(--ink-mute)]">
+          <span class="sl-mono" style="letter-spacing:0.06em">Page {page + 1} of {pageCount}</span>
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              class="sl-btn sl-btn-ghost"
+              disabled={page === 0 || loading}
+              onclick={() => gotoPage(page - 1)}
+            >Previous</button>
+            <button
+              type="button"
+              class="sl-btn sl-btn-ghost"
+              disabled={page >= pageCount - 1 || loading}
+              onclick={() => gotoPage(page + 1)}
+            >Next</button>
+          </div>
+        </div>
+      {/if}
     </div>
   {/if}
 </div>

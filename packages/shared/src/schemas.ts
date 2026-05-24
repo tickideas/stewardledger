@@ -105,6 +105,21 @@ export type GroupCreateInput = z.infer<typeof groupCreateSchema>;
 export const groupUpdateSchema = groupCreateSchema.partial();
 export type GroupUpdateInput = z.infer<typeof groupUpdateSchema>;
 
+/**
+ * Group list / search query. Mirrors `memberListQuerySchema` so the
+ * "Groups directory" page on the zonal surface can paginate + search by
+ * name or slug. Default `limit` is the same as the hard cap (200)
+ * because the existing picker call sites (chapter → group, contributions
+ * filter, batches) assume "every group I can see comes back in one call"
+ * — a zone with more than 200 groups would need a different UX anyway.
+ */
+export const groupListQuerySchema = z.object({
+  q: z.string().max(120).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(200),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type GroupListQuery = z.infer<typeof groupListQuerySchema>;
+
 /** Move a chapter to a different group. effectiveDate defaults to today (zone TZ) at the service layer. */
 export const chapterMoveGroupSchema = z
   .object({
@@ -128,6 +143,23 @@ export const chapterCreateSchema = z.object({
   groupId: uuidSchema.optional(),
 });
 export type ChapterCreateInput = z.infer<typeof chapterCreateSchema>;
+
+/**
+ * Chapter list / search query. Powers the "Chapters directory" page on
+ * the zonal surface. `q` matches by reference code, name, and country
+ * code; `groupId` filters to a single group. Default `limit` matches
+ * the hard cap (200) so the many existing picker call sites — members,
+ * contributions, imports, paying-in-books, targets, reports, the church
+ * layout switcher, onboarding — keep their "all chapters in one call"
+ * behaviour. Paginated directory views pass `limit` explicitly.
+ */
+export const chapterListQuerySchema = z.object({
+  q: z.string().max(120).optional(),
+  groupId: uuidSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(200),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type ChapterListQuery = z.infer<typeof chapterListQuerySchema>;
 
 /**
  * Chapter banking reference. Free-form per chapter — a chapter typically

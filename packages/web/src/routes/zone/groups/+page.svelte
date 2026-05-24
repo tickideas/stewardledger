@@ -1,10 +1,11 @@
 <!-- packages/web/src/routes/zone/groups/+page.svelte -->
-<!-- Zonal group register: list, inline create, soft-delete. -->
-<!-- Mirrors /zone/chapters for styling; admin-only writes are gated client-side and server-side. -->
-<!-- RELEVANT FILES: packages/api/src/routes/tenant-groups.ts, packages/web/src/routes/zone/chapters/+page.svelte -->
+<!-- Zonal "Groups directory" — searchable, paginated register with inline create + soft-delete. -->
+<!-- Mirrors /zone/chapters for shape; admin-only writes are gated client-side and server-side. -->
+<!-- RELEVANT FILES: packages/api/src/routes/tenant-groups.ts, packages/web/src/routes/zone/chapters/+page.svelte, packages/web/src/lib/ConfirmDialog.svelte -->
 
 <script lang="ts">
   import { api, ApiError } from "$lib/api";
+  import ConfirmDialog from "$lib/ConfirmDialog.svelte";
   import type { AuthorizedContext } from "@stewardledger/shared";
 
   type Group = {
@@ -21,11 +22,15 @@
   type ChapterRow = { id: string; name: string; groupId: string | null };
 
   const adminRoles = new Set(["zone_owner", "zone_admin"]);
+  const PAGE_SIZE = 25;
 
   let groups = $state<Group[]>([]);
   let auth = $state<AuthorizedContext | null>(null);
   let zone = $state<ZoneInfo | null>(null);
   let unassignedChapters = $state<ChapterRow[]>([]);
+  let total = $state<number | null>(null);
+  let q = $state("");
+  let page = $state(0);
   let loading = $state(true);
   let loadError = $state<string | null>(null);
   let createOpen = $state(false);
@@ -36,8 +41,10 @@
   let createFlash = $state<string | null>(null);
   let rowError = $state<string | null>(null);
   let deletingId = $state<string | null>(null);
+  let pendingDelete = $state<Group | null>(null);
   let enabling = $state(false);
   let enableError = $state<string | null>(null);
+  let enableConfirmOpen = $state(false);
 
   const canManage = $derived(
     auth?.isPlatformAdmin === true || auth?.roleCodes.some((role) => adminRoles.has(role)) === true,
@@ -45,6 +52,9 @@
   const isZoneOwner = $derived(
     auth?.isPlatformAdmin === true || auth?.roleCodes.includes("zone_owner") === true,
   );
+  const pageCount = $derived(total === null ? 0 : Math.max(1, Math.ceil(total / PAGE_SIZE)));
+  const fromRow = $derived(total === null || total === 0 ? 0 : page * PAGE_SIZE + 1);
+  const toRow = $derived(total === null ? 0 : Math.min(total, page * PAGE_SIZE + groups.length));
 
   function toggleCreate() {
     if (createOpen) {
@@ -57,16 +67,32 @@
     createOpen = true;
   }
 
-  async function refresh() {
+  /**
+   * Reload the directory + zone + unassigned-chapter list. `resetPage`
+   * is true on search submissions so the user always lands on the first
+   * page of results; inline mutations (delete, enable-groups) keep the
+   * current page.
+   */
+  async function refresh(resetPage = false) {
+    if (resetPage) page = 0;
     loading = true;
     try {
+      const params = new URLSearchParams();
+      if (q.trim()) params.set("q", q.trim());
+      params.set("limit", String(PAGE_SIZE));
+      params.set("offset", String(page * PAGE_SIZE));
       const [groupRes, meRes, zoneRes, chapterRes] = await Promise.all([
-        api.get<{ items: Group[] }>("/api/tenant/groups"),
+        api.get<{ items: Group[]; total: number }>(`/api/tenant/groups?${params.toString()}`),
         api.get<{ auth: AuthorizedContext }>("/api/tenant/me"),
         api.get<{ zone: ZoneInfo }>("/api/tenant/zone"),
-        api.get<{ items: ChapterRow[] }>("/api/tenant/chapters"),
+        // The enable-groups banner needs to know which chapters are
+        // ungrouped. We only need a flat list, so a generous cap is
+        // fine — a zone with >200 chapters is already a different UX
+        // problem and we'd surface it differently.
+        api.get<{ items: ChapterRow[] }>("/api/tenant/chapters?limit=200"),
       ]);
       groups = groupRes.items;
+      total = groupRes.total;
       auth = meRes.auth;
       zone = zoneRes.zone;
       unassignedChapters = chapterRes.items.filter((c) => c.groupId === null);
@@ -78,9 +104,13 @@
     }
   }
 
-  async function enableGroups() {
+  function requestEnableGroups() {
     enableError = null;
-    if (!confirm("Enabling groups cannot be undone. Continue?")) return;
+    enableConfirmOpen = true;
+  }
+
+  async function confirmEnableGroups() {
+    enableConfirmOpen = false;
     enabling = true;
     try {
       await api.post("/api/tenant/zones/groups-enabled", { enabled: true });
@@ -109,6 +139,13 @@
     refresh();
   });
 
+  function gotoPage(next: number) {
+    const target = Math.max(0, Math.min(pageCount - 1, next));
+    if (target === page) return;
+    page = target;
+    refresh();
+  }
+
   async function create(e: SubmitEvent) {
     e.preventDefault();
     createError = null;
@@ -123,7 +160,7 @@
       name = "";
       slug = "";
       createOpen = false;
-      await refresh();
+      await refresh(true);
     } catch (err) {
       createError = err instanceof ApiError ? err.message : "Could not create group.";
     } finally {
@@ -131,15 +168,27 @@
     }
   }
 
-  async function remove(group: Group) {
+  function requestDelete(group: Group) {
     if (group.chapterCount > 0) return;
-    if (!confirm(`Delete group "${group.name}"?`)) return;
     rowError = null;
+    pendingDelete = group;
+  }
+
+  function cancelDelete() {
+    if (deletingId) return;
+    pendingDelete = null;
+  }
+
+  async function confirmDelete() {
+    const group = pendingDelete;
+    if (!group) return;
     deletingId = group.id;
     try {
       await api.delete(`/api/tenant/groups/${group.id}`);
+      pendingDelete = null;
       await refresh();
     } catch (err) {
+      pendingDelete = null;
       if (err instanceof ApiError && err.code === "group_not_empty") {
         const count = typeof err.details?.chapterCount === "number" ? err.details.chapterCount : group.chapterCount;
         rowError = `Cannot delete group: ${count} chapter(s) still belong to it.`;
@@ -175,7 +224,7 @@
           type="button"
           class="sl-btn sl-btn-primary"
           disabled={enabling || unassignedChapters.length > 0 || !isZoneOwner}
-          onclick={enableGroups}
+          onclick={requestEnableGroups}
         >
           {enabling ? "Enabling…" : "Enable groups"}
         </button>
@@ -197,13 +246,13 @@
     <div>
       <span class="sl-eyebrow">§ I · Church administration</span>
       <h1 class="mt-3 sl-display text-[44px] leading-[1] text-[var(--ink)]">
-        Groups <span class="sl-serif-italic font-light text-[var(--brass-deep)]">register</span>
+        Groups <span class="sl-serif-italic font-light text-[var(--brass-deep)]">directory</span>
       </h1>
       <p class="mt-2 text-[14px] text-[var(--ink-mute)]">
-        {#if loading}
+        {#if total === null}
           <span class="sl-mono text-[12px]" style="letter-spacing:0.1em">LOADING…</span>
         {:else}
-          {groups.length} {groups.length === 1 ? "group" : "groups"} on file
+          {total} {total === 1 ? "group" : "groups"} on file
         {/if}
       </p>
     </div>
@@ -253,24 +302,47 @@
     <p class="mt-6 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{rowError}</p>
   {/if}
 
+  <!-- Search bar. Single text field is enough — groups have no
+       chapter/group secondary axis to filter by. -->
+  <div class="sl-reveal sl-reveal-2 mt-8 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(18rem,1fr)_auto] lg:items-center">
+    <div class="relative min-w-0">
+      <svg class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[var(--ink-mute)]" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+        <circle cx="6" cy="6" r="4" stroke="currentColor" stroke-width="1.25"/>
+        <path d="M9 9l3 3" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+      </svg>
+      <input
+        type="search"
+        bind:value={q}
+        placeholder="Search group name or slug…"
+        onkeydown={(e) => e.key === "Enter" && refresh(true)}
+        class="sl-input pr-9"
+      />
+    </div>
+    <button class="sl-btn sl-btn-ghost justify-center" onclick={() => refresh(true)}>Search</button>
+  </div>
+
   {#if loadError}
     <p class="mt-6 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{loadError}</p>
-  {:else if loading}
+  {:else if loading && groups.length === 0}
     <div class="mt-10 sl-card p-12 text-center text-[var(--ink-mute)]">
       <span class="sl-mono text-[12px]" style="letter-spacing:0.16em">LOADING GROUPS…</span>
     </div>
-  {:else if groups.length === 0}
+  {:else if total === 0 && !q}
     <div class="sl-reveal mt-10 sl-card flex flex-col items-center justify-center p-16 text-center">
       <span class="sl-display text-[36px] italic text-[var(--brass-deep)]">∅</span>
       <p class="mt-4 sl-display text-[18px] italic text-[var(--ink)]">No groups yet.</p>
       <p class="mt-2 text-[13px] text-[var(--ink-mute)]">Create the first one above.</p>
     </div>
   {:else}
-    <div class="sl-reveal sl-reveal-3 mt-10">
+    <div class="sl-reveal sl-reveal-3 mt-8">
       <div class="mb-3 flex items-center justify-between">
-        <span class="sl-eyebrow">Roster</span>
+        <span class="sl-eyebrow">Index of groups</span>
         <span class="sl-mono text-[10.5px] text-[var(--ink-mute)]" style="letter-spacing:0.06em">
-          {groups.length} {groups.length === 1 ? "row" : "rows"}
+          {#if total !== null && total > 0}
+            {fromRow}–{toRow} of {total}
+          {:else}
+            0 results
+          {/if}
         </span>
       </div>
       <div class="sl-card overflow-hidden">
@@ -301,10 +373,10 @@
                   {#if canManage}
                     <button
                       type="button"
-                      class="sl-btn sl-btn-ghost justify-center"
+                      class="sl-btn sl-btn-danger-ghost justify-center"
                       disabled={group.chapterCount > 0 || deletingId === group.id}
                       title={group.chapterCount > 0 ? "Group still has chapters" : undefined}
-                      onclick={() => remove(group)}
+                      onclick={() => requestDelete(group)}
                     >
                       {deletingId === group.id ? "Deleting…" : "Delete"}
                     </button>
@@ -312,9 +384,60 @@
                 </td>
               </tr>
             {/each}
+            {#if !loading && groups.length === 0}
+              <tr>
+                <td colspan="5" class="py-12 text-center text-[13px] text-[var(--ink-mute)]">
+                  No groups match this search.
+                </td>
+              </tr>
+            {/if}
           </tbody>
         </table>
       </div>
+
+      {#if pageCount > 1}
+        <div class="mt-4 flex items-center justify-between text-[12px] text-[var(--ink-mute)]">
+          <span class="sl-mono" style="letter-spacing:0.06em">Page {page + 1} of {pageCount}</span>
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              class="sl-btn sl-btn-ghost"
+              disabled={page === 0 || loading}
+              onclick={() => gotoPage(page - 1)}
+            >Previous</button>
+            <button
+              type="button"
+              class="sl-btn sl-btn-ghost"
+              disabled={page >= pageCount - 1 || loading}
+              onclick={() => gotoPage(page + 1)}
+            >Next</button>
+          </div>
+        </div>
+      {/if}
     </div>
   {/if}
 </div>
+
+<ConfirmDialog
+  open={pendingDelete !== null}
+  title={pendingDelete ? `Delete group "${pendingDelete.name}"?` : "Delete group?"}
+  body="Soft-deletes the group. It will no longer appear in pickers, but historical chapter-group history is preserved in the audit log."
+  confirmLabel="Delete"
+  cancelLabel="Keep"
+  tone="danger"
+  submitting={deletingId !== null}
+  onconfirm={confirmDelete}
+  oncancel={cancelDelete}
+/>
+
+<ConfirmDialog
+  open={enableConfirmOpen}
+  title="Enable groups for this zone?"
+  body="Enabling groups is one-way — once on, every new chapter requires a group. Existing chapters keep their assignment."
+  confirmLabel="Enable groups"
+  cancelLabel="Cancel"
+  tone="warn"
+  submitting={enabling}
+  onconfirm={confirmEnableGroups}
+  oncancel={() => (enableConfirmOpen = false)}
+/>

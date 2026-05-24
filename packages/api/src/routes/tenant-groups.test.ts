@@ -353,8 +353,58 @@ describe("tenant-groups router", () => {
       asUser(chapterAdminA, "chadm@example.com");
       const res = await call(zoneA.slug, "/api/tenant/groups");
       expect(res.status).toBe(200);
-      const body = (await res.json()) as { items: unknown[] };
+      const body = (await res.json()) as { items: unknown[]; total: number };
       expect(body.items).toEqual([]);
+      expect(body.total).toBe(0);
+    });
+
+    it("filters by q (name or slug, case-insensitive)", async () => {
+      asUser(ownerA, "owner@example.com");
+      // Two groups: one with a unique slug, one with a unique name. The
+      // search should hit each by the right needle without bleeding into
+      // the other zone's seed data.
+      const matchSlug = `match-slug-${unique()}`;
+      const matchName = `Match Name ${unique()}`;
+      const byName = await seedGroup(zoneA.id, matchName, `other-${unique()}`);
+      const bySlug = await seedGroup(zoneA.id, `Other ${unique()}`, matchSlug);
+
+      const slugRes = await call(zoneA.slug, `/api/tenant/groups?q=${matchSlug}`);
+      const slugBody = (await slugRes.json()) as { items: Array<{ id: string }> };
+      expect(slugBody.items.map((g) => g.id)).toEqual([bySlug]);
+
+      const nameRes = await call(zoneA.slug, `/api/tenant/groups?q=${encodeURIComponent(matchName.toLowerCase())}`);
+      const nameBody = (await nameRes.json()) as { items: Array<{ id: string }> };
+      expect(nameBody.items.map((g) => g.id)).toEqual([byName]);
+    });
+
+    it("paginates with limit + offset and reports total", async () => {
+      asUser(ownerA, "owner@example.com");
+      // Seed four groups in zone A so two-per-page pagination meaningfully
+      // splits them; assert total counts every group in the zone.
+      const ids: string[] = [];
+      for (let i = 0; i < 4; i += 1) {
+        ids.push(
+          await seedGroup(zoneA.id, `Page ${i} ${unique()}`, `page-${i}-${unique()}`),
+        );
+      }
+      const page1 = await call(zoneA.slug, "/api/tenant/groups?limit=2&offset=0");
+      const page1Body = (await page1.json()) as {
+        items: Array<{ id: string }>;
+        total: number;
+        limit: number;
+        offset: number;
+      };
+      expect(page1Body.items.length).toBe(2);
+      expect(page1Body.limit).toBe(2);
+      expect(page1Body.offset).toBe(0);
+      expect(page1Body.total).toBeGreaterThanOrEqual(ids.length);
+
+      const page2 = await call(zoneA.slug, "/api/tenant/groups?limit=2&offset=2");
+      const page2Body = (await page2.json()) as { items: Array<{ id: string }> };
+      const overlap = page1Body.items.filter((p1) =>
+        page2Body.items.some((p2) => p2.id === p1.id),
+      );
+      expect(overlap).toEqual([]);
     });
   });
 
