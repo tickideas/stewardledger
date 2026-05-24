@@ -515,10 +515,8 @@
               <th>Reference</th>
               <th>Name</th>
               {#if hasGroups}<th>Group</th>{/if}
-              <th>Country</th>
               <th>Members</th>
               <th>Active since</th>
-              <th>Created</th>
               <th aria-label="Actions"></th>
             </tr>
           </thead>
@@ -564,13 +562,9 @@
                     {/if}
                   </td>
                 {/if}
-                <td class="sl-mono text-[12px] uppercase text-[var(--ink-soft)]">{chapter.countryCode ?? "—"}</td>
                 <td class="sl-mono text-[12px] text-[var(--ink-soft)]">{chapter.activeMemberCount}</td>
                 <td class="sl-mono text-[12px] text-[var(--ink-soft)]">
                   {new Date(chapter.dateFrom).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
-                </td>
-                <td class="sl-mono text-[11.5px] text-[var(--ink-mute)]">
-                  {new Date(chapter.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
                 </td>
                 <td class="text-right">
                   <a
@@ -583,7 +577,7 @@
             {/each}
             {#if !loading && chapters.length === 0}
               <tr>
-                <td colspan={hasGroups ? 8 : 7} class="py-12 text-center text-[13px] text-[var(--ink-mute)]">
+                <td colspan={hasGroups ? 6 : 5} class="py-12 text-center text-[13px] text-[var(--ink-mute)]">
                   No chapters match this search. Try a different name, reference, or clear the filter.
                 </td>
               </tr>

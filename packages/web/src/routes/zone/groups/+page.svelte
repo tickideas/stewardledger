@@ -312,13 +312,6 @@
         <p class="mt-3 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{enableError}</p>
       {/if}
     </section>
-  {:else if zone && zone.groupsEnabled}
-    <section class="sl-card mb-8 p-6">
-      <h2 class="sl-display text-[20px] text-[var(--ink)]">Groups are enabled</h2>
-      <p class="mt-2 text-[13px] text-[var(--ink-mute)]">
-        All chapters in this zone are organised by group. Use the move-group action on a chapter detail page to reassign chapters between groups.
-      </p>
-    </section>
   {/if}
 
   <div class="sl-reveal sl-reveal-1 flex flex-wrap items-end justify-between gap-6">
@@ -334,6 +327,11 @@
           {total} {total === 1 ? "group" : "groups"} on file
         {/if}
       </p>
+      {#if zone && zone.groupsEnabled}
+        <p class="mt-2 max-w-2xl text-[12.5px] text-[var(--ink-mute)]">
+          Groups enabled. Reassign chapters from each chapter detail page.
+        </p>
+      {/if}
     </div>
     {#if canManage}
       <button type="button" class="sl-btn sl-btn-primary" onclick={toggleCreate}>
