@@ -134,109 +134,112 @@
     return m.fullName ?? `${m.firstName} ${m.lastName ?? ""}`.trim();
   }
 
-  function statusClass(s: string): string {
+  function statusBadge(s: string): string {
     switch (s) {
       case "posted":
-        return "bg-green-100 text-green-700";
+        return "sl-badge-ok";
       case "voided":
-        return "bg-slate-100 text-slate-500";
+        return "sl-badge-mute";
       case "reversed":
-        return "bg-rose-100 text-rose-700";
+        return "sl-badge-bad";
       default:
-        return "bg-slate-100 text-slate-700";
+        return "sl-badge-mute";
     }
   }
 </script>
 
-<div class="max-w-4xl mx-auto px-6 py-8">
-  <a href={`/zone/members/${memberId}`} class="text-sm text-slate-500 hover:underline">← Back to member</a>
+<svelte:head><title>Member statement · StewardLedger</title></svelte:head>
+
+<div class="pt-2 pb-10 lg:pt-0">
+  <a href={`/zone/members/${memberId}`} class="sl-btn sl-btn-ghost">← Back to member</a>
 
   {#if loadError}
-    <p class="mt-6 text-sm text-red-600">{loadError}</p>
+    <p class="mt-6 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{loadError}</p>
   {:else if !member}
-    <p class="mt-6 text-sm text-slate-500">Loading…</p>
+    <p class="mt-6 text-[13px] text-[var(--ink-mute)]">Loading…</p>
   {:else}
-    <div class="mt-2">
-      <p class="text-xs font-mono text-slate-500">{member.referenceCode}</p>
-      <h1 class="text-2xl font-semibold tracking-tight">Statement — {memberDisplayName(member)}</h1>
-      <p class="mt-1 text-sm text-slate-600">
+    <div class="sl-reveal sl-reveal-1 mt-4">
+      <span class="sl-eyebrow">§ Output · Member statement</span>
+      <p class="mt-3 sl-mono text-[11.5px] text-[var(--ink-mute)]" style="letter-spacing:0.08em">{member.referenceCode}</p>
+      <h1 class="mt-1 sl-display text-[40px] leading-[1] text-[var(--ink)]">
+        Statement <span class="sl-serif-italic font-light text-[var(--brass-deep)]">{memberDisplayName(member)}</span>
+      </h1>
+      <p class="mt-2 max-w-2xl text-[14px] text-[var(--ink-mute)]">
         Preview only. Phase 7 adds the branded PDF and Excel exports.
       </p>
     </div>
 
-    <div class="mt-6 flex flex-wrap items-end gap-3">
-      <label class="block text-sm">
-        <span class="text-xs text-slate-500">From</span>
-        <input
-          type="date"
-          bind:value={dateFrom}
-          onchange={load}
-          class="mt-0.5 block rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
-        />
+    <div class="sl-reveal sl-reveal-2 sl-card-warm mt-8 flex flex-wrap items-end gap-4 p-6">
+      <label class="block">
+        <span class="sl-eyebrow" style="font-size:10.5px">From</span>
+        <input type="date" bind:value={dateFrom} onchange={load} class="sl-input mt-1.5" />
       </label>
-      <label class="block text-sm">
-        <span class="text-xs text-slate-500">To</span>
-        <input
-          type="date"
-          bind:value={dateTo}
-          onchange={load}
-          class="mt-0.5 block rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
-        />
+      <label class="block">
+        <span class="sl-eyebrow" style="font-size:10.5px">To</span>
+        <input type="date" bind:value={dateTo} onchange={load} class="sl-input mt-1.5" />
       </label>
-      <label class="text-sm flex items-center gap-2">
+      <label class="inline-flex items-center gap-2 pb-2 text-[12.5px] text-[var(--ink-soft)]">
         <input type="checkbox" bind:checked={includeVoidedReversed} />
         Show voided / reversed
       </label>
     </div>
 
-    <div class="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
+    <div class="sl-reveal sl-reveal-3 mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
       {#each totalsByCurrency as t (t.currency)}
-        <div class="rounded-lg border border-slate-200 p-4 bg-slate-50">
-          <p class="text-xs uppercase text-slate-500">Total ({t.currency})</p>
-          <p class="mt-1 text-2xl font-mono">{fmt(t.amount, t.currency)}</p>
+        <div class="sl-card p-5">
+          <p class="sl-eyebrow" style="font-size:10px">Total ({t.currency})</p>
+          <p class="sl-num mt-2 sl-display text-[28px] text-[var(--ink)]">{fmt(t.amount, t.currency)}</p>
         </div>
       {/each}
       {#if totalsByCurrency.length === 0}
-        <div class="rounded-lg border border-slate-200 p-4 bg-slate-50 sm:col-span-3">
-          <p class="text-sm text-slate-500">No contributions in this window.</p>
+        <div class="sl-card p-5 sm:col-span-3">
+          <p class="text-[13px] text-[var(--ink-mute)]">No contributions in this window.</p>
         </div>
       {/if}
     </div>
 
-    <table class="mt-8 w-full text-sm">
-      <thead class="text-left text-xs uppercase tracking-wide text-slate-500 border-b">
-        <tr>
-          <th class="py-2">Date</th>
-          <th class="py-2">Source</th>
-          <th class="py-2 text-right">Amount</th>
-          <th class="py-2">Status</th>
-          <th class="py-2">Description</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-slate-200">
-        {#each visibleItems as i (i.id)}
-          <tr class="hover:bg-slate-50">
-            <td class="py-2 text-slate-700">
-              <a href={`/zone/contributions/${i.id}`} class="hover:underline">{i.contributionDate}</a>
-            </td>
-            <td class="py-2 text-slate-600">{i.sourceType}</td>
-            <td class="py-2 text-right font-mono">{fmt(i.totalAmount, i.currencyCode)}</td>
-            <td class="py-2">
-              <span class={`inline-block px-2 py-0.5 rounded-full text-xs ${statusClass(i.status)}`}>
-                {i.status}
-              </span>
-            </td>
-            <td class="py-2 text-slate-500 truncate max-w-md">{i.description ?? "—"}</td>
-          </tr>
-        {/each}
-        {#if visibleItems.length === 0}
-          <tr>
-            <td colspan="5" class="py-8 text-center text-sm text-slate-500">
-              Nothing in this window.
-            </td>
-          </tr>
-        {/if}
-      </tbody>
-    </table>
+    <div class="sl-reveal sl-reveal-4 mt-8">
+      <div class="mb-3 flex items-center justify-between">
+        <span class="sl-eyebrow">Ledger</span>
+        <span class="sl-mono text-[10.5px] text-[var(--ink-mute)]" style="letter-spacing:0.06em">
+          {visibleItems.length} {visibleItems.length === 1 ? "row" : "rows"}
+        </span>
+      </div>
+      <div class="sl-card overflow-hidden">
+        <table class="sl-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Source</th>
+              <th class="!text-right">Amount</th>
+              <th>Status</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each visibleItems as i (i.id)}
+              <tr>
+                <td>
+                  <a href={`/zone/contributions/${i.id}`} class="sl-mono text-[12.5px] text-[var(--ink)] hover:text-[var(--brass-deep)]">{i.contributionDate}</a>
+                </td>
+                <td class="text-[var(--ink-soft)]">{i.sourceType}</td>
+                <td class="sl-num text-right text-[var(--ink)]">{fmt(i.totalAmount, i.currencyCode)}</td>
+                <td>
+                  <span class={`sl-badge ${statusBadge(i.status)}`}>{i.status}</span>
+                </td>
+                <td class="max-w-md truncate text-[var(--ink-mute)]">{i.description ?? "—"}</td>
+              </tr>
+            {/each}
+            {#if visibleItems.length === 0}
+              <tr>
+                <td colspan="5" class="py-12 text-center text-[13px] text-[var(--ink-mute)]">
+                  Nothing in this window.
+                </td>
+              </tr>
+            {/if}
+          </tbody>
+        </table>
+      </div>
+    </div>
   {/if}
 </div>

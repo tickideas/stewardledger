@@ -376,59 +376,60 @@
   }
 </script>
 
-<div class="max-w-5xl mx-auto px-6 py-8">
-  <a href="/zone/contributions" class="text-sm text-slate-500 hover:underline">← Back to contributions</a>
+<svelte:head><title>Contribution batch · StewardLedger</title></svelte:head>
+
+<div class="pt-2 pb-10 lg:pt-0">
+  <a href="/zone/contributions" class="sl-btn sl-btn-ghost">← Back to contributions</a>
 
   {#if loadError}
-    <p class="mt-6 text-sm text-red-600">{loadError}</p>
+    <p class="mt-6 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{loadError}</p>
   {:else if !batch}
-    <p class="mt-6 text-sm text-slate-500">Loading…</p>
+    <p class="mt-6 text-[13px] text-[var(--ink-mute)]">Loading…</p>
   {:else}
-    <div class="mt-2 flex items-baseline justify-between gap-4">
+    <div class="sl-reveal sl-reveal-1 mt-4 flex flex-wrap items-end justify-between gap-6">
       <div>
-        <h1 class="text-2xl font-semibold tracking-tight">
-          Batch {batch.referenceCode ?? batch.id.slice(0, 8)}
+        <span class="sl-eyebrow">§ Daily ledger · Batch</span>
+        <h1 class="mt-3 sl-display text-[40px] leading-[1] text-[var(--ink)]">
+          Batch <span class="sl-mono text-[24px] text-[var(--ink-soft)]" style="letter-spacing:0.04em">{batch.referenceCode ?? batch.id.slice(0, 8)}</span>
         </h1>
-        <p class="mt-1 text-sm text-slate-600">
-          {batch.sourceType} · {batch.currencyCode} · created {new Date(
-            batch.createdAt,
-          ).toLocaleString()}
+        <p class="mt-2 text-[13px] text-[var(--ink-mute)]">
+          {batch.sourceType}
+          <span class="mx-2">·</span>
+          <span class="sl-mono">{batch.currencyCode}</span>
+          <span class="mx-2">·</span>
+          created {new Date(batch.createdAt).toLocaleString()}
         </p>
       </div>
-      <span
-        class={`inline-block px-3 py-1 rounded-full text-xs font-medium ${
-          batch.status === "posted"
-            ? "bg-green-100 text-green-700"
-            : batch.status === "voided"
-              ? "bg-slate-100 text-slate-500"
-              : batch.status === "approved"
-                ? "bg-blue-100 text-blue-700"
-                : batch.status === "submitted"
-                  ? "bg-amber-100 text-amber-700"
-                  : "bg-slate-100 text-slate-700"
-        }`}
-      >
-        {batch.status}
-      </span>
+      <span class={`sl-badge ${
+        batch.status === "posted"
+          ? "sl-badge-ok"
+          : batch.status === "voided"
+            ? "sl-badge-mute"
+            : batch.status === "approved"
+              ? "sl-badge-info"
+              : batch.status === "submitted"
+                ? "sl-badge-warn"
+                : "sl-badge-mute"
+      }`}>{batch.status}</span>
     </div>
 
     {#if batch.notes}
-      <p class="mt-3 text-sm text-slate-600 italic">{batch.notes}</p>
+      <p class="mt-4 sl-serif-italic text-[14px] text-[var(--ink-soft)]">{batch.notes}</p>
     {/if}
     {#if batch.status === "voided" && batch.voidReason}
-      <p class="mt-3 text-sm text-rose-700">Voided: {batch.voidReason}</p>
+      <p class="mt-3 text-[13px] text-[var(--bad)]">Voided: {batch.voidReason}</p>
     {/if}
     {#if lookupNotice}
-      <p class="mt-3 text-sm text-amber-700">{lookupNotice}</p>
+      <p class="mt-3 border-l-2 border-[var(--warn)] bg-[var(--warn-soft)] px-3 py-2 text-[13px] text-[var(--warn)]">{lookupNotice}</p>
     {/if}
 
     <!-- Totals + lifecycle actions -->
-    <div class="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-      <div class="rounded-lg border border-slate-200 p-4 bg-slate-50">
-        <p class="text-xs uppercase text-slate-500">Rows captured</p>
-        <p class="mt-1 text-2xl font-semibold">{liveCount}</p>
+    <div class="sl-reveal sl-reveal-2 mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
+      <div class="sl-card p-5">
+        <p class="sl-eyebrow" style="font-size:10px">Rows captured</p>
+        <p class="sl-num mt-2 sl-display text-[32px] text-[var(--ink)]">{liveCount}</p>
         {#if giftsTotal}
-          <p class="mt-1 text-sm text-slate-600">{fmt(giftsTotal.amount, giftsTotal.currency)}</p>
+          <p class="mt-1 sl-num text-[13px] text-[var(--ink-mute)]">{fmt(giftsTotal.amount, giftsTotal.currency)}</p>
         {/if}
       </div>
       <BatchTotalsCard
@@ -451,13 +452,13 @@
 
     <!-- Add-row form -->
     {#if batch.status === "draft"}
-      <form class="mt-8 rounded-lg border border-slate-200 p-4 bg-white" onsubmit={addRow}>
-        <p class="text-sm font-medium text-slate-800">Add a row</p>
+      <form class="sl-reveal sl-card-warm mt-10 p-6" onsubmit={addRow}>
+        <span class="sl-eyebrow">Add a row</span>
 
-        <div class="mt-3 grid grid-cols-12 gap-3">
+        <div class="mt-4 grid grid-cols-12 gap-3">
           <div class="col-span-12 md:col-span-5">
-            <span class="text-xs text-slate-500">Member</span>
-            <div class="mt-0.5">
+            <span class="sl-eyebrow" style="font-size:10.5px">Member</span>
+            <div class="mt-1.5">
               <MemberTypeahead
                 bind:memberId
                 bind:query={memberQuery}
@@ -470,21 +471,13 @@
           </div>
 
           <div class="col-span-6 md:col-span-3">
-            <span class="text-xs text-slate-500">Date</span>
-            <input
-              type="date"
-              required
-              bind:value={contributionDate}
-              class="mt-0.5 block w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
-            />
+            <span class="sl-eyebrow" style="font-size:10.5px">Date</span>
+            <input type="date" required bind:value={contributionDate} class="sl-input mt-1.5" />
           </div>
 
           <div class="col-span-6 md:col-span-4">
-            <span class="text-xs text-slate-500">Source</span>
-            <select
-              bind:value={rowSourceType}
-              class="mt-0.5 block w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
-            >
+            <span class="sl-eyebrow" style="font-size:10.5px">Source</span>
+            <select bind:value={rowSourceType} class="sl-select mt-1.5">
               {#each SOURCE_TYPES as s (s)}
                 <option value={s}>{s}</option>
               {/each}
@@ -492,13 +485,10 @@
           </div>
         </div>
 
-        <div class="mt-4 space-y-2">
+        <div class="mt-5 space-y-2">
           {#each lines as line, i (i)}
-            <div class="grid grid-cols-12 gap-2 items-center">
-              <select
-                bind:value={line.givingTypeId}
-                class="col-span-7 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
-              >
+            <div class="grid grid-cols-12 items-center gap-2">
+              <select bind:value={line.givingTypeId} class="sl-select col-span-7">
                 <option value="" disabled>Pick a giving type</option>
                 {#each givingTypes as gt (gt.id)}
                   <option value={gt.id}>{gt.name}</option>
@@ -511,40 +501,32 @@
                 bind:value={line.amount}
                 onkeydown={onAmountKeydown}
                 placeholder="Amount"
-                class="col-span-4 rounded-lg border border-slate-300 px-2 py-1.5 text-sm font-mono"
+                class="sl-input sl-num col-span-4 text-right"
               />
               <button
                 type="button"
                 onclick={() => removeLine(i)}
-                class="col-span-1 text-slate-400 hover:text-rose-600 text-sm"
+                class="col-span-1 text-[13px] text-[var(--ink-faint)] hover:text-[var(--bad)]"
                 aria-label="Remove line"
               >
                 ✕
               </button>
             </div>
           {/each}
-          <button
-            type="button"
-            onclick={addLine}
-            class="text-xs text-slate-600 hover:text-slate-900"
-          >
+          <button type="button" onclick={addLine} class="text-[12px] text-[var(--brass-deep)] hover:underline">
             + Split across another giving type
           </button>
         </div>
 
         {#if addError}
-          <p class="mt-3 text-sm text-red-600">{addError}</p>
+          <p class="mt-3 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{addError}</p>
         {/if}
 
-        <div class="mt-4 flex items-center gap-3">
-          <button
-            type="submit"
-            disabled={addingRow}
-            class="inline-flex items-center px-4 py-1.5 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-700 disabled:opacity-50"
-          >
+        <div class="mt-5 flex flex-wrap items-center gap-3">
+          <button type="submit" disabled={addingRow} class="sl-btn sl-btn-primary">
             {addingRow ? "Adding…" : "Add row"}
           </button>
-          <span class="text-xs text-slate-500">
+          <span class="text-[11.5px] text-[var(--ink-mute)]">
             Tip: Tab through the line, press Enter on the amount to add the row.
           </span>
         </div>
@@ -552,8 +534,13 @@
     {/if}
 
     <!-- Rows -->
-    <h2 class="mt-8 text-lg font-medium">Rows</h2>
-    <div class="mt-3">
+    <div class="sl-reveal sl-reveal-3 mt-10">
+      <div class="mb-3 flex items-center justify-between">
+        <span class="sl-eyebrow">Rows</span>
+        <span class="sl-mono text-[10.5px] text-[var(--ink-mute)]" style="letter-spacing:0.06em">
+          {rows.length} total
+        </span>
+      </div>
       <BatchRowsTable
         {rows}
         batchStatus={batch.status}

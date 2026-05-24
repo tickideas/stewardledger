@@ -68,46 +68,34 @@
   }
 </script>
 
+<svelte:head><title>Onboarding · StewardLedger</title></svelte:head>
+
 {#if checkingExistingChapters}
-  <div class="max-w-md mx-auto px-6 py-16">
-    <p class="text-sm text-slate-500">Checking chapter setup…</p>
+  <div class="mx-auto max-w-md px-6 py-16">
+    <p class="text-[13px] text-[var(--ink-mute)]">Checking chapter setup…</p>
   </div>
 {:else}
-  <div class="max-w-md mx-auto px-6 py-16">
-    <p class="text-xs font-medium text-slate-500 uppercase tracking-wide">Step 1 of 2</p>
-    <h1 class="mt-2 text-2xl font-semibold tracking-tight">Add your first chapter</h1>
-    <p class="mt-2 text-sm text-slate-600">
+  <div class="mx-auto max-w-md px-6 py-16">
+    <span class="sl-eyebrow">Step 1 of 2</span>
+    <h1 class="mt-3 sl-display text-[36px] leading-[1] text-[var(--ink)]">
+      Add your first <span class="sl-serif-italic font-light text-[var(--brass-deep)]">chapter</span>
+    </h1>
+    <p class="mt-2 text-[14px] text-[var(--ink-mute)]">
       A chapter is a single local church. You can add more later or import them in bulk.
     </p>
-    <form class="mt-6 space-y-4" onsubmit={submit}>
+    <form class="sl-card-warm mt-8 space-y-4 p-6" onsubmit={submit}>
       <label class="block">
-        <span class="text-sm font-medium text-slate-700">Chapter name</span>
-        <input
-          type="text"
-          required
-          minlength="2"
-          maxlength="120"
-          bind:value={name}
-          class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        />
+        <span class="sl-eyebrow" style="font-size:10.5px">Chapter name</span>
+        <input type="text" required minlength="2" maxlength="120" bind:value={name} class="sl-input mt-1.5" />
       </label>
       <label class="block">
-        <span class="text-sm font-medium text-slate-700">Country (optional)</span>
-        <input
-          type="text"
-          maxlength="2"
-          bind:value={countryCode}
-          class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase"
-        />
+        <span class="sl-eyebrow" style="font-size:10.5px">Country (optional)</span>
+        <input type="text" maxlength="2" bind:value={countryCode} class="sl-input mt-1.5 uppercase" />
       </label>
       {#if errorMsg}
-        <p class="text-sm text-red-600">{errorMsg}</p>
+        <p class="border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{errorMsg}</p>
       {/if}
-      <button
-        type="submit"
-        disabled={submitting}
-        class="w-full inline-flex items-center justify-center px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-700 disabled:opacity-50"
-      >
+      <button type="submit" disabled={submitting} class="sl-btn sl-btn-primary w-full justify-center">
         {submitting ? "Saving…" : "Save and continue"}
       </button>
     </form>

@@ -45,8 +45,8 @@
   }
 </script>
 
-<div class="rounded-lg border border-slate-200 p-4 bg-slate-50">
-  <p class="text-xs uppercase text-slate-500">Cash</p>
+<div class="sl-card p-5">
+  <p class="sl-eyebrow" style="font-size:10px">Cash</p>
   <input
     type="number"
     step="0.01"
@@ -54,9 +54,9 @@
     disabled={!editable}
     value={cashTotal ?? ""}
     onchange={(e) => handleChange("cashTotal", (e.currentTarget as HTMLInputElement).value)}
-    class="mt-1 block w-full rounded-lg border border-slate-300 px-2 py-1 text-sm font-mono disabled:bg-slate-100"
+    class="sl-input sl-num mt-1.5 text-right"
   />
-  <p class="text-xs uppercase text-slate-500 mt-3">Cheque</p>
+  <p class="sl-eyebrow mt-3" style="font-size:10px">Cheque</p>
   <input
     type="number"
     step="0.01"
@@ -64,9 +64,9 @@
     disabled={!editable}
     value={chequeTotal ?? ""}
     onchange={(e) => handleChange("chequeTotal", (e.currentTarget as HTMLInputElement).value)}
-    class="mt-1 block w-full rounded-lg border border-slate-300 px-2 py-1 text-sm font-mono disabled:bg-slate-100"
+    class="sl-input sl-num mt-1.5 text-right"
   />
-  <p class="mt-2 text-xs text-slate-500">
-    Counted: {formatMoney({ amount: counted, currency: currencyCode })}
+  <p class="mt-3 text-[11.5px] text-[var(--ink-mute)]">
+    Counted: <span class="sl-num text-[var(--ink-soft)]">{formatMoney({ amount: counted, currency: currencyCode })}</span>
   </p>
 </div>

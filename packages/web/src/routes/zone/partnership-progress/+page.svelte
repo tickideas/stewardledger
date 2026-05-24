@@ -256,38 +256,29 @@
   {/if}
 
   <!-- Filter bar. -->
-  <div class="sl-reveal sl-reveal-2 mt-8 rounded-xl border bg-white p-4 shadow-sm">
-    <div class="grid grid-cols-1 gap-3 sm:grid-cols-4">
-      <label class="text-sm">
-        <span class="block text-slate-600">Ministry year</span>
-        <select
-          bind:value={ministryYearId}
-          class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-        >
+  <div class="sl-reveal sl-reveal-2 sl-card-warm mt-8 p-6">
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-4 sm:items-end">
+      <label class="block">
+        <span class="sl-eyebrow" style="font-size:10.5px">Ministry year</span>
+        <select bind:value={ministryYearId} class="sl-select mt-1.5">
           <option value="" disabled>Select a year</option>
           {#each ministryYears as y (y.id)}
             <option value={y.id}>{y.yearLabel}</option>
           {/each}
         </select>
       </label>
-      <label class="text-sm">
-        <span class="block text-slate-600">Chapter</span>
-        <select
-          bind:value={chapterFilter}
-          class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-        >
+      <label class="block">
+        <span class="sl-eyebrow" style="font-size:10.5px">Chapter</span>
+        <select bind:value={chapterFilter} class="sl-select mt-1.5">
           <option value="">All chapters</option>
           {#each chapters as chapter (chapter.id)}
             <option value={chapter.id}>{chapter.referenceCode} · {chapter.name}</option>
           {/each}
         </select>
       </label>
-      <label class="text-sm">
-        <span class="block text-slate-600">Giving type</span>
-        <select
-          bind:value={givingTypeFilter}
-          class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-        >
+      <label class="block">
+        <span class="sl-eyebrow" style="font-size:10.5px">Giving type</span>
+        <select bind:value={givingTypeFilter} class="sl-select mt-1.5">
           <option value="">All partnership types</option>
           {#each givingTypes as g (g.id)}
             <option value={g.id}>
@@ -296,13 +287,12 @@
           {/each}
         </select>
       </label>
-      <div class="flex items-end justify-end">
+      <div class="flex justify-end">
         {#if exportHref()}
-          <a
-            href={exportHref()}
-            class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium hover:border-slate-400"
-            download
-          >
+          <a href={exportHref()} class="sl-btn sl-btn-ghost" download>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M7 2v7m0 0l-2.5-2.5M7 9l2.5-2.5M3 11.5h8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
             Download .xlsx
           </a>
         {/if}
@@ -311,18 +301,20 @@
   </div>
 
   {#if loading && rows.length === 0}
-    <p class="sl-reveal sl-reveal-3 mt-6 text-[13px] text-slate-500">Loading…</p>
+    <p class="sl-reveal sl-reveal-3 mt-6 text-[13px] text-[var(--ink-mute)]">Loading…</p>
   {:else if ministryYearId === ""}
-    <p class="sl-reveal sl-reveal-3 mt-6 text-[13px] text-slate-500">
+    <p class="sl-reveal sl-reveal-3 mt-6 text-[13px] text-[var(--ink-mute)]">
       Select a ministry year to see progress.
     </p>
   {:else if rows.length === 0}
-    <div class="sl-reveal sl-reveal-3 mt-6 rounded-xl border bg-white p-6 text-center text-[13px] text-slate-500 shadow-sm">
-      No partnership targets for {ministryYearLabel}
-      {#if chapterFilter}in the selected chapter{/if}
-      {#if givingTypeFilter}for the selected type{/if}.
-      Set targets on <a href="/zone/targets" class="underline">/zone/targets</a>
-      to populate this dashboard.
+    <div class="sl-reveal sl-reveal-3 sl-card mt-6 flex flex-col items-center justify-center p-16 text-center">
+      <span class="sl-display text-[36px] italic text-[var(--brass-deep)]">∅</span>
+      <p class="mt-4 sl-display text-[16px] italic text-[var(--ink)]">
+        No partnership targets for {ministryYearLabel}{#if chapterFilter} in the selected chapter{/if}{#if givingTypeFilter} for the selected type{/if}.
+      </p>
+      <p class="mt-2 text-[13px] text-[var(--ink-mute)]">
+        Set targets on <a href="/zone/targets" class="sl-link">/zone/targets</a> to populate this dashboard.
+      </p>
     </div>
   {:else}
     <!-- Header summary. -->
@@ -334,13 +326,13 @@
     <!-- One card per group; one row per target inside. -->
     <div class="sl-reveal sl-reveal-4 mt-4 space-y-6">
       {#each grouped as group (group.key)}
-        <section class="sl-card rounded-xl border bg-white p-5 shadow-sm">
-          <header class="flex items-baseline justify-between gap-3 border-b pb-3">
+        <section class="sl-card p-6">
+          <header class="flex items-baseline justify-between gap-3 border-b border-[var(--rule)] pb-3">
             <div>
-              <h2 class="text-[18px] font-medium text-[var(--ink)]">{group.label}</h2>
+              <h2 class="sl-display text-[20px] text-[var(--ink)]">{group.label}</h2>
               <p class="mt-0.5 text-[12px] text-[var(--ink-mute)]">{group.subLabel}</p>
             </div>
-            <span class="sl-mono text-[12px] text-[var(--ink-mute)]">
+            <span class="sl-mono text-[10.5px] text-[var(--ink-mute)]" style="letter-spacing:0.06em">
               {group.rows.length} target{group.rows.length === 1 ? "" : "s"}
             </span>
           </header>

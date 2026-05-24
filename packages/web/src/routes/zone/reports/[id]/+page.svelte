@@ -656,49 +656,37 @@
   }
 </script>
 
-<div class="max-w-6xl mx-auto px-6 py-8">
-  <div class="flex items-baseline justify-between">
+<svelte:head><title>Report · StewardLedger</title></svelte:head>
+
+<div class="pt-2 pb-10 lg:pt-0">
+  <div class="sl-reveal sl-reveal-1 flex flex-wrap items-end justify-between gap-6">
     <div>
-      <h1 class="text-2xl font-semibold tracking-tight capitalize">
+      <span class="sl-eyebrow">§ Output · Report</span>
+      <h1 class="mt-3 sl-display text-[40px] leading-[1] capitalize text-[var(--ink)]">
         {reportId.replaceAll("-", " ")}
       </h1>
-      <p class="mt-1 text-sm text-slate-600">
+      <p class="mt-2 text-[14px] text-[var(--ink-mute)]">
         Filter, run, and download as Excel or PDF.
       </p>
     </div>
-    <a href="/zone/reports" class="text-sm text-slate-600 hover:text-slate-900">← All reports</a>
+    <a href="/zone/reports" class="sl-btn sl-btn-ghost">← All reports</a>
   </div>
 
   {#if savedFilters.length > 0 || savedFiltersError}
-    <div class="mt-6 rounded-xl border bg-white p-4 shadow-sm">
+    <div class="sl-reveal sl-reveal-2 sl-card mt-8 p-5">
       <div class="flex items-baseline justify-between gap-3">
-        <h2 class="text-sm font-medium text-slate-900">Saved filters</h2>
-        <span class="text-[11px] text-slate-500">
-          Personal — visible only to you in this zone.
-        </span>
+        <span class="sl-eyebrow">Saved filters</span>
+        <span class="text-[11px] text-[var(--ink-mute)]">Personal — visible only to you in this zone.</span>
       </div>
       {#if savedFiltersError}
-        <p class="mt-2 text-[13px] text-rose-700">{savedFiltersError}</p>
+        <p class="mt-3 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{savedFiltersError}</p>
       {/if}
       {#if savedFilters.length > 0}
         <div class="mt-3 flex flex-wrap gap-2">
           {#each savedFilters as saved (saved.id)}
-            <span
-              class="inline-flex items-center gap-1 rounded-full border border-slate-300 bg-slate-50 px-2.5 py-1 text-[12.5px] text-slate-700"
-            >
-              <button
-                type="button"
-                onclick={() => applySavedFilter(saved)}
-                class="hover:text-slate-900"
-                title="Apply these filters"
-              >{saved.name}</button>
-              <button
-                type="button"
-                onclick={() => deleteSaved(saved)}
-                aria-label={`Delete ${saved.name}`}
-                title={`Delete "${saved.name}"`}
-                class="text-slate-400 hover:text-rose-700"
-              >×</button>
+            <span class="inline-flex items-center gap-1.5 border border-[var(--rule-strong)] bg-[var(--paper-soft)] px-2.5 py-1 text-[12.5px] text-[var(--ink-soft)]">
+              <button type="button" onclick={() => applySavedFilter(saved)} class="hover:text-[var(--brass-deep)]" title="Apply these filters">{saved.name}</button>
+              <button type="button" onclick={() => deleteSaved(saved)} aria-label={`Delete ${saved.name}`} title={`Delete "${saved.name}"`} class="text-[var(--ink-faint)] hover:text-[var(--bad)]">×</button>
             </span>
           {/each}
         </div>
@@ -706,57 +694,36 @@
     </div>
   {/if}
 
-  <form onsubmit={onSubmit} class="mt-6 rounded-xl border bg-white p-5 shadow-sm">
+  <form onsubmit={onSubmit} class="sl-reveal sl-reveal-2 sl-card-warm mt-6 p-6">
     <div class="grid grid-cols-1 gap-4 sm:grid-cols-4">
       {#if visible.includes("memberId")}
-        <label class="text-sm sm:col-span-2">
-          <span class="block text-slate-600">Member ID</span>
-          <input
-            type="text"
-            bind:value={memberId}
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-            placeholder="member uuid"
-            required={reportId === "member-statement"}
-          />
+        <label class="block sm:col-span-2">
+          <span class="sl-eyebrow" style="font-size:10.5px">Member ID</span>
+          <input type="text" bind:value={memberId} class="sl-input sl-mono mt-1.5 text-[12.5px]" placeholder="member uuid" required={reportId === "member-statement"} />
         </label>
       {/if}
       {#if visible.includes("dateFrom")}
-        <label class="text-sm">
-          <span class="block text-slate-600">From</span>
-          <input
-            type="date"
-            bind:value={dateFrom}
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          />
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">From</span>
+          <input type="date" bind:value={dateFrom} class="sl-input mt-1.5" />
         </label>
       {/if}
       {#if visible.includes("dateTo")}
-        <label class="text-sm">
-          <span class="block text-slate-600">To</span>
-          <input
-            type="date"
-            bind:value={dateTo}
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          />
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">To</span>
+          <input type="date" bind:value={dateTo} class="sl-input mt-1.5" />
         </label>
       {/if}
       {#if visible.includes("includeVoided")}
-        <label class="flex items-end text-sm">
-          <input
-            type="checkbox"
-            bind:checked={includeVoided}
-            class="mr-2 rounded"
-          />
+        <label class="flex items-end gap-2 pb-2 text-[12.5px] text-[var(--ink-soft)]">
+          <input type="checkbox" bind:checked={includeVoided} />
           <span>Include voided</span>
         </label>
       {/if}
       {#if visible.includes("chapterId")}
-        <label class="text-sm">
-          <span class="block text-slate-600">Chapter</span>
-          <select
-            bind:value={chapterId}
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          >
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Chapter</span>
+          <select bind:value={chapterId} class="sl-select mt-1.5">
             <option value="">All chapters in scope</option>
             {#each chapters as chapter (chapter.id)}
               <option value={chapter.id}>{chapter.referenceCode} · {chapter.name}</option>
@@ -765,12 +732,9 @@
         </label>
       {/if}
       {#if visible.includes("isActive")}
-        <label class="text-sm">
-          <span class="block text-slate-600">Active</span>
-          <select
-            bind:value={isActive}
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          >
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Active</span>
+          <select bind:value={isActive} class="sl-select mt-1.5">
             <option value="">All</option>
             <option value="true">Active only</option>
             <option value="false">Inactive only</option>
@@ -778,12 +742,9 @@
         </label>
       {/if}
       {#if visible.includes("paymentMethodId")}
-        <label class="text-sm">
-          <span class="block text-slate-600">Payment method</span>
-          <select
-            bind:value={paymentMethodId}
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          >
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Payment method</span>
+          <select bind:value={paymentMethodId} class="sl-select mt-1.5">
             <option value="">All methods</option>
             {#each paymentMethods as method (method.id)}
               <option value={method.id}>{method.name}</option>
@@ -792,12 +753,9 @@
         </label>
       {/if}
       {#if visible.includes("givingTypeId")}
-        <label class="text-sm">
-          <span class="block text-slate-600">Giving type</span>
-          <select
-            bind:value={givingTypeId}
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          >
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Giving type</span>
+          <select bind:value={givingTypeId} class="sl-select mt-1.5">
             <option value="">All giving types</option>
             {#each givingTypes as type (type.id)}
               <option value={type.id}>{type.shortCode ? `${type.shortCode} · ${type.name}` : type.name}</option>
@@ -806,23 +764,15 @@
         </label>
       {/if}
       {#if visible.includes("importJobId")}
-        <label class="text-sm sm:col-span-2">
-          <span class="block text-slate-600">Import job ID (optional)</span>
-          <input
-            type="text"
-            bind:value={importJobId}
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-            placeholder="leave empty to use date range"
-          />
+        <label class="block sm:col-span-2">
+          <span class="sl-eyebrow" style="font-size:10.5px">Import job ID (optional)</span>
+          <input type="text" bind:value={importJobId} class="sl-input sl-mono mt-1.5 text-[12.5px]" placeholder="leave empty to use date range" />
         </label>
       {/if}
       {#if visible.includes("pivotBy")}
-        <label class="text-sm">
-          <span class="block text-slate-600">Pivot by</span>
-          <select
-            bind:value={pivotBy}
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          >
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Pivot by</span>
+          <select bind:value={pivotBy} class="sl-select mt-1.5">
             <option value="givingType">Giving type</option>
             <option value="category">Category</option>
             <option value="month">Month</option>
@@ -830,56 +780,33 @@
         </label>
       {/if}
       {#if visible.includes("ministryYearId")}
-        <label class="text-sm">
-          <span class="block text-slate-600">Ministry year ID (optional)</span>
-          <input
-            type="text"
-            bind:value={ministryYearId}
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-            placeholder="clamp to a ministry year"
-          />
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Ministry year ID (optional)</span>
+          <input type="text" bind:value={ministryYearId} class="sl-input sl-mono mt-1.5 text-[12.5px]" placeholder="clamp to a ministry year" />
         </label>
       {/if}
       {#if visible.includes("partnershipYearId")}
-        <label class="text-sm">
-          <span class="block text-slate-600">Partnership year ID (optional)</span>
-          <input
-            type="text"
-            bind:value={partnershipYearId}
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-            placeholder="clamp to a partnership year"
-          />
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Partnership year ID (optional)</span>
+          <input type="text" bind:value={partnershipYearId} class="sl-input sl-mono mt-1.5 text-[12.5px]" placeholder="clamp to a partnership year" />
         </label>
       {/if}
       {#if visible.includes("topN")}
-        <label class="text-sm">
-          <span class="block text-slate-600">Top N</span>
-          <input
-            type="number"
-            min="1"
-            max="200"
-            bind:value={topN}
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          />
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Top N</span>
+          <input type="number" min="1" max="200" bind:value={topN} class="sl-input sl-num mt-1.5" />
         </label>
       {/if}
       {#if visible.includes("partnershipOnly")}
-        <label class="flex items-end text-sm">
-          <input
-            type="checkbox"
-            bind:checked={partnershipOnly}
-            class="mr-2 rounded"
-          />
+        <label class="flex items-end gap-2 pb-2 text-[12.5px] text-[var(--ink-soft)]">
+          <input type="checkbox" bind:checked={partnershipOnly} />
           <span>Partnership only</span>
         </label>
       {/if}
       {#if visible.includes("accountId")}
-        <label class="text-sm">
-          <span class="block text-slate-600">Account</span>
-          <select
-            bind:value={accountId}
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          >
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Account</span>
+          <select bind:value={accountId} class="sl-select mt-1.5">
             <option value="">All accounts</option>
             {#each accounts as account (account.id)}
               <option value={account.id}>{account.name} ({account.currencyCode})</option>
@@ -888,12 +815,9 @@
         </label>
       {/if}
       {#if visible.includes("sourceType")}
-        <label class="text-sm">
-          <span class="block text-slate-600">Source</span>
-          <select
-            bind:value={sourceType}
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          >
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Source</span>
+          <select bind:value={sourceType} class="sl-select mt-1.5">
             <option value="">All sources</option>
             {#if onlineOnlySource}
               <option value="online">Online</option>
@@ -909,56 +833,33 @@
         </label>
       {/if}
       {#if visible.includes("actorUserId")}
-        <label class="text-sm sm:col-span-2">
-          <span class="block text-slate-600">Actor user ID</span>
-          <input
-            type="text"
-            bind:value={actorUserId}
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-            placeholder="user id (optional)"
-          />
+        <label class="block sm:col-span-2">
+          <span class="sl-eyebrow" style="font-size:10.5px">Actor user ID</span>
+          <input type="text" bind:value={actorUserId} class="sl-input sl-mono mt-1.5 text-[12.5px]" placeholder="user id (optional)" />
         </label>
       {/if}
       {#if visible.includes("entityType")}
-        <label class="text-sm">
-          <span class="block text-slate-600">Entity type</span>
-          <input
-            type="text"
-            bind:value={entityType}
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-            placeholder="e.g. member, contribution"
-          />
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Entity type</span>
+          <input type="text" bind:value={entityType} class="sl-input sl-mono mt-1.5 text-[12.5px]" placeholder="e.g. member, contribution" />
         </label>
       {/if}
       {#if visible.includes("entityId")}
-        <label class="text-sm">
-          <span class="block text-slate-600">Entity ID</span>
-          <input
-            type="text"
-            bind:value={entityId}
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-            placeholder="optional"
-          />
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Entity ID</span>
+          <input type="text" bind:value={entityId} class="sl-input sl-mono mt-1.5 text-[12.5px]" placeholder="optional" />
         </label>
       {/if}
       {#if visible.includes("action")}
-        <label class="text-sm">
-          <span class="block text-slate-600">Action</span>
-          <input
-            type="text"
-            bind:value={action}
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-            placeholder="e.g. member.update"
-          />
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Action</span>
+          <input type="text" bind:value={action} class="sl-input sl-mono mt-1.5 text-[12.5px]" placeholder="e.g. member.update" />
         </label>
       {/if}
       {#if visible.includes("importStatus")}
-        <label class="text-sm">
-          <span class="block text-slate-600">Status</span>
-          <select
-            bind:value={importStatus}
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          >
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Status</span>
+          <select bind:value={importStatus} class="sl-select mt-1.5">
             <option value="">Any</option>
             <option value="committed">Committed</option>
             <option value="scheduled">Scheduled</option>
@@ -969,74 +870,43 @@
         </label>
       {/if}
     </div>
-    <div class="mt-4 flex items-center gap-3">
-      <button
-        type="submit"
-        disabled={loading}
-        class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-      >
+    <div class="mt-5 flex flex-wrap items-center gap-3">
+      <button type="submit" disabled={loading} class="sl-btn sl-btn-primary">
         {loading ? "Running…" : "Run report"}
       </button>
       {#if data}
-        <button
-          type="button"
-          onclick={downloadXlsx}
-          disabled={downloading}
-          class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:border-slate-400 disabled:opacity-50"
-        >
+        <button type="button" onclick={downloadXlsx} disabled={downloading} class="sl-btn sl-btn-ghost">
           {downloadingFormat === "xlsx" ? "Downloading…" : "Download Excel"}
         </button>
-        <button
-          type="button"
-          onclick={downloadPdf}
-          disabled={downloading}
-          class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:border-slate-400 disabled:opacity-50"
-        >
+        <button type="button" onclick={downloadPdf} disabled={downloading} class="sl-btn sl-btn-ghost">
           {downloadingFormat === "pdf" ? "Downloading…" : "Download PDF"}
         </button>
       {/if}
-      <span class="ml-2 inline-flex items-center gap-2 text-[12px] text-slate-500">
-        or generate in background:
-      </span>
-      <button
-        type="button"
-        onclick={() => void queueJob("xlsx")}
-        disabled={queueingFormat !== null}
-        class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[13px] text-slate-700 hover:border-slate-400 disabled:opacity-50"
-      >
+      <span class="ml-1 text-[11.5px] text-[var(--ink-mute)]">or generate in background:</span>
+      <button type="button" onclick={() => void queueJob("xlsx")} disabled={queueingFormat !== null} class="sl-btn sl-btn-ghost">
         {queueingFormat === "xlsx" ? "Queueing…" : "Queue Excel"}
       </button>
-      <button
-        type="button"
-        onclick={() => void queueJob("pdf")}
-        disabled={queueingFormat !== null}
-        class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[13px] text-slate-700 hover:border-slate-400 disabled:opacity-50"
-      >
+      <button type="button" onclick={() => void queueJob("pdf")} disabled={queueingFormat !== null} class="sl-btn sl-btn-ghost">
         {queueingFormat === "pdf" ? "Queueing…" : "Queue PDF"}
       </button>
     </div>
-    <div aria-live="polite" class="mt-3 text-sm text-rose-700">
+    <div aria-live="polite" class="mt-3 space-y-2">
       {#if loadError}
-        <p>{loadError}</p>
+        <p class="border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{loadError}</p>
       {/if}
       {#if downloadError}
-        <p>{downloadError}</p>
+        <p class="border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{downloadError}</p>
       {/if}
       {#if queueError}
-        <p>{queueError}</p>
+        <p class="border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{queueError}</p>
       {/if}
     </div>
 
-    <div class="mt-4 border-t border-slate-200 pt-4">
+    <div class="mt-5 border-t border-[var(--rule)] pt-4">
       {#if !saveOpen}
-        <button
-          type="button"
-          onclick={() => {
-            saveOpen = true;
-            saveError = null;
-          }}
-          class="text-[13px] text-slate-600 hover:text-slate-900"
-        >+ Save current filters as…</button>
+        <button type="button" onclick={() => { saveOpen = true; saveError = null; }} class="text-[13px] text-[var(--brass-deep)] hover:underline">
+          + Save current filters as…
+        </button>
       {:else}
         <!--
           Inline save form. Treated as a sub-form: we don't nest a
@@ -1059,29 +929,12 @@
                 void submitSave(new SubmitEvent("submit"));
               }
             }}
-            class="rounded-lg border border-slate-300 px-3 py-1.5 text-[13px]"
+            class="sl-input max-w-xs"
           />
-          <button
-            type="button"
-            onclick={(ev) => {
-              ev.preventDefault();
-              void submitSave(new SubmitEvent("submit"));
-            }}
-            disabled={saving || !saveName.trim()}
-            class="rounded-lg bg-slate-900 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-          >{saving ? "Saving…" : "Save"}</button>
-          <button
-            type="button"
-            onclick={() => {
-              saveOpen = false;
-              saveName = "";
-              saveError = null;
-            }}
-            disabled={saving}
-            class="text-[13px] text-slate-500 hover:text-slate-900"
-          >Cancel</button>
+          <button type="button" onclick={(ev) => { ev.preventDefault(); void submitSave(new SubmitEvent("submit")); }} disabled={saving || !saveName.trim()} class="sl-btn sl-btn-primary">{saving ? "Saving…" : "Save"}</button>
+          <button type="button" onclick={() => { saveOpen = false; saveName = ""; saveError = null; }} disabled={saving} class="sl-btn sl-btn-ghost">Cancel</button>
           {#if saveError}
-            <p class="text-[13px] text-rose-700">{saveError}</p>
+            <p class="text-[12.5px] text-[var(--bad)]">{saveError}</p>
           {/if}
         </div>
       {/if}
@@ -1089,44 +942,52 @@
   </form>
 
   {#if data}
-    <div class="mt-6 overflow-x-auto rounded-xl border bg-white shadow-sm">
-      <table class="min-w-full text-sm" aria-label="Report rows">
-        <thead class="bg-slate-50 text-left text-slate-600">
-          <tr>
-            {#each data.columns as col (col.key)}
-              <th class="px-3 py-2 font-medium">{col.label}</th>
-            {/each}
-          </tr>
-        </thead>
-        <tbody>
-          {#each data.rows as row, i (i)}
-            <tr class="border-t">
+    <div class="sl-reveal sl-reveal-3 mt-8">
+      <div class="mb-3 flex items-center justify-between">
+        <span class="sl-eyebrow">Rows</span>
+        <span class="sl-mono text-[10.5px] text-[var(--ink-mute)]" style="letter-spacing:0.06em">
+          {data.rows.length} {data.rows.length === 1 ? "row" : "rows"}
+        </span>
+      </div>
+      <div class="sl-card overflow-x-auto">
+        <table class="sl-table" aria-label="Report rows">
+          <thead>
+            <tr>
               {#each data.columns as col (col.key)}
-                <td class="px-3 py-2 align-top text-slate-800">
-                  {renderCell(row[col.key], col)}
-                </td>
+                <th>{col.label}</th>
               {/each}
             </tr>
-          {/each}
-          {#if data.rows.length === 0}
-            <tr>
-              <td colspan={data.columns.length} class="px-3 py-8 text-center text-slate-500">
-                No rows match the current filters.
-              </td>
-            </tr>
-          {/if}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {#each data.rows as row, i (i)}
+              <tr>
+                {#each data.columns as col (col.key)}
+                  <td class={col.kind === "money" || col.kind === "number" ? "sl-num text-right text-[var(--ink)]" : "text-[var(--ink-soft)]"}>
+                    {renderCell(row[col.key], col)}
+                  </td>
+                {/each}
+              </tr>
+            {/each}
+            {#if data.rows.length === 0}
+              <tr>
+                <td colspan={data.columns.length} class="py-12 text-center text-[13px] text-[var(--ink-mute)]">
+                  No rows match the current filters.
+                </td>
+              </tr>
+            {/if}
+          </tbody>
+        </table>
+      </div>
     </div>
 
     {#if data.subtotals.length > 0}
-      <div class="mt-4 rounded-xl border bg-white p-4 shadow-sm">
-        <h2 class="text-sm font-semibold text-slate-900">Totals per currency</h2>
-        <dl class="mt-2 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+      <div class="sl-card mt-4 p-5">
+        <span class="sl-eyebrow">Totals per currency</span>
+        <dl class="mt-3 grid grid-cols-2 gap-3 text-[13px] sm:grid-cols-4">
           {#each data.subtotals as sub (sub.currencyCode)}
             <div>
-              <dt class="text-slate-600">{sub.currencyCode}</dt>
-              <dd class="font-mono text-slate-900">{sub.total}</dd>
+              <dt class="sl-mono text-[11px] text-[var(--ink-mute)]" style="letter-spacing:0.06em">{sub.currencyCode}</dt>
+              <dd class="sl-num mt-1 text-[var(--ink)]">{sub.total}</dd>
             </div>
           {/each}
         </dl>
@@ -1135,53 +996,44 @@
   {/if}
 
   {#if jobs.length > 0 || jobsError}
-    <div class="mt-6 rounded-xl border bg-white p-4 shadow-sm">
+    <div class="sl-card mt-6 p-5">
       <div class="flex items-baseline justify-between gap-3">
-        <h2 class="text-sm font-medium text-slate-900">My recent jobs</h2>
-        <span class="text-[11px] text-slate-500">
-          Background exports for this report. Queued / running rows refresh
-          every 5 s.
+        <span class="sl-eyebrow">My recent jobs</span>
+        <span class="text-[11px] text-[var(--ink-mute)]">
+          Background exports for this report. Queued / running rows refresh every 5 s.
         </span>
       </div>
       {#if jobsError}
-        <p class="mt-2 text-[13px] text-rose-700">{jobsError}</p>
+        <p class="mt-2 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{jobsError}</p>
       {/if}
       {#if jobDownloadError}
-        <p class="mt-2 text-[13px] text-rose-700">{jobDownloadError}</p>
+        <p class="mt-2 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{jobDownloadError}</p>
       {/if}
       {#if jobs.length > 0}
-        <ul class="mt-3 divide-y divide-slate-200">
+        <ul class="mt-3 divide-y divide-[var(--rule)]">
           {#each jobs as job (job.id)}
-            <li class="flex items-center justify-between gap-3 py-2 text-[13px]">
+            <li class="flex items-center justify-between gap-3 py-3 text-[13px]">
               <div class="flex items-baseline gap-2">
-                <span class="font-mono uppercase text-slate-500">{job.format}</span>
-                <span
-                  class="rounded-full px-2 py-[1px] text-[11px]"
-                  class:bg-slate-100={job.status === "queued"}
-                  class:text-slate-600={job.status === "queued"}
-                  class:bg-amber-100={job.status === "running"}
-                  class:text-amber-800={job.status === "running"}
-                  class:bg-emerald-100={job.status === "completed"}
-                  class:text-emerald-800={job.status === "completed"}
-                  class:bg-rose-100={job.status === "failed"}
-                  class:text-rose-800={job.status === "failed"}
-                >{job.status}</span>
-                <span class="text-slate-500">{formatRelative(job.createdAt)}</span>
+                <span class="sl-mono uppercase text-[var(--ink-mute)]">{job.format}</span>
+                <span class={`sl-badge ${
+                  job.status === "queued" ? "sl-badge-mute" :
+                  job.status === "running" ? "sl-badge-warn" :
+                  job.status === "completed" ? "sl-badge-ok" :
+                  "sl-badge-bad"
+                }`}>{job.status}</span>
+                <span class="text-[var(--ink-mute)]">{formatRelative(job.createdAt)}</span>
                 {#if job.rowCount !== null}
-                  <span class="text-slate-500">· {job.rowCount} rows</span>
+                  <span class="text-[var(--ink-mute)]">· {job.rowCount} rows</span>
                 {/if}
                 {#if job.errorMessage}
-                  <span class="text-rose-700">— {job.errorMessage}</span>
+                  <span style="color:var(--bad)">— {job.errorMessage}</span>
                 {/if}
               </div>
               <div class="flex items-center gap-3">
                 {#if job.status === "completed"}
-                  <button
-                    type="button"
-                    onclick={() => downloadJobArtefact(job)}
-                    disabled={downloadingJobId === job.id}
-                    class="text-slate-700 underline hover:text-slate-900 disabled:opacity-60"
-                  >{downloadingJobId === job.id ? "Downloading…" : "Download"}</button>
+                  <button type="button" onclick={() => downloadJobArtefact(job)} disabled={downloadingJobId === job.id} class="text-[var(--brass-deep)] underline hover:opacity-80 disabled:opacity-60">
+                    {downloadingJobId === job.id ? "Downloading…" : "Download"}
+                  </button>
                 {/if}
               </div>
             </li>

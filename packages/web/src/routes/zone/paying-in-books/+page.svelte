@@ -267,36 +267,34 @@
   {/if}
 
   <!-- Filter bar. -->
-  <div class="sl-reveal sl-reveal-2 mt-8 rounded-xl border bg-white p-4 shadow-sm">
-    <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-      <label class="text-sm">
-        <span class="block text-slate-600">Chapter</span>
-        <select
-          bind:value={chapterFilter}
-          class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-        >
+  <div class="sl-reveal sl-reveal-2 sl-card-warm mt-8 p-6">
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:items-end">
+      <label class="block">
+        <span class="sl-eyebrow" style="font-size:10.5px">Chapter</span>
+        <select bind:value={chapterFilter} class="sl-select mt-1.5">
           <option value="">All chapters in scope</option>
           {#each chapters as chapter (chapter.id)}
             <option value={chapter.id}>{chapterLabel(chapter.id)}</option>
           {/each}
         </select>
       </label>
-      <label class="text-sm">
-        <span class="block text-slate-600">Active on date</span>
-        <input
-          type="date"
-          bind:value={activeOn}
-          class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-        />
+      <label class="block">
+        <span class="sl-eyebrow" style="font-size:10.5px">Active on date</span>
+        <input type="date" bind:value={activeOn} class="sl-input mt-1.5" />
       </label>
-      <div class="flex items-end">
+      <div class="flex justify-end">
         <button
           type="button"
           onclick={toggleCreate}
           disabled={!hasZoneWrite && !hasChapterWriteRole}
-          class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+          class="sl-btn sl-btn-primary"
         >
-          {createOpen ? "Cancel" : "New book"}
+          {#if createOpen}Cancel{:else}
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M7 3v8M3 7h8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+            </svg>
+            New book
+          {/if}
         </button>
       </div>
     </div>
@@ -304,18 +302,11 @@
 
   <!-- Create form. -->
   {#if createOpen}
-    <form
-      onsubmit={submitCreate}
-      class="sl-reveal sl-reveal-3 mt-4 rounded-xl border bg-white p-5 shadow-sm"
-    >
+    <form onsubmit={submitCreate} class="sl-reveal sl-card-warm mt-4 p-6">
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <label class="text-sm sm:col-span-2">
-          <span class="block text-slate-600">Chapter</span>
-          <select
-            bind:value={createChapterId}
-            required
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          >
+        <label class="block sm:col-span-2">
+          <span class="sl-eyebrow" style="font-size:10.5px">Chapter</span>
+          <select bind:value={createChapterId} required class="sl-select mt-1.5">
             <option value="" disabled>Select a chapter</option>
             {#each chapters as chapter (chapter.id)}
               {#if canWriteChapter(chapter.id)}
@@ -324,180 +315,144 @@
             {/each}
           </select>
         </label>
-        <label class="text-sm">
-          <span class="block text-slate-600">Code from</span>
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Code from</span>
           <input
             type="text"
             bind:value={createStart}
             required
             maxlength={64}
             placeholder="e.g. 0000001"
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+            class="sl-input sl-mono mt-1.5 text-[12.5px]"
           />
         </label>
-        <label class="text-sm">
-          <span class="block text-slate-600">Code to</span>
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Code to</span>
           <input
             type="text"
             bind:value={createEnd}
             required
             maxlength={64}
             placeholder="e.g. 0000200"
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+            class="sl-input sl-mono mt-1.5 text-[12.5px]"
           />
         </label>
-        <label class="text-sm">
-          <span class="block text-slate-600">Date from</span>
-          <input
-            type="date"
-            bind:value={createDateFrom}
-            required
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          />
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Date from</span>
+          <input type="date" bind:value={createDateFrom} required class="sl-input mt-1.5" />
         </label>
-        <label class="text-sm">
-          <span class="block text-slate-600">Date to (optional)</span>
-          <input
-            type="date"
-            bind:value={createDateTo}
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          />
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Date to (optional)</span>
+          <input type="date" bind:value={createDateTo} class="sl-input mt-1.5" />
         </label>
-        <div class="flex items-end gap-2 sm:col-span-2">
-          <button
-            type="submit"
-            disabled={creating}
-            class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-          >
+        <div class="flex items-end sm:col-span-2">
+          <button type="submit" disabled={creating} class="sl-btn sl-btn-primary w-full justify-center">
             {creating ? "Saving…" : "Create book"}
           </button>
         </div>
       </div>
       {#if createError}
-        <p class="mt-3 text-sm text-rose-700">{createError}</p>
+        <p class="mt-3 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{createError}</p>
       {/if}
-      <p class="mt-2 text-[12px] text-slate-500">
+      <p class="mt-3 text-[11.5px] text-[var(--ink-mute)]">
         Reference codes are compared lexicographically — the from and to
         codes must be the same width (e.g. both 7-digit or both
-        <code>PIB-XXX</code>).
+        <code class="sl-mono">PIB-XXX</code>).
       </p>
     </form>
   {/if}
 
   <!-- Books list. -->
-  <div class="sl-reveal sl-reveal-4 mt-6 overflow-x-auto rounded-xl border bg-white shadow-sm">
-    <table class="min-w-full text-sm" aria-label="Paying-in books">
-      <thead class="bg-slate-50 text-left text-slate-600">
-        <tr>
-          <th class="px-3 py-2 font-medium">Chapter</th>
-          <th class="px-3 py-2 font-medium">Code from</th>
-          <th class="px-3 py-2 font-medium">Code to</th>
-          <th class="px-3 py-2 font-medium">Date from</th>
-          <th class="px-3 py-2 font-medium">Date to</th>
-          <th class="px-3 py-2 font-medium text-right">Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each books as book (book.id)}
-          <tr class="border-t">
-            <td class="px-3 py-2 align-top">{chapterLabel(book.chapterId)}</td>
-            {#if editingId === book.id}
-              <td class="px-3 py-2 align-top">
-                <input
-                  type="text"
-                  bind:value={editStart}
-                  maxlength={64}
-                  class="w-full rounded border border-slate-300 px-2 py-1"
-                />
-              </td>
-              <td class="px-3 py-2 align-top">
-                <input
-                  type="text"
-                  bind:value={editEnd}
-                  maxlength={64}
-                  class="w-full rounded border border-slate-300 px-2 py-1"
-                />
-              </td>
-              <td class="px-3 py-2 align-top">
-                <input
-                  type="date"
-                  bind:value={editDateFrom}
-                  class="w-full rounded border border-slate-300 px-2 py-1"
-                />
-              </td>
-              <td class="px-3 py-2 align-top">
-                <input
-                  type="date"
-                  bind:value={editDateTo}
-                  class="w-full rounded border border-slate-300 px-2 py-1"
-                />
-              </td>
-              <td class="px-3 py-2 align-top text-right">
-                <div class="flex justify-end gap-2">
-                  <button
-                    type="button"
-                    onclick={() => saveEdit(book)}
-                    disabled={saving}
-                    class="rounded border border-slate-300 px-2 py-1 text-xs font-medium hover:border-slate-400 disabled:opacity-50"
-                  >
-                    {saving ? "Saving…" : "Save"}
-                  </button>
-                  <button
-                    type="button"
-                    onclick={cancelEdit}
-                    class="rounded border border-slate-300 px-2 py-1 text-xs font-medium hover:border-slate-400"
-                  >
-                    Cancel
-                  </button>
-                </div>
-                {#if editError}
-                  <p class="mt-1 text-xs text-rose-700">{editError}</p>
-                {/if}
-              </td>
-            {:else}
-              <td class="px-3 py-2 align-top font-mono">{book.referenceCodeStart}</td>
-              <td class="px-3 py-2 align-top font-mono">{book.referenceCodeEnd}</td>
-              <td class="px-3 py-2 align-top">{book.dateFrom}</td>
-              <td class="px-3 py-2 align-top text-slate-500">
-                {book.dateTo ?? "open"}
-              </td>
-              <td class="px-3 py-2 align-top text-right">
-                {#if canWriteChapter(book.chapterId)}
+  <div class="sl-reveal sl-reveal-4 mt-8">
+    <div class="mb-3 flex items-center justify-between">
+      <span class="sl-eyebrow">Books on file</span>
+      <span class="sl-mono text-[10.5px] text-[var(--ink-mute)]" style="letter-spacing:0.06em">
+        {pageCount} {pageCount === 1 ? "row" : "rows"}{hasMore ? " · more available" : ""}
+      </span>
+    </div>
+    <div class="sl-card overflow-hidden">
+      <table class="sl-table" aria-label="Paying-in books">
+        <thead>
+          <tr>
+            <th>Chapter</th>
+            <th>Code from</th>
+            <th>Code to</th>
+            <th>Date from</th>
+            <th>Date to</th>
+            <th class="!text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each books as book (book.id)}
+            <tr>
+              <td>{chapterLabel(book.chapterId)}</td>
+              {#if editingId === book.id}
+                <td>
+                  <input type="text" bind:value={editStart} maxlength={64} class="sl-input sl-mono text-[12px]" />
+                </td>
+                <td>
+                  <input type="text" bind:value={editEnd} maxlength={64} class="sl-input sl-mono text-[12px]" />
+                </td>
+                <td>
+                  <input type="date" bind:value={editDateFrom} class="sl-input" />
+                </td>
+                <td>
+                  <input type="date" bind:value={editDateTo} class="sl-input" />
+                </td>
+                <td class="text-right">
                   <div class="flex justify-end gap-2">
-                    <button
-                      type="button"
-                      onclick={() => beginEdit(book)}
-                      class="rounded border border-slate-300 px-2 py-1 text-xs font-medium hover:border-slate-400"
-                    >
-                      Edit
+                    <button type="button" onclick={() => saveEdit(book)} disabled={saving} class="sl-btn sl-btn-primary">
+                      {saving ? "Saving…" : "Save"}
                     </button>
-                    <button
-                      type="button"
-                      onclick={() => deleteBook(book)}
-                      class="rounded border border-slate-300 px-2 py-1 text-xs font-medium text-rose-700 hover:border-rose-400"
-                    >
-                      Delete
+                    <button type="button" onclick={cancelEdit} class="sl-btn sl-btn-ghost">
+                      Cancel
                     </button>
                   </div>
-                {/if}
+                  {#if editError}
+                    <p class="mt-2 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-2 py-1 text-[12px] text-[var(--bad)]">{editError}</p>
+                  {/if}
+                </td>
+              {:else}
+                <td class="sl-mono text-[12px] text-[var(--ink-soft)]">{book.referenceCodeStart}</td>
+                <td class="sl-mono text-[12px] text-[var(--ink-soft)]">{book.referenceCodeEnd}</td>
+                <td class="sl-mono text-[12px] text-[var(--ink-soft)]">{book.dateFrom}</td>
+                <td>
+                  {#if book.dateTo}
+                    <span class="sl-mono text-[12px] text-[var(--ink-soft)]">{book.dateTo}</span>
+                  {:else}
+                    <span class="sl-badge sl-badge-mute">open</span>
+                  {/if}
+                </td>
+                <td class="text-right">
+                  {#if canWriteChapter(book.chapterId)}
+                    <div class="flex justify-end gap-2">
+                      <button type="button" onclick={() => beginEdit(book)} class="sl-btn sl-btn-ghost">
+                        Edit
+                      </button>
+                      <button type="button" onclick={() => deleteBook(book)} class="sl-btn sl-btn-ghost" style="color:var(--bad)">
+                        Delete
+                      </button>
+                    </div>
+                  {/if}
+                </td>
+              {/if}
+            </tr>
+          {/each}
+          {#if books.length === 0 && !loading}
+            <tr>
+              <td colspan={6} class="py-12 text-center text-[13px] text-[var(--ink-mute)]">
+                No paying-in books match the current filters.
               </td>
-            {/if}
-          </tr>
-        {/each}
-        {#if books.length === 0 && !loading}
-          <tr>
-            <td colspan={6} class="px-3 py-8 text-center text-slate-500">
-              No paying-in books match the current filters.
-            </td>
-          </tr>
-        {/if}
-        {#if loading && books.length === 0}
-          <tr>
-            <td colspan={6} class="px-3 py-8 text-center text-slate-500">Loading…</td>
-          </tr>
-        {/if}
-      </tbody>
-    </table>
+            </tr>
+          {/if}
+          {#if loading && books.length === 0}
+            <tr>
+              <td colspan={6} class="py-12 text-center text-[13px] text-[var(--ink-mute)]">Loading…</td>
+            </tr>
+          {/if}
+        </tbody>
+      </table>
+    </div>
   </div>
 
   <!-- Paginator + count indicator. The API doesn't return a
@@ -505,26 +460,16 @@
        prev/next buttons whose state is inferred from whether the
        last page came back full. -->
   {#if pageCount > 0 || offset > 0}
-    <div class="sl-reveal sl-reveal-5 mt-4 flex items-center justify-between text-[13px] text-slate-600">
-      <span>
+    <div class="sl-reveal sl-reveal-5 mt-4 flex items-center justify-between text-[13px] text-[var(--ink-mute)]">
+      <span class="sl-mono text-[11.5px]" style="letter-spacing:0.04em">
         Showing rows {offset + 1}–{offset + pageCount}
         {#if hasMore}(more available){/if}
       </span>
       <div class="flex items-center gap-2">
-        <button
-          type="button"
-          onclick={prevPage}
-          disabled={offset === 0 || loading}
-          class="rounded border border-slate-300 px-2 py-1 text-xs font-medium hover:border-slate-400 disabled:opacity-50"
-        >
+        <button type="button" onclick={prevPage} disabled={offset === 0 || loading} class="sl-btn sl-btn-ghost">
           Previous
         </button>
-        <button
-          type="button"
-          onclick={nextPage}
-          disabled={!hasMore || loading}
-          class="rounded border border-slate-300 px-2 py-1 text-xs font-medium hover:border-slate-400 disabled:opacity-50"
-        >
+        <button type="button" onclick={nextPage} disabled={!hasMore || loading} class="sl-btn sl-btn-ghost">
           Next
         </button>
       </div>

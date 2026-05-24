@@ -33,61 +33,57 @@
   function statusBadge(s: string): string {
     switch (s) {
       case "posted":
-        return "bg-green-100 text-green-700";
+        return "sl-badge-ok";
       case "voided":
-        return "bg-slate-100 text-slate-500";
+        return "sl-badge-mute";
       case "reversed":
-        return "bg-rose-100 text-rose-700";
+        return "sl-badge-bad";
       default:
-        return "bg-slate-100 text-slate-700";
+        return "sl-badge-mute";
     }
   }
 </script>
 
-<table class="w-full text-sm">
-  <thead class="text-left text-xs uppercase tracking-wide text-slate-500 border-b">
-    <tr>
-      <th class="py-2">Date</th>
-      <th class="py-2">Member</th>
-      <th class="py-2">Source</th>
-      <th class="py-2 text-right">Total</th>
-      <th class="py-2">Status</th>
-      <th class="py-2"></th>
-    </tr>
-  </thead>
-  <tbody class="divide-y divide-slate-200">
-    {#each rows as r (r.id)}
-      <tr class="hover:bg-slate-50">
-        <td class="py-2 text-slate-700">
-          <a href={`/zone/contributions/${r.id}`} class="hover:underline">{r.contributionDate}</a>
-        </td>
-        <td class="py-2">{memberName(r.memberId)}</td>
-        <td class="py-2 text-slate-600">{r.sourceType}</td>
-        <td class="py-2 text-right font-mono">{fmt(r.totalAmount, r.currencyCode)}</td>
-        <td class="py-2">
-          <span class={`inline-block px-2 py-0.5 rounded-full text-xs ${statusBadge(r.status)}`}>
-            {r.status}
-          </span>
-        </td>
-        <td class="py-2 text-right">
-          {#if r.status === "draft" && batchStatus === "draft"}
-            <button
-              type="button"
-              onclick={() => ondelete(r.id)}
-              class="text-xs text-rose-600 hover:underline"
-            >
-              delete
-            </button>
-          {/if}
-        </td>
-      </tr>
-    {/each}
-    {#if rows.length === 0}
+<div class="sl-card overflow-hidden">
+  <table class="sl-table">
+    <thead>
       <tr>
-        <td colspan="6" class="py-8 text-center text-sm text-slate-500">
-          No rows yet. Add the first one above.
-        </td>
+        <th>Date</th>
+        <th>Member</th>
+        <th>Source</th>
+        <th class="!text-right">Total</th>
+        <th>Status</th>
+        <th class="!text-right"></th>
       </tr>
-    {/if}
-  </tbody>
-</table>
+    </thead>
+    <tbody>
+      {#each rows as r (r.id)}
+        <tr>
+          <td>
+            <a href={`/zone/contributions/${r.id}`} class="sl-mono text-[12.5px] text-[var(--ink)] hover:text-[var(--brass-deep)]">{r.contributionDate}</a>
+          </td>
+          <td>{memberName(r.memberId)}</td>
+          <td class="text-[var(--ink-soft)]">{r.sourceType}</td>
+          <td class="sl-num text-right text-[var(--ink)]">{fmt(r.totalAmount, r.currencyCode)}</td>
+          <td>
+            <span class={`sl-badge ${statusBadge(r.status)}`}>{r.status}</span>
+          </td>
+          <td class="text-right">
+            {#if r.status === "draft" && batchStatus === "draft"}
+              <button type="button" onclick={() => ondelete(r.id)} class="text-[12px] text-[var(--bad)] hover:underline">
+                delete
+              </button>
+            {/if}
+          </td>
+        </tr>
+      {/each}
+      {#if rows.length === 0}
+        <tr>
+          <td colspan="6" class="py-12 text-center text-[13px] text-[var(--ink-mute)]">
+            No rows yet. Add the first one above.
+          </td>
+        </tr>
+      {/if}
+    </tbody>
+  </table>
+</div>

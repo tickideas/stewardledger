@@ -26,54 +26,34 @@
   }: Props = $props();
 </script>
 
-<div class="rounded-lg border border-slate-200 p-4">
-  <p class="text-xs uppercase text-slate-500">Lifecycle</p>
-  <div class="mt-2 flex flex-wrap gap-2">
+<div class="sl-card p-5">
+  <p class="sl-eyebrow" style="font-size:10px">Lifecycle</p>
+  <div class="mt-3 flex flex-wrap gap-2">
     {#if status === "draft"}
-      <button
-        type="button"
-        disabled={busy || submitDisabled}
-        onclick={() => onaction("submit")}
-        class="inline-flex items-center px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm hover:bg-slate-700 disabled:opacity-50"
-      >
+      <button type="button" disabled={busy || submitDisabled} onclick={() => onaction("submit")} class="sl-btn sl-btn-primary">
         Submit
       </button>
     {/if}
     {#if status === "submitted"}
-      <button
-        type="button"
-        disabled={busy}
-        onclick={() => onaction("approve")}
-        class="inline-flex items-center px-3 py-1.5 rounded-lg bg-blue-700 text-white text-sm hover:bg-blue-600 disabled:opacity-50"
-      >
+      <button type="button" disabled={busy} onclick={() => onaction("approve")} class="sl-btn sl-btn-primary">
         Approve
       </button>
     {/if}
     {#if status === "approved"}
-      <button
-        type="button"
-        disabled={busy}
-        onclick={() => onaction("post")}
-        class="inline-flex items-center px-3 py-1.5 rounded-lg bg-green-700 text-white text-sm hover:bg-green-600 disabled:opacity-50"
-      >
+      <button type="button" disabled={busy} onclick={() => onaction("post")} class="sl-btn sl-btn-accent">
         Post
       </button>
     {/if}
     {#if status !== "posted" && status !== "voided"}
-      <button
-        type="button"
-        disabled={busy}
-        onclick={() => onaction("void")}
-        class="inline-flex items-center px-3 py-1.5 rounded-lg border border-rose-300 text-rose-700 text-sm hover:bg-rose-50 disabled:opacity-50"
-      >
+      <button type="button" disabled={busy} onclick={() => onaction("void")} class="sl-btn sl-btn-ghost" style="color:var(--bad)">
         Void
       </button>
     {/if}
   </div>
   {#if busyMsg}
-    <p class="mt-2 text-xs text-slate-500">{busyMsg}</p>
+    <p class="mt-3 text-[11.5px] text-[var(--ink-mute)]">{busyMsg}</p>
   {/if}
   {#if actionError}
-    <p class="mt-2 text-xs text-red-600">{actionError}</p>
+    <p class="mt-3 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-2 py-1 text-[12px] text-[var(--bad)]">{actionError}</p>
   {/if}
 </div>

@@ -49,32 +49,52 @@
   onMount(refresh);
 </script>
 
-<h1 class="text-2xl font-bold mb-4">Administrators</h1>
+<svelte:head><title>Group administrators · StewardLedger</title></svelte:head>
+
+<div class="sl-reveal sl-reveal-1">
+  <span class="sl-eyebrow">§ Settings · Group access</span>
+  <h1 class="mt-3 sl-display text-[40px] leading-[1] text-[var(--ink)]">
+    Group <span class="sl-serif-italic font-light text-[var(--brass-deep)]">administrators</span>
+  </h1>
+  <p class="mt-2 text-[14px] text-[var(--ink-mute)]">Read-only view of zone administrators visible to this group.</p>
+</div>
+
 {#if loading}
-  <p class="text-[var(--ink-mute)]">Loading…</p>
+  <p class="mt-8 text-[13px] text-[var(--ink-mute)]">Loading…</p>
 {:else if error}
-  <p class="text-[var(--ink-mute)]">{error}</p>
-{:else if admins.length === 0}
-  <p class="text-[var(--ink-mute)]">No administrators found.</p>
+  <p class="mt-8 border-l-2 border-[var(--warn)] bg-[var(--warn-soft)] px-3 py-2 text-[13px] text-[var(--warn)]">{error}</p>
 {:else}
-  <table class="w-full text-left text-[13px] border-collapse">
-    <thead class="border-b border-[var(--rule)]">
-      <tr>
-        <th class="py-2 pr-4 font-medium">Email</th>
-        <th class="py-2 pr-4 font-medium">Role</th>
-        <th class="py-2 pr-4 font-medium">Scope</th>
-        <th class="py-2 pr-4 font-medium">Target</th>
-      </tr>
-    </thead>
-    <tbody>
-      {#each admins as a (a.bindingId)}
-        <tr class="border-b border-[var(--rule)]">
-          <td class="py-2 pr-4">{a.email}</td>
-          <td class="py-2 pr-4">{a.roleCode}</td>
-          <td class="py-2 pr-4">{a.roleScope}</td>
-          <td class="py-2 pr-4">{a.chapterName ?? a.groupName ?? "—"}</td>
-        </tr>
-      {/each}
-    </tbody>
-  </table>
+  <div class="sl-reveal sl-reveal-2 mt-8">
+    <div class="mb-3 flex items-center justify-between">
+      <span class="sl-eyebrow">Roster</span>
+      <span class="sl-mono text-[10.5px] text-[var(--ink-mute)]" style="letter-spacing:0.06em">
+        {admins.length} {admins.length === 1 ? "row" : "rows"}
+      </span>
+    </div>
+    <div class="sl-card overflow-hidden">
+      <table class="sl-table">
+        <thead>
+          <tr>
+            <th>Email</th>
+            <th>Role</th>
+            <th>Scope</th>
+            <th>Target</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each admins as a (a.bindingId)}
+            <tr>
+              <td class="text-[var(--ink)]">{a.email}</td>
+              <td class="sl-mono text-[12px] text-[var(--ink-soft)]">{a.roleCode}</td>
+              <td class="text-[var(--ink-soft)]">{a.roleScope}</td>
+              <td class="text-[var(--ink-soft)]">{a.chapterName ?? a.groupName ?? "—"}</td>
+            </tr>
+          {/each}
+          {#if admins.length === 0}
+            <tr><td colspan="4" class="py-12 text-center text-[13px] text-[var(--ink-mute)]">No administrators found.</td></tr>
+          {/if}
+        </tbody>
+      </table>
+    </div>
+  </div>
 {/if}

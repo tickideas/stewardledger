@@ -130,25 +130,25 @@
   function statusBadge(s: string): string {
     switch (s) {
       case "committed":
-        return "bg-green-100 text-green-700";
+        return "sl-badge-ok";
       case "scheduled":
-        return "bg-blue-100 text-blue-700";
+        return "sl-badge-info";
       case "matched":
-        return "bg-amber-100 text-amber-700";
+        return "sl-badge-warn";
       case "failed":
-        return "bg-rose-100 text-rose-700";
+        return "sl-badge-bad";
       case "rolled_back":
-        return "bg-slate-200 text-slate-700";
+        return "sl-badge-mute";
       default:
-        return "bg-slate-100 text-slate-700";
+        return "sl-badge-mute";
     }
   }
 
   function rowBadge(r: Row): string {
-    if (r.isDuplicate) return "bg-amber-100 text-amber-700";
-    if (r.validationStatus === "invalid") return "bg-rose-100 text-rose-700";
-    if (r.matchStatus === "matched") return "bg-green-100 text-green-700";
-    return "bg-slate-100 text-slate-700";
+    if (r.isDuplicate) return "sl-badge-warn";
+    if (r.validationStatus === "invalid") return "sl-badge-bad";
+    if (r.matchStatus === "matched") return "sl-badge-ok";
+    return "sl-badge-mute";
   }
 
   function fmtParsedAmount(r: Row): string {
@@ -163,100 +163,87 @@
   }
 </script>
 
-<div class="max-w-6xl mx-auto px-6 py-8">
-  <div class="text-sm text-slate-500">
-    <a href="/zone/imports" class="hover:underline">← All imports</a>
-  </div>
+<svelte:head><title>Import job · StewardLedger</title></svelte:head>
+
+<div class="pt-2 pb-10 lg:pt-0">
+  <a href="/zone/imports" class="sl-btn sl-btn-ghost">← All imports</a>
 
   {#if loadError}
-    <p class="mt-4 text-sm text-red-600">{loadError}</p>
+    <p class="mt-6 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{loadError}</p>
   {/if}
 
   {#if job && file}
-    <div class="mt-2 flex items-baseline justify-between">
+    <div class="sl-reveal sl-reveal-1 mt-4 flex flex-wrap items-end justify-between gap-6">
       <div>
-        <h1 class="text-2xl font-semibold tracking-tight">{file.originalFileName}</h1>
-        <p class="mt-1 text-xs text-slate-500">
+        <span class="sl-eyebrow">§ Pipeline · Import job</span>
+        <h1 class="mt-3 sl-display text-[36px] leading-[1] text-[var(--ink)]">{file.originalFileName}</h1>
+        <p class="mt-2 text-[12.5px] text-[var(--ink-mute)]">
           {file.fileType} · {file.sourceType ?? "—"} · {file.sizeBytes} bytes ·
           {new Date(file.uploadedAt).toLocaleString()}
         </p>
-        <p class="mt-1 text-xs font-mono text-slate-400">sha256: {file.checksumSha256}</p>
+        <p class="mt-1 sl-mono text-[11px] text-[var(--ink-faint)]">sha256: {file.checksumSha256}</p>
       </div>
-      <span class={`inline-block px-2 py-1 rounded-full text-xs ${statusBadge(job.status)}`}>
-        {job.status}
-      </span>
+      <span class={`sl-badge ${statusBadge(job.status)}`}>{job.status}</span>
     </div>
 
-    <div class="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-6">
-      <div class="rounded-lg border bg-white p-3">
-        <div class="text-xs uppercase tracking-wide text-slate-500">Rows</div>
-        <div class="mt-1 text-lg font-semibold text-slate-900">{job.totalRows}</div>
+    <div class="sl-reveal sl-reveal-2 mt-8 grid grid-cols-2 gap-4 sm:grid-cols-6">
+      <div class="sl-card p-4">
+        <div class="sl-eyebrow" style="font-size:10px">Rows</div>
+        <div class="sl-num mt-1 sl-display text-[22px] text-[var(--ink)]">{job.totalRows}</div>
       </div>
-      <div class="rounded-lg border bg-white p-3">
-        <div class="text-xs uppercase tracking-wide text-slate-500">Matched</div>
-        <div class="mt-1 text-lg font-semibold text-green-700">{job.matchedRows}</div>
+      <div class="sl-card p-4">
+        <div class="sl-eyebrow" style="font-size:10px">Matched</div>
+        <div class="sl-num mt-1 sl-display text-[22px]" style="color:var(--ok)">{job.matchedRows}</div>
       </div>
-      <div class="rounded-lg border bg-white p-3">
-        <div class="text-xs uppercase tracking-wide text-slate-500">Unmatched</div>
-        <div class="mt-1 text-lg font-semibold text-slate-700">{job.unmatchedRows}</div>
+      <div class="sl-card p-4">
+        <div class="sl-eyebrow" style="font-size:10px">Unmatched</div>
+        <div class="sl-num mt-1 sl-display text-[22px] text-[var(--ink-soft)]">{job.unmatchedRows}</div>
       </div>
-      <div class="rounded-lg border bg-white p-3">
-        <div class="text-xs uppercase tracking-wide text-slate-500">Failed</div>
-        <div class="mt-1 text-lg font-semibold text-rose-700">{job.failedRows}</div>
+      <div class="sl-card p-4">
+        <div class="sl-eyebrow" style="font-size:10px">Failed</div>
+        <div class="sl-num mt-1 sl-display text-[22px]" style="color:var(--bad)">{job.failedRows}</div>
       </div>
-      <div class="rounded-lg border bg-white p-3">
-        <div class="text-xs uppercase tracking-wide text-slate-500">Duplicates</div>
-        <div class="mt-1 text-lg font-semibold text-amber-700">{job.duplicateRows}</div>
+      <div class="sl-card p-4">
+        <div class="sl-eyebrow" style="font-size:10px">Duplicates</div>
+        <div class="sl-num mt-1 sl-display text-[22px]" style="color:var(--warn)">{job.duplicateRows}</div>
       </div>
-      <div class="rounded-lg border bg-white p-3">
-        <div class="text-xs uppercase tracking-wide text-slate-500">Committed</div>
-        <div class="mt-1 text-lg font-semibold text-green-700">{job.committedRows}</div>
+      <div class="sl-card p-4">
+        <div class="sl-eyebrow" style="font-size:10px">Committed</div>
+        <div class="sl-num mt-1 sl-display text-[22px]" style="color:var(--ok)">{job.committedRows}</div>
       </div>
     </div>
 
     {#if job.errorMessage}
-      <p class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{job.errorMessage}</p>
+      <p class="mt-4 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{job.errorMessage}</p>
     {/if}
 
-    <div class="mt-6 flex flex-wrap gap-2">
+    <div class="mt-6 flex flex-wrap items-center gap-3">
       {#if job.status === "matched"}
-        <button
-          disabled={busy || job.failedRows > 0}
-          onclick={() => doAction(`/api/tenant/imports/${job!.id}/schedule`)}
-          class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-        >
+        <button disabled={busy || job.failedRows > 0} onclick={() => doAction(`/api/tenant/imports/${job!.id}/schedule`)} class="sl-btn sl-btn-primary">
           Schedule for commit
         </button>
         {#if job.failedRows > 0}
-          <span class="text-xs text-rose-600 self-center">
+          <span class="text-[12px] text-[var(--bad)]">
             Resolve {job.failedRows} failed row{job.failedRows === 1 ? "" : "s"} first.
           </span>
         {/if}
       {/if}
       {#if job.status === "scheduled"}
-        <button
-          disabled={busy}
-          onclick={() => doAction(`/api/tenant/imports/${job!.id}/commit`)}
-          class="rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-600 disabled:opacity-50"
-        >
+        <button disabled={busy} onclick={() => doAction(`/api/tenant/imports/${job!.id}/commit`)} class="sl-btn sl-btn-accent">
           Commit ({job.matchedRows - job.duplicateRows} contributions)
         </button>
       {/if}
       {#if job.status === "committed"}
-        <button
-          disabled={busy}
-          onclick={() => (rollbackOpen = !rollbackOpen)}
-          class="rounded-lg border border-rose-200 px-4 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50"
-        >
+        <button disabled={busy} onclick={() => (rollbackOpen = !rollbackOpen)} class="sl-btn sl-btn-ghost" style="color:var(--bad)">
           Roll back
         </button>
       {/if}
     </div>
 
     {#if rollbackOpen && job.status === "committed"}
-      <div class="mt-3 rounded-xl border bg-rose-50 p-4">
-        <p class="text-sm font-medium text-rose-900">Reverse every contribution posted by this job.</p>
-        <p class="mt-1 text-xs text-rose-700">
+      <div class="sl-reveal mt-4 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] p-5">
+        <p class="text-[14px] font-medium" style="color:var(--bad)">Reverse every contribution posted by this job.</p>
+        <p class="mt-1 text-[12.5px]" style="color:var(--bad)">
           Each contribution will be voided (audit-logged); the rollback frees the source rows so a
           corrected re-upload can replace them.
         </p>
@@ -264,24 +251,21 @@
           type="text"
           placeholder="Rollback reason (required)"
           bind:value={rollbackReason}
-          class="mt-3 w-full rounded-lg border border-rose-200 px-3 py-2 text-sm"
+          class="sl-input mt-3"
         />
         <div class="mt-3 flex gap-2">
           <button
             disabled={busy || !rollbackReason.trim()}
-            onclick={() =>
-              doAction(`/api/tenant/imports/${job!.id}/rollback`, { reason: rollbackReason })}
-            class="rounded-lg bg-rose-700 px-4 py-2 text-sm font-medium text-white hover:bg-rose-600 disabled:opacity-50"
+            onclick={() => doAction(`/api/tenant/imports/${job!.id}/rollback`, { reason: rollbackReason })}
+            class="sl-btn"
+            style="background:var(--bad);color:#fff;border-color:var(--bad)"
           >
             Confirm rollback
           </button>
           <button
             type="button"
-            onclick={() => {
-              rollbackOpen = false;
-              rollbackReason = "";
-            }}
-            class="rounded-lg border px-4 py-2 text-sm"
+            onclick={() => { rollbackOpen = false; rollbackReason = ""; }}
+            class="sl-btn sl-btn-ghost"
           >
             Cancel
           </button>
@@ -290,66 +274,65 @@
     {/if}
 
     {#if actionError}
-      <p class="mt-3 text-sm text-red-600">{actionError}</p>
+      <p class="mt-3 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{actionError}</p>
     {/if}
 
-    <div class="mt-8 flex items-baseline justify-between">
-      <h2 class="text-lg font-medium">Rows</h2>
-      <select bind:value={rowFilter} class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm">
-        <option value="all">All rows</option>
-        <option value="matched">Matched only</option>
-        <option value="unmatched">Unmatched</option>
-        <option value="invalid">Failed</option>
-        <option value="duplicate">Duplicates</option>
-      </select>
+    <div class="sl-reveal sl-reveal-3 mt-10">
+      <div class="mb-3 flex items-center justify-between">
+        <span class="sl-eyebrow">Rows</span>
+        <select bind:value={rowFilter} class="sl-select w-48">
+          <option value="all">All rows</option>
+          <option value="matched">Matched only</option>
+          <option value="unmatched">Unmatched</option>
+          <option value="invalid">Failed</option>
+          <option value="duplicate">Duplicates</option>
+        </select>
+      </div>
+      <div class="sl-card overflow-x-auto">
+        <table class="sl-table text-[12.5px]">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Date</th>
+              <th>Member</th>
+              <th>Giving type</th>
+              <th class="!text-right">Amount</th>
+              <th>External ref</th>
+              <th>Status</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each rows as row (row.id)}
+              <tr>
+                <td class="sl-mono text-[var(--ink-faint)]">{row.rowNumber}</td>
+                <td class="sl-mono text-[var(--ink-soft)]">{row.parsed.contributionDate ?? "—"}</td>
+                <td>{row.parsed.memberReferenceCode ?? row.parsed.memberName ?? "—"}</td>
+                <td>{row.parsed.givingTypeShortCode ?? row.parsed.givingTypeName ?? "—"}</td>
+                <td class="sl-num text-right text-[var(--ink)]">{fmtParsedAmount(row)}</td>
+                <td class="sl-mono text-[var(--ink-mute)]">{row.parsed.externalTransactionId ?? "—"}</td>
+                <td>
+                  <span class={`sl-badge ${rowBadge(row)}`}>
+                    {row.isDuplicate ? "duplicate" : row.validationStatus === "invalid" ? "failed" : row.matchStatus}
+                  </span>
+                </td>
+                <td class="text-[var(--ink-mute)]">
+                  {#each row.failures as f}
+                    <div style="color:var(--bad)">{f.code}</div>
+                  {/each}
+                  {#if row.failures.length === 0}—{/if}
+                </td>
+              </tr>
+            {/each}
+            {#if rows.length === 0}
+              <tr><td colspan="8" class="py-10 text-center text-[var(--ink-mute)]">No rows to display.</td></tr>
+            {/if}
+          </tbody>
+        </table>
+      </div>
+      {#if rowTotal !== null && rows.length < rowTotal}
+        <p class="mt-2 text-[11.5px] text-[var(--ink-mute)]">Showing {rows.length} of {rowTotal} rows.</p>
+      {/if}
     </div>
-
-    <table class="mt-3 w-full text-xs">
-      <thead class="text-left uppercase tracking-wide text-slate-500 border-b">
-        <tr>
-          <th class="py-2">#</th>
-          <th class="py-2">Date</th>
-          <th class="py-2">Member</th>
-          <th class="py-2">Giving type</th>
-          <th class="py-2 text-right">Amount</th>
-          <th class="py-2">External ref</th>
-          <th class="py-2">Status</th>
-          <th class="py-2">Notes</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-slate-200">
-        {#each rows as row (row.id)}
-          <tr class="align-top hover:bg-slate-50">
-            <td class="py-2 font-mono text-slate-400">{row.rowNumber}</td>
-            <td class="py-2 text-slate-700">{row.parsed.contributionDate ?? "—"}</td>
-            <td class="py-2 text-slate-700">
-              {row.parsed.memberReferenceCode ?? row.parsed.memberName ?? "—"}
-            </td>
-            <td class="py-2 text-slate-700">
-              {row.parsed.givingTypeShortCode ?? row.parsed.givingTypeName ?? "—"}
-            </td>
-            <td class="py-2 text-right font-mono text-slate-700">{fmtParsedAmount(row)}</td>
-            <td class="py-2 font-mono text-slate-500">{row.parsed.externalTransactionId ?? "—"}</td>
-            <td class="py-2">
-              <span class={`inline-block px-2 py-0.5 rounded-full ${rowBadge(row)}`}>
-                {row.isDuplicate ? "duplicate" : row.validationStatus === "invalid" ? "failed" : row.matchStatus}
-              </span>
-            </td>
-            <td class="py-2 text-slate-500">
-              {#each row.failures as f}
-                <div class="text-rose-700">{f.code}</div>
-              {/each}
-              {#if row.failures.length === 0}—{/if}
-            </td>
-          </tr>
-        {/each}
-        {#if rows.length === 0}
-          <tr><td colspan="8" class="py-6 text-center text-slate-500">No rows to display.</td></tr>
-        {/if}
-      </tbody>
-    </table>
-    {#if rowTotal !== null && rows.length < rowTotal}
-      <p class="mt-2 text-xs text-slate-500">Showing {rows.length} of {rowTotal} rows.</p>
-    {/if}
   {/if}
 </div>

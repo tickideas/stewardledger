@@ -233,10 +233,10 @@
   </div>
 
   {#if !authLoaded}
-    <p class="sl-reveal sl-reveal-2 mt-8 text-[13px] text-slate-500">Loading…</p>
+    <p class="sl-reveal sl-reveal-2 mt-8 text-[13px] text-[var(--ink-mute)]">Loading…</p>
   {:else if authError}
     <div
-      class="sl-reveal sl-reveal-2 mt-8 rounded-xl border border-[var(--bad)] bg-[var(--bad-soft)] p-6"
+      class="sl-reveal sl-reveal-2 mt-8 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] p-6"
     >
       <h2 class="text-[15px] font-medium text-[var(--bad)]">
         Could not load your session.
@@ -249,7 +249,7 @@
     </div>
   {:else if !canSearch}
     <div
-      class="sl-reveal sl-reveal-2 mt-8 rounded-xl border border-[var(--bad)] bg-[var(--bad-soft)] p-6"
+      class="sl-reveal sl-reveal-2 mt-8 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] p-6"
     >
       <h2 class="text-[15px] font-medium text-[var(--bad)]">
         Audit search requires zone admin access.
@@ -269,80 +269,62 @@
     <!-- Filter form. -->
     <form
       onsubmit={submitSearch}
-      class="sl-reveal sl-reveal-2 mt-8 rounded-xl border bg-white p-4 shadow-sm"
+      class="sl-reveal sl-reveal-2 sl-card-warm mt-8 p-6"
     >
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <label class="text-sm">
-          <span class="block text-slate-600">From</span>
-          <input
-            type="date"
-            bind:value={dateFrom}
-            required
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          />
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">From</span>
+          <input type="date" bind:value={dateFrom} required class="sl-input mt-1.5" />
         </label>
-        <label class="text-sm">
-          <span class="block text-slate-600">To</span>
-          <input
-            type="date"
-            bind:value={dateTo}
-            required
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-          />
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">To</span>
+          <input type="date" bind:value={dateTo} required class="sl-input mt-1.5" />
         </label>
-        <label class="text-sm">
-          <span class="block text-slate-600">Action</span>
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Action</span>
           <input
             type="text"
             bind:value={action}
             placeholder="e.g. chapter.banking.update"
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 sl-mono text-[13px]"
+            class="sl-input sl-mono mt-1.5 text-[12.5px]"
           />
         </label>
-        <label class="text-sm">
-          <span class="block text-slate-600">Entity type</span>
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Entity type</span>
           <input
             type="text"
             bind:value={entityType}
             placeholder="e.g. contribution"
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 sl-mono text-[13px]"
+            class="sl-input sl-mono mt-1.5 text-[12.5px]"
           />
         </label>
-        <label class="text-sm">
-          <span class="block text-slate-600">Entity id</span>
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Entity id</span>
           <input
             type="text"
             bind:value={entityId}
             placeholder="entity row id"
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 sl-mono text-[13px]"
+            class="sl-input sl-mono mt-1.5 text-[12.5px]"
           />
         </label>
-        <label class="text-sm">
-          <span class="block text-slate-600">Actor user id</span>
+        <label class="block">
+          <span class="sl-eyebrow" style="font-size:10.5px">Actor user id</span>
           <input
             type="text"
             bind:value={actorUserId}
             placeholder="user.id (not email)"
-            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 sl-mono text-[13px]"
+            class="sl-input sl-mono mt-1.5 text-[12.5px]"
           />
         </label>
       </div>
-      <div class="mt-4 flex items-center gap-3">
-        <button
-          type="submit"
-          disabled={loading}
-          class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-        >
+      <div class="mt-5 flex flex-wrap items-center gap-3">
+        <button type="submit" disabled={loading} class="sl-btn sl-btn-primary">
           {loading ? "Searching…" : "Search"}
         </button>
-        <button
-          type="button"
-          onclick={resetForm}
-          class="rounded-lg border border-slate-300 px-3 py-2 text-sm hover:border-slate-400"
-        >
+        <button type="button" onclick={resetForm} class="sl-btn sl-btn-ghost">
           Reset
         </button>
-        <p class="ml-auto text-[12px] text-[var(--ink-mute)]">
+        <p class="ml-auto max-w-md text-[11.5px] text-[var(--ink-mute)]">
           Date window is the primary throttle. Free-text fields match
           exactly — they're the underlying column values, not a
           partial search.
@@ -351,11 +333,9 @@
     </form>
 
     <!-- Results header. -->
-    <div class="sl-reveal sl-reveal-3 mt-8 flex items-baseline justify-between gap-3">
-      <h2 class="text-[15px] font-medium text-[var(--ink)]">
-        Results
-      </h2>
-      <span class="sl-mono text-[12px] text-[var(--ink-mute)]">
+    <div class="sl-reveal sl-reveal-3 mt-10 flex items-baseline justify-between gap-3">
+      <span class="sl-eyebrow">Results</span>
+      <span class="sl-mono text-[10.5px] text-[var(--ink-mute)]" style="letter-spacing:0.06em">
         {totalCount} event{totalCount === 1 ? "" : "s"}{truncated
           ? ` · showing first ${MAX_RESULTS}`
           : ""}
@@ -370,10 +350,10 @@
     {/if}
 
     {#if loading && rows.length === 0}
-      <p class="mt-6 text-[13px] text-slate-500">Loading…</p>
+      <p class="mt-6 text-[13px] text-[var(--ink-mute)]">Loading…</p>
     {:else if rows.length === 0 && !loadError}
       <div
-        class="sl-reveal sl-reveal-4 mt-6 rounded-xl border bg-white p-6 text-center text-[13px] text-slate-500 shadow-sm"
+        class="sl-reveal sl-reveal-4 sl-card mt-4 p-12 text-center text-[13px] text-[var(--ink-mute)]"
       >
         No audit events match these filters.
       </div>
@@ -382,7 +362,7 @@
         {#each rows as row (rowKey(row))}
           {@const key = rowKey(row)}
           {@const isOpen = expanded.has(key)}
-          <li class="rounded-xl border bg-white shadow-sm">
+          <li class="sl-card overflow-hidden">
             <button
               type="button"
               onclick={() => toggleExpanded(key)}
@@ -429,7 +409,7 @@
                       {/if}
                     </dt>
                     <dd>
-                      <pre class="sl-mono mt-1 max-h-72 overflow-auto rounded-md border bg-white p-2 text-[11.5px] whitespace-pre-wrap text-[var(--ink)]">{row.before ?? "(none)"}</pre>
+                      <pre class="sl-mono mt-1 max-h-72 overflow-auto border border-[var(--rule)] bg-[var(--card)] p-2 text-[11.5px] whitespace-pre-wrap text-[var(--ink)]">{row.before ?? "(none)"}</pre>
                     </dd>
                   </div>
                   <div>
@@ -446,7 +426,7 @@
                       {/if}
                     </dt>
                     <dd>
-                      <pre class="sl-mono mt-1 max-h-72 overflow-auto rounded-md border bg-white p-2 text-[11.5px] whitespace-pre-wrap text-[var(--ink)]">{row.after ?? "(none)"}</pre>
+                      <pre class="sl-mono mt-1 max-h-72 overflow-auto border border-[var(--rule)] bg-[var(--card)] p-2 text-[11.5px] whitespace-pre-wrap text-[var(--ink)]">{row.after ?? "(none)"}</pre>
                     </dd>
                   </div>
                   <div class="sm:col-span-2 grid grid-cols-2 gap-2 text-[11.5px] text-[var(--ink-mute)] sm:grid-cols-4">

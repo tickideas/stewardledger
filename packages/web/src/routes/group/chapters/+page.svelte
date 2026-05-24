@@ -37,32 +37,52 @@
   onMount(refresh);
 </script>
 
-<h1 class="text-2xl font-bold mb-4">Chapters in this group</h1>
+<svelte:head><title>Group chapters · StewardLedger</title></svelte:head>
+
+<div class="sl-reveal sl-reveal-1">
+  <span class="sl-eyebrow">§ I · Group chapters</span>
+  <h1 class="mt-3 sl-display text-[40px] leading-[1] text-[var(--ink)]">
+    Chapters in this <span class="sl-serif-italic font-light text-[var(--brass-deep)]">group</span>
+  </h1>
+  <p class="mt-2 text-[14px] text-[var(--ink-mute)]">Chapters bound to your group(s).</p>
+</div>
+
 {#if loading}
-  <p class="text-[var(--ink-mute)]">Loading…</p>
+  <p class="mt-8 text-[13px] text-[var(--ink-mute)]">Loading…</p>
 {:else if error}
-  <p class="text-red-600">{error}</p>
-{:else if chapters.length === 0}
-  <p class="text-[var(--ink-mute)]">No chapters visible in this group.</p>
+  <p class="mt-8 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{error}</p>
 {:else}
-  <table class="w-full text-left text-[13px] border-collapse">
-    <thead class="border-b border-[var(--rule)]">
-      <tr>
-        <th class="py-2 pr-4 font-medium">Reference</th>
-        <th class="py-2 pr-4 font-medium">Name</th>
-        <th class="py-2 pr-4 font-medium">Country</th>
-        <th class="py-2 pr-4 font-medium">From</th>
-      </tr>
-    </thead>
-    <tbody>
-      {#each chapters as c (c.id)}
-        <tr class="border-b border-[var(--rule)]">
-          <td class="py-2 pr-4 sl-mono">{c.referenceCode}</td>
-          <td class="py-2 pr-4">{c.name}</td>
-          <td class="py-2 pr-4">{c.countryCode ?? "—"}</td>
-          <td class="py-2 pr-4">{c.dateFrom}</td>
-        </tr>
-      {/each}
-    </tbody>
-  </table>
+  <div class="sl-reveal sl-reveal-2 mt-8">
+    <div class="mb-3 flex items-center justify-between">
+      <span class="sl-eyebrow">Chapter roster</span>
+      <span class="sl-mono text-[10.5px] text-[var(--ink-mute)]" style="letter-spacing:0.06em">
+        {chapters.length} {chapters.length === 1 ? "row" : "rows"}
+      </span>
+    </div>
+    <div class="sl-card overflow-hidden">
+      <table class="sl-table">
+        <thead>
+          <tr>
+            <th>Reference</th>
+            <th>Name</th>
+            <th>Country</th>
+            <th>From</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each chapters as c (c.id)}
+            <tr>
+              <td class="sl-mono text-[12px] text-[var(--ink-soft)]">{c.referenceCode}</td>
+              <td class="text-[var(--ink)]">{c.name}</td>
+              <td class="text-[var(--ink-soft)]">{c.countryCode ?? "—"}</td>
+              <td class="sl-mono text-[12px] text-[var(--ink-mute)]">{c.dateFrom}</td>
+            </tr>
+          {/each}
+          {#if chapters.length === 0}
+            <tr><td colspan="4" class="py-12 text-center text-[13px] text-[var(--ink-mute)]">No chapters visible in this group.</td></tr>
+          {/if}
+        </tbody>
+      </table>
+    </div>
+  </div>
 {/if}
