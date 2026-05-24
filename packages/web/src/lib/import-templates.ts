@@ -1,6 +1,7 @@
 // packages/web/src/lib/import-templates.ts
 // Builds downloadable CSV templates for contribution import screens.
-// Keeps zone and church import pages aligned with the API parser aliases.
+// Keeps zone and church import pages aligned with the API parser aliases
+// and chapter-scoped template rules.
 // RELEVANT FILES: packages/web/src/routes/zone/imports/+page.svelte, packages/web/src/routes/church/imports/+page.svelte, packages/api/src/services/imports/parsers.ts
 
 type ImportTemplateScope = "zone" | "chapter";
@@ -32,4 +33,3 @@ export function importTemplateHref(scope: ImportTemplateScope): string {
   const rows = scope === "zone" ? zoneRows : baseRows;
   return `data:text/csv;charset=utf-8,${encodeURIComponent(toCsv(rows))}`;
 }
-

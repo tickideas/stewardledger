@@ -62,7 +62,13 @@
       !uploading &&
       (canZoneWideUpload || (canChapterUpload && Boolean(selectedChapterId))),
   );
-  const zoneTemplateHref = importTemplateHref("zone");
+  const templateScope = $derived(canZoneWideUpload ? "zone" : "chapter");
+  const templateHref = $derived(importTemplateHref(templateScope));
+  const templateFilename = $derived(
+    canZoneWideUpload
+      ? "stewardledger-zone-import-template.csv"
+      : "stewardledger-chapter-import-template.csv",
+  );
 
   async function loadUploadContext(signal: AbortSignal) {
     const [me, chapterRes] = await Promise.all([
@@ -223,11 +229,17 @@
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
           <span class="sl-eyebrow" style="font-size:10px">CSV template</span>
-          <p class="mt-1 text-[12px] text-[var(--ink-mute)]">
-            Zone uploads should include <span class="sl-mono">chapter, date, member reference, giving type code, amount, reference, currency, description</span>.
-          </p>
+          {#if canZoneWideUpload}
+            <p class="mt-1 text-[12px] text-[var(--ink-mute)]">
+              Zone uploads should include <span class="sl-mono">chapter, date, member reference, giving type code, amount, reference, currency, description</span>.
+            </p>
+          {:else}
+            <p class="mt-1 text-[12px] text-[var(--ink-mute)]">
+              Chapter-scoped uploads should include <span class="sl-mono">date, member reference, giving type code, amount, reference, currency, description</span>.
+            </p>
+          {/if}
         </div>
-        <a href={zoneTemplateHref} download="stewardledger-zone-import-template.csv" class="sl-btn sl-btn-ghost">
+        <a href={templateHref} download={templateFilename} class="sl-btn sl-btn-ghost">
           Download template
         </a>
       </div>
