@@ -195,8 +195,13 @@ async function loadZoneLookups(database: Db, zoneId: string): Promise<ZoneLookup
     const typeKeys = [event.serviceTypeName, event.serviceTypeShortCode]
       .filter((v): v is string => Boolean(v))
       .map((v) => v.toLowerCase());
+    // Index under the event's own chapter (or "" for unscoped) so chapter-scoped
+    // lookups only match the right chapter. Only chapter-null events are also
+    // indexed under "*" so a chapter-scoped row never falls back to another
+    // chapter's event.
+    const chapterKeys = event.chapterId === null ? ["", "*"] : [event.chapterId];
     for (const typeKey of typeKeys) {
-      for (const chapterKey of [event.chapterId ?? "", "*"]) {
+      for (const chapterKey of chapterKeys) {
         const key = `${chapterKey}|${date}|${typeKey}`;
         const list = serviceEventByKey.get(key) ?? [];
         list.push({ id: event.id, chapterId: event.chapterId });

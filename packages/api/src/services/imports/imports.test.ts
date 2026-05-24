@@ -47,7 +47,9 @@ function unique(): string {
 interface SeededZone {
   id: string;
   chapterId: string;
+  chapterReferenceCode: string;
   otherChapterId: string;
+  otherChapterReferenceCode: string;
   serviceEventId: string;
   otherServiceEventId: string;
   memberRefs: string[];
@@ -92,7 +94,7 @@ async function seedZone(): Promise<SeededZone> {
         dateFrom: "2024-01-01",
       },
     ])
-    .returning({ id: chapters.id });
+    .returning({ id: chapters.id, referenceCode: chapters.referenceCode });
 
   // Three members with distinct reference codes.
   const memberRefs: string[] = [];
@@ -133,7 +135,9 @@ async function seedZone(): Promise<SeededZone> {
   return {
     id: zone.id,
     chapterId: chapter.id,
+    chapterReferenceCode: chapter.referenceCode,
     otherChapterId: otherChapter.id,
+    otherChapterReferenceCode: otherChapter.referenceCode,
     serviceEventId: event.id,
     otherServiceEventId: otherEvent.id,
     memberRefs,
@@ -403,6 +407,53 @@ describe("import pipeline (end-to-end)", () => {
 
     expect(second.reused).toBe(false);
     expect(second.importJobId).not.toBe(first.importJobId);
+  });
+
+  it("zone-wide row resolving by date+type does not borrow another chapter's event", async () => {
+    // Regression: serviceEventByKey used to index every event under the
+    // zone-wide "*|date|type" key, so a chapter-scoped row whose own
+    // chapter had no matching event would silently match a different
+    // chapter's event without raising SERVICE_EVENT_CHAPTER_MISMATCH.
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+
+    // Pick a date where only chapter A has an event. Seed an extra event
+    // for chapter A on that date; chapter B has no event on this date.
+    // The CSV row targets chapter B on this date → chapter A's event must
+    // NOT be selected via the zone-wide fallback.
+    const isolatedDate = shiftDays(TODAY, -3);
+    const [serviceType] = await db
+      .select({ id: serviceTypes.id })
+      .from(serviceTypes)
+      .where(sql`${serviceTypes.zoneId} = ${zone.id}`)
+      .limit(1);
+    await db.insert(serviceEvents).values({
+      zoneId: zone.id,
+      chapterId: zone.chapterId,
+      serviceTypeId: serviceType.id,
+      serviceDate: isolatedDate,
+    });
+
+    const csv = [
+      "date,member reference,giving type code,amount,reference,currency,description,chapter,service type code,service date",
+      `${isolatedDate},${zone.memberRefs[0]},${zone.givingTypeShortCode},100.00,TX-CROSS,GBP,Tithe,${zone.otherChapterReferenceCode},SUN,${isolatedDate}`,
+    ].join("\n");
+    const body = new TextEncoder().encode(csv);
+
+    const uploaded = await uploadImport(
+      db,
+      { zoneId: zone.id, userId: zone.userId },
+      {
+        fileName: "cross.csv",
+        body,
+        fileType: "statement",
+        sourceType: "generic_csv",
+      },
+    );
+    // The row must not match: chapter B has no event on isolatedDate, and
+    // chapter A's event must not be borrowed via the zone-wide fallback.
+    expect(uploaded.matchedRows).toBe(0);
+    expect(uploaded.failedRows).toBe(1);
   });
 
   it("re-uploading new bytes with already-seen external ids produces zero new contributions", async () => {
