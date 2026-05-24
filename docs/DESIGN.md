@@ -13,12 +13,23 @@ The system is called **"Ledger Editorial"**: warm parchment surfaces, editorial 
 - ❌ Never use raw Tailwind slate colors in user-facing markup: `text-slate-*`, `bg-slate-*`, `border-slate-*`. Use the CSS variables instead (`var(--ink)`, `var(--ink-soft)`, `var(--ink-mute)`, `var(--ink-faint)`, `var(--rule)`, `var(--rule-strong)`, `var(--paper)`, `var(--paper-soft)`, `var(--card)`, `var(--card-warm)`).
 - ❌ Never use Tailwind palette colors for semantic state: no `bg-rose-*`, `bg-emerald-*`, `bg-amber-*`, `bg-blue-*`, `text-rose-*`, `text-red-*`, `text-green-*`, `text-amber-*`, `text-blue-*`, `border-rose-*`, etc. Use the semantic variables: `var(--ok)`/`--ok-soft`, `var(--warn)`/`--warn-soft`, `var(--bad)`/`--bad-soft`, `var(--info)`/`--info-soft`, `var(--brass)`/`--brass-deep`/`--brass-soft`.
 - ❌ Never style cards with `rounded-xl border bg-white shadow-sm`. Use `sl-card` or `sl-card-warm`.
-- ❌ Never style buttons with `rounded-lg bg-slate-900 text-white`. Use `sl-btn sl-btn-primary` / `sl-btn-ghost` / `sl-btn-accent`.
+- ❌ Never style buttons with `rounded-lg bg-slate-900 text-white`. Use `sl-btn sl-btn-primary` / `sl-btn-ghost` / `sl-btn-accent` / `sl-btn-danger` / `sl-btn-danger-ghost` / `sl-btn-warn` / `sl-btn-warn-ghost`.
 - ❌ Never style inputs with `rounded-lg border border-slate-300 px-3 py-2`. Use `sl-input` / `sl-select`.
 - ❌ Never style tables ad-hoc. Wrap in `sl-card` and use `sl-table`.
 - ❌ Never write a section heading without an `sl-eyebrow` above it. Never write a page heading without `sl-display`.
 - ❌ Never use more than one brass accent per view. The brass colour signals "the one thing that matters here" — usually the active nav item, an italic word in the page title, or a single primary action. Spread it thin.
-- ❌ Never centre-constrain content with `max-w-2xl mx-auto px-6 py-8` etc. The role layout (`/zone`, `/church`, `/admin`, `/group`) already handles page padding. Pages just need `<div class="pt-2 pb-10 lg:pt-0">…` or no wrapper at all.
+- ❌ Never centre-constrain whole pages with `max-w-{md..7xl} mx-auto px-* py-*`. The role layout (`/zone`, `/church`, `/admin`, `/group`) already handles page padding. Pages just need `<div class="pt-2 pb-10 lg:pt-0">…` or no wrapper at all.
+
+### Allowed exceptions
+
+Not every Tailwind utility is banned — only the patterns that re-skin a primitive. The following stay fine and are *not* what the linter is looking for:
+
+- **Paragraph-level width caps**: `max-w-2xl` (or `max-w-md`, `max-w-xl`, `max-w-3xl`, etc.) on a `<p>` / `<form>` / `<div>` to keep reading lines short is encouraged. The forbidden shape is the *combination* `max-w-* mx-auto px-* py-*` that recentres a whole page.
+- **Layout utilities**: `flex`, `grid`, `gap-*`, `mt-*`, `pt-*`, `lg:flex`, `sm:col-span-*`, `items-center`, `justify-between`, etc. — these have nothing to do with the editorial system, use them freely.
+- **Standalone tokens**: `text-[var(--ink)]`, `bg-[var(--paper-soft)]`, `border-[var(--rule)]` are fine. The ban is on `text-slate-*` / `bg-slate-*` / `border-slate-*` and the semantic palettes — not on Tailwind's arbitrary-value bracket syntax pointing at our tokens.
+- **Inline `style="…"` for semantic colour on non-button text**: `<span style="color:var(--bad)">` inside a paragraph (e.g. a per-row error code in a table) is fine when a full button utility would be overkill. For *buttons*, use the dedicated `sl-btn-danger-ghost` / `sl-btn-warn-ghost` / `sl-btn-danger` / `sl-btn-warn` variants — not `sl-btn-ghost` + inline `style="color:var(--bad)"`.
+
+If you find yourself disabling a rule via the exceptions list to keep a one-off shape, that's a hint the design system needs a new primitive. Add it to `app.css`, then this doc, then use it.
 
 ---
 
@@ -132,7 +143,12 @@ A page typically has **one** `sl-card-warm` block (the filter / form bar near th
 - **`sl-btn-primary`** — ink background, paper text. The page's main action.
 - **`sl-btn-ghost`** — transparent with hairline border. Secondary actions.
 - **`sl-btn-accent`** — brass background. Reserved for stand-out moments (e.g. Post a batch). Don't use on every page.
-- **Destructive** — `sl-btn-ghost` with inline `style="color:var(--bad)"`. Don't introduce a `sl-btn-danger` variant.
+- **`sl-btn-danger-ghost`** — destructive inline affordance (Delete, Revoke, Soft-delete, Archive). Sits in table rows and form footers.
+- **`sl-btn-warn-ghost`** — cautionary inline affordance (Reverse, Resend, Roll back). Reversible-but-significant.
+- **`sl-btn-danger`** — destructive confirm-step button in a dialog ("Confirm rollback", "Revoke", "Disable MFA"). One per dialog, never two.
+- **`sl-btn-warn`** — cautionary confirm-step button. Same one-per-dialog rule.
+
+`ConfirmDialog.svelte` uses `sl-btn-danger` / `sl-btn-warn` / `sl-btn-primary` automatically based on its `tone` prop — prefer the dialog over `window.confirm()` for destructive actions.
 
 ### Inputs: `sl-input`, `sl-select`
 
@@ -391,13 +407,12 @@ Sidebar item labels:
 4. Check `app.css` for any `sl-*` class you need before reaching for raw Tailwind.
 5. After writing the page, run:
    ```
-   pnpm -F @stewardledger/web exec svelte-check
+   pnpm -F @stewardledger/web check
    ```
-   And grep your new file for the forbidden patterns:
+   This runs `svelte-check` *and* `check:design` (defined in `packages/web/scripts/check-design.mjs`), which fails the build on any of the forbidden patterns above with a `file:line` for each violation. You can also run the design check alone:
    ```
-   grep -E "text-slate|bg-slate|border-slate|rounded-(lg|xl) (border|bg-white)|text-(rose|red-[0-9]|green-[0-9]|amber-[0-9]|blue-[0-9])|bg-(rose|emerald|amber|blue-[0-9])" your-new-page.svelte
+   pnpm -F @stewardledger/web check:design
    ```
-   Both should return zero matches.
 
 ---
 
