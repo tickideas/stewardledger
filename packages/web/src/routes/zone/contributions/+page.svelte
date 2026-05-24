@@ -1,3 +1,9 @@
+<!--
+packages/web/src/routes/zone/contributions/+page.svelte
+Contributions journal for a zone, with batch and contribution views plus filters.
+Keeps treasurers moving between draft, submitted, posted, and reversed records.
+RELEVANT FILES: packages/web/src/routes/church/contributions/+page.svelte, packages/web/src/app.css, packages/web/src/routes/zone/contributions/[id]/+page.svelte
+-->
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { api, ApiError, isAbortError } from "$lib/api";
@@ -250,26 +256,32 @@
   </div>
 
   <!-- Filters -->
-  <div class="mt-5 flex flex-wrap items-center gap-3">
-    <select bind:value={chapterId} class="sl-select w-56">
-      <option value="">All chapters</option>
-      {#each chapters as ch (ch.id)}<option value={ch.id}>{ch.name}</option>{/each}
-    </select>
-    <select bind:value={status} class="sl-select w-48">
-      <option value="">All statuses</option>
-      {#if tab === "batches"}
-        <option value="draft">Draft</option>
-        <option value="submitted">Submitted</option>
-        <option value="approved">Approved</option>
-        <option value="posted">Posted</option>
-        <option value="voided">Voided</option>
-      {:else}
-        <option value="draft">Draft</option>
-        <option value="posted">Posted</option>
-        <option value="voided">Voided</option>
-        <option value="reversed">Reversed</option>
-      {/if}
-    </select>
+  <div class="sl-reveal sl-reveal-4 mt-5 grid gap-3 lg:grid-cols-[minmax(0,16rem)_minmax(0,14rem)]">
+    <label class="block">
+      <span class="sl-eyebrow" style="font-size:10.5px">Chapter</span>
+      <select bind:value={chapterId} class="sl-select mt-1.5">
+        <option value="">All chapters</option>
+        {#each chapters as ch (ch.id)}<option value={ch.id}>{ch.name}</option>{/each}
+      </select>
+    </label>
+    <label class="block">
+      <span class="sl-eyebrow" style="font-size:10.5px">Status</span>
+      <select bind:value={status} class="sl-select mt-1.5">
+        <option value="">All statuses</option>
+        {#if tab === "batches"}
+          <option value="draft">Draft</option>
+          <option value="submitted">Submitted</option>
+          <option value="approved">Approved</option>
+          <option value="posted">Posted</option>
+          <option value="voided">Voided</option>
+        {:else}
+          <option value="draft">Draft</option>
+          <option value="posted">Posted</option>
+          <option value="voided">Voided</option>
+          <option value="reversed">Reversed</option>
+        {/if}
+      </select>
+    </label>
   </div>
 
   {#if chaptersError}

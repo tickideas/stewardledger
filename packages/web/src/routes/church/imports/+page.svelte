@@ -12,6 +12,7 @@
   import { useActiveChapter } from "$lib/active-chapter.svelte";
   import { api, ApiError, isAbortError } from "$lib/api";
   import { PUBLIC_API_URL } from "$lib/env";
+  import { importTemplateHref } from "$lib/import-templates";
   import { statusBadgeClass } from "$lib/ui";
 
   type Job = {
@@ -46,6 +47,7 @@
   let uploadError = $state<string | null>(null);
 
   const canSubmitUpload = $derived(Boolean(file) && !uploading && Boolean(chapter()));
+  const chapterTemplateHref = importTemplateHref("chapter");
 
   async function refresh(signal: AbortSignal) {
     const my = ++refreshToken;
@@ -169,6 +171,19 @@
     <p class="mt-3 text-[11px] text-[var(--ink-mute)]">
       Staged for {chapter()?.name ?? "this chapter"} only — files are reviewed before any rows commit.
     </p>
+    <div class="mt-4 border-t border-[var(--rule)] pt-4">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <span class="sl-eyebrow" style="font-size:10px">CSV template</span>
+          <p class="mt-1 text-[12px] text-[var(--ink-mute)]">
+            Chapter uploads use <span class="sl-mono">date, member reference, giving type code, amount, reference, currency, description</span>.
+          </p>
+        </div>
+        <a href={chapterTemplateHref} download="stewardledger-chapter-import-template.csv" class="sl-btn sl-btn-ghost">
+          Download template
+        </a>
+      </div>
+    </div>
     {#if uploadError}
       <p class="mt-3 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{uploadError}</p>
     {/if}

@@ -2,6 +2,7 @@
   import { goto } from "$app/navigation";
   import { api, ApiError, isAbortError } from "$lib/api";
   import { PUBLIC_API_URL } from "$lib/env";
+  import { importTemplateHref } from "$lib/import-templates";
   import { statusBadgeClass } from "$lib/ui";
   import { CHAPTER_ROLES, ZONE_ROLES, type AuthorizedContext } from "@stewardledger/shared";
 
@@ -60,6 +61,13 @@
     Boolean(file) &&
       !uploading &&
       (canZoneWideUpload || (canChapterUpload && Boolean(selectedChapterId))),
+  );
+  const templateScope = $derived(canZoneWideUpload ? "zone" : "chapter");
+  const templateHref = $derived(importTemplateHref(templateScope));
+  const templateFilename = $derived(
+    canZoneWideUpload
+      ? "stewardledger-zone-import-template.csv"
+      : "stewardledger-chapter-import-template.csv",
   );
 
   async function loadUploadContext(signal: AbortSignal) {
@@ -172,8 +180,8 @@
        block look like a status banner; treasurers expect it to look like
        a form. -->
   <form onsubmit={submitUpload} class="sl-reveal sl-reveal-2 sl-card-warm mt-8 p-6">
-    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-end lg:grid-cols-5">
-      <label class="block">
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-12 lg:items-end">
+      <label class="block lg:col-span-8">
         <span class="sl-eyebrow" style="font-size:10.5px">File</span>
         <input
           type="file"
@@ -183,13 +191,13 @@
           class="mt-1.5 block w-full text-[12px] text-[var(--ink-mute)] file:mr-3 file:rounded-[2px] file:border file:border-[var(--rule-strong)] file:bg-[var(--card)] file:px-3 file:py-2 file:text-[12px] file:text-[var(--ink)] hover:file:bg-[var(--paper-soft)]"
         />
       </label>
-      <label class="block">
+      <label class="block lg:col-span-4">
         <span class="sl-eyebrow" style="font-size:10.5px">File type</span>
         <select bind:value={fileType} class="sl-select mt-1.5">
           <option value="statement">Bank statement</option>
         </select>
       </label>
-      <label class="block">
+      <label class="block lg:col-span-4">
         <span class="sl-eyebrow" style="font-size:10.5px">Source</span>
         <select bind:value={sourceType} class="sl-select mt-1.5">
           <option value="generic_csv">Generic CSV</option>
@@ -197,7 +205,7 @@
           <option value="online_giving">Online giving export</option>
         </select>
       </label>
-      <label class="block">
+      <label class="block lg:col-span-5">
         <span class="sl-eyebrow" style="font-size:10.5px">Chapter</span>
         <select bind:value={selectedChapterId} class="sl-select mt-1.5">
           {#if canZoneWideUpload}
@@ -208,8 +216,8 @@
           {/each}
         </select>
       </label>
-      <div class="flex justify-end">
-        <button type="submit" disabled={!canSubmitUpload} class="sl-btn sl-btn-primary">
+      <div class="flex sm:col-span-2 sm:justify-end lg:col-span-3">
+        <button type="submit" disabled={!canSubmitUpload} class="sl-btn sl-btn-primary w-full justify-center sm:w-auto">
           {uploading ? "Uploading…" : "Upload + parse"}
         </button>
       </div>
@@ -217,6 +225,25 @@
     <p class="mt-3 text-[11px] text-[var(--ink-mute)]">
       Files are staged for review before any rows commit. Member and target imports are deferred — export spreadsheets as CSV first.{#if !canZoneWideUpload} A chapter is required for chapter-scoped uploaders.{/if}
     </p>
+    <div class="mt-4 border-t border-[var(--rule)] pt-4">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <span class="sl-eyebrow" style="font-size:10px">CSV template</span>
+          {#if canZoneWideUpload}
+            <p class="mt-1 text-[12px] text-[var(--ink-mute)]">
+              Zone uploads should include <span class="sl-mono">chapter, date, member reference, giving type code, amount, reference, currency, description</span>.
+            </p>
+          {:else}
+            <p class="mt-1 text-[12px] text-[var(--ink-mute)]">
+              Chapter-scoped uploads should include <span class="sl-mono">date, member reference, giving type code, amount, reference, currency, description</span>.
+            </p>
+          {/if}
+        </div>
+        <a href={templateHref} download={templateFilename} class="sl-btn sl-btn-ghost">
+          Download template
+        </a>
+      </div>
+    </div>
     {#if uploadError}
       <p class="mt-3 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{uploadError}</p>
     {/if}

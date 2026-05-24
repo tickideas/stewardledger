@@ -196,7 +196,7 @@ Deliverables:
 - Atomic commit job posting validated rows into contributions.
 - Re-upload duplicate detection.
 - Bank-format pluggable parsers (CSV first, then bank-specific).
-- Import dashboard: statement-import history, status, chapter-scoped upload, row preview, commit, rollback. Member, target, setup, retry, and inline row-fix flows are deferred to Phase 6 polish.
+- Import dashboard: statement-import history, status, downloadable CSV templates, chapter-scoped upload, row preview, commit, rollback. Member, target, setup, retry, and inline row-fix flows are deferred to Phase 6 polish.
 - Replay-friendly: a job can be re-run safely; idempotency keys per row.
 
 Implementation notes:
@@ -208,7 +208,7 @@ Implementation notes:
 - Concurrency safety: every lifecycle transition (`received→parsing`, `matched→scheduled`, `scheduled→committing`, `committed→rolled_back`) is a conditional UPDATE — the WHERE clause filters by current status, so two parallel callers cannot both succeed. The upload path races on the split chapter-aware checksum/source partial unique indexes and falls back to the reuse branch on 23505. `storage().put` happens after the file row is inserted; if a later DB write rolls back, the service best-effort deletes the orphaned object because object storage is not transactional.
 - Bulk commit: the commit path uses bounded-size chunked writes (insert drafts → insert lines → bulk-promote to posted → insert processed_transactions → backfill import_rows.contribution_id via chunked `UPDATE … FROM (VALUES …)`). Round trips scale by chunks rather than rows, and each statement stays below Postgres' bind-parameter ceiling. Audit emits `contribution.create` + `contribution.post` per row, mirroring Phase 5.
 - Tenant API at `/api/tenant/imports[/:id][/rows|/schedule|/commit|/rollback]` (`packages/api/src/routes/tenant-imports.ts`). Phase 6 accepts statement CSV imports only; unsupported file types fail with `unsupported_file_type` until their dedicated strategies exist. Chapter scope is enforced at every endpoint: a `CHAPTER_TREASURER` bound to Chapter A cannot upload, read, schedule, commit, or roll back jobs tied to Chapter B (or zone-wide jobs with `chapter_id IS NULL`). Bookkeepers upload + read; treasurers / finance admins schedule, commit, and roll back.
-- SvelteKit dashboard at `/imports` (list + upload) and `/imports/[id]` (summary stats, row preview with per-row failures, action buttons). Upload uses the canonical `PUBLIC_API_URL` from `$lib/env` (the pre-review code's `VITE_PUBLIC_API_URL` typo silently broke split-host production deploys).
+- SvelteKit dashboard at `/imports` (list + upload) and `/imports/[id]` (summary stats, row preview with per-row failures, action buttons). The zone upload screen exposes a zone-wide CSV template with a `chapter` column for zone writers, while chapter-scoped uploaders get a chapter template without that column. Upload uses the canonical `PUBLIC_API_URL` from `$lib/env` (the pre-review code's `VITE_PUBLIC_API_URL` typo silently broke split-host production deploys).
 - Idempotency: re-uploading the same bytes returns the existing job (file-level), and the matcher flags rows whose `external_transaction_id` is already in `processed_transactions` (row-level). Commit skips duplicates; rollback voids the committed contributions, snapshots the freed external ids into the audit `after` payload, and deletes the `processed_transactions` rows so a corrected re-upload can replace them.
 
 Exit checklist:
