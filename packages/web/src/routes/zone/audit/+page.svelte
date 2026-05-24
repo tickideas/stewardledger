@@ -220,7 +220,7 @@
 
 <div>
   <div class="sl-reveal sl-reveal-1">
-    <span class="sl-eyebrow">§ Insight · Audit search</span>
+    <span class="sl-eyebrow">§ Settings · Audit search</span>
     <h1 class="mt-3 sl-display text-[52px] leading-[1] text-[var(--ink)]">
       Audit <span class="sl-serif-italic font-light text-[var(--brass-deep)]">search</span>
     </h1>

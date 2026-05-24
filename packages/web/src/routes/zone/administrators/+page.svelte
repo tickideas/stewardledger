@@ -192,14 +192,14 @@
   }
 </script>
 
-<svelte:head><title>Administrators · StewardLedger</title></svelte:head>
+<svelte:head><title>Team access · StewardLedger</title></svelte:head>
 
 <div class="pt-2 pb-10 lg:pt-0">
   <div class="sl-reveal sl-reveal-1 flex flex-wrap items-end justify-between gap-6">
     <div>
-      <span class="sl-eyebrow">§ I · Access control</span>
+      <span class="sl-eyebrow">§ Settings · Team access</span>
       <h1 class="mt-3 sl-display text-[44px] leading-[1] text-[var(--ink)]">
-        Administrators <span class="sl-serif-italic font-light text-[var(--brass-deep)]">and roles</span>
+        Team <span class="sl-serif-italic font-light text-[var(--brass-deep)]">access</span>
       </h1>
       <p class="mt-2 max-w-2xl text-[14px] leading-6 text-[var(--ink-mute)]">
         Review active access, invite zone administrators, or assign chapter administrators,

@@ -1,3 +1,8 @@
+<!-- packages/web/src/routes/zone/+layout.svelte -->
+<!-- Renders the zonal dashboard shell with sidebar, mobile nav, and account menus. -->
+<!-- Keeps zone-scoped navigation and zone switching in one reusable route layout. -->
+<!-- RELEVANT FILES: packages/web/src/lib/nav.ts, packages/web/src/lib/session.svelte.ts, docs/ARCHITECTURE.md -->
+
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
