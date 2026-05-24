@@ -95,6 +95,7 @@ type ImportRowParsedShape = {
 type EligibleImportRow = typeof importRows.$inferSelect & {
   chapterId: string;
   givingTypeId: string;
+  serviceEventId: string;
   currencyCode: string;
 };
 type EligibleParsed = ImportRowParsedShape & {
@@ -117,6 +118,7 @@ function checkEligibility(
   if (!parsed) return { ok: false, reason: "parsed_payload_missing" };
   if (!row.chapterId) return { ok: false, reason: "chapter_id_missing" };
   if (!row.givingTypeId) return { ok: false, reason: "giving_type_id_missing" };
+  if (!row.serviceEventId) return { ok: false, reason: "service_event_id_missing" };
   if (!row.currencyCode) return { ok: false, reason: "currency_code_missing" };
   if (!parsed.amount) return { ok: false, reason: "amount_missing" };
   if (!parsed.contributionDate) return { ok: false, reason: "contribution_date_missing" };
@@ -177,6 +179,7 @@ async function reuseExistingImport(
   fileType: string,
   sourceType: string | null | undefined,
   chapterId: string | null | undefined,
+  serviceEventId: string | null | undefined,
 ): Promise<ImportUploadResult | null> {
   const [existing] = await database
     .select({ id: importFiles.id })
@@ -188,6 +191,9 @@ async function reuseExistingImport(
         eq(importFiles.fileType, fileType),
         eq(importFiles.sourceType, sourceType ?? "generic_csv"),
         chapterId ? eq(importFiles.chapterId, chapterId) : isNull(importFiles.chapterId),
+        serviceEventId
+          ? eq(importFiles.serviceEventId, serviceEventId)
+          : isNull(importFiles.serviceEventId),
       ),
     )
     .limit(1);
@@ -258,6 +264,7 @@ export async function uploadImport(
     input.fileType,
     input.sourceType,
     input.chapterId,
+    input.serviceEventId,
   );
   if (reuseHit) return reuseHit;
 
@@ -270,6 +277,7 @@ export async function uploadImport(
     fileName: input.fileName,
     sourceType: input.sourceType ?? null,
     fileChapterId: input.chapterId ?? null,
+    fileServiceEventId: input.serviceEventId ?? null,
   });
 
   return {
@@ -314,6 +322,7 @@ async function persistUpload(
           id: fileId,
           zoneId: ctx.zoneId,
           chapterId: input.chapterId ?? null,
+          serviceEventId: input.serviceEventId ?? null,
           uploadedByUserId: ctx.userId,
           originalFileName: input.fileName,
           storageKey,
@@ -352,6 +361,7 @@ async function persistUpload(
           fileName: input.fileName,
           size: input.body.byteLength,
           checksum,
+          serviceEventId: input.serviceEventId ?? null,
         },
       });
       return { importFileId: file.id, importJobId: job.id };
@@ -381,6 +391,7 @@ async function persistUpload(
         input.fileType,
         input.sourceType,
         input.chapterId,
+        input.serviceEventId,
       );
       if (reuse) return { reused: reuse };
     }
@@ -393,6 +404,7 @@ interface RunInput {
   fileName: string;
   sourceType: string | null;
   fileChapterId: string | null;
+  fileServiceEventId: string | null;
 }
 
 /**
@@ -468,7 +480,7 @@ export async function runImportJob(
   try {
     matched = await matchRows(
       database,
-      { zoneId, fileChapterId: input.fileChapterId },
+      { zoneId, fileChapterId: input.fileChapterId, fileServiceEventId: input.fileServiceEventId },
       parsed.rows,
     );
   } catch (err) {

@@ -36,9 +36,14 @@
   let uploadError = $state<string | null>(null);
 
   type Chapter = { id: string; referenceCode: string; name: string };
+  type ServiceEvent = { id: string; chapterId: string | null; serviceTypeId: string; serviceDate: string };
+  type ServiceType = { id: string; name: string };
   let auth = $state<AuthorizedContext | null>(null);
   let chapters = $state<Chapter[]>([]);
+  let serviceEvents = $state<ServiceEvent[]>([]);
+  let serviceTypes = $state<ServiceType[]>([]);
   let selectedChapterId = $state("");
+  let selectedServiceEventId = $state("");
 
   const zoneWriteRoles = new Set<string>([
     ZONE_ROLES.ZONE_OWNER,
@@ -60,7 +65,9 @@
   const canSubmitUpload = $derived(
     Boolean(file) &&
       !uploading &&
-      (canZoneWideUpload || (canChapterUpload && Boolean(selectedChapterId))),
+      (canZoneWideUpload
+        ? !selectedChapterId || Boolean(selectedServiceEventId)
+        : Boolean(selectedChapterId) && Boolean(selectedServiceEventId)),
   );
   const templateScope = $derived(canZoneWideUpload ? "zone" : "chapter");
   const templateHref = $derived(importTemplateHref(templateScope));
@@ -71,17 +78,35 @@
   );
 
   async function loadUploadContext(signal: AbortSignal) {
-    const [me, chapterRes] = await Promise.all([
+    const [me, chapterRes, serviceTypeRes] = await Promise.all([
       api.get<{ auth: AuthorizedContext }>("/api/tenant/me", signal),
       api.get<{ items: Chapter[] }>("/api/tenant/chapters", signal),
+      api.get<{ items: ServiceType[] }>("/api/tenant/giving/service-types", signal),
     ]);
     auth = me.auth;
     chapters = chapterRes.items;
+    serviceTypes = serviceTypeRes.items;
     const allowed = me.auth.roleCodes.some((r) => zoneWriteRoles.has(r))
       ? chapterRes.items
       : chapterRes.items.filter((chapter) => me.auth.chapterIds.includes(chapter.id));
     if (!me.auth.roleCodes.some((r) => zoneWriteRoles.has(r)) && allowed.length === 1) {
       selectedChapterId = allowed[0].id;
+    }
+  }
+
+  async function loadServiceEvents(signal?: AbortSignal) {
+    selectedServiceEventId = "";
+    serviceEvents = [];
+    if (!selectedChapterId) return;
+    const params = new URLSearchParams({ chapterId: selectedChapterId, limit: "100" });
+    try {
+      const res = await api.get<{ items: ServiceEvent[] }>(
+        `/api/tenant/giving/service-events?${params.toString()}`,
+        signal,
+      );
+      serviceEvents = res.items;
+    } catch (err) {
+      if (!isAbortError(err)) uploadError = err instanceof ApiError ? err.message : "Could not load service events.";
     }
   }
 
@@ -117,6 +142,13 @@
   });
 
   $effect(() => {
+    void selectedChapterId;
+    const controller = new AbortController();
+    loadServiceEvents(controller.signal);
+    return () => controller.abort();
+  });
+
+  $effect(() => {
     void status;
     const controller = new AbortController();
     refresh(controller.signal);
@@ -139,6 +171,7 @@
       form.set("fileType", fileType);
       form.set("sourceType", sourceType);
       if (selectedChapterId) form.set("chapterId", selectedChapterId);
+      if (selectedServiceEventId) form.set("serviceEventId", selectedServiceEventId);
       const headers = new Headers();
       const slug = localStorage.getItem("stewardledger.activeZoneSlug");
       if (slug) headers.set("x-stewardledger-zone-slug", slug);
@@ -158,6 +191,11 @@
     } finally {
       uploading = false;
     }
+  }
+
+  function serviceEventLabel(event: ServiceEvent): string {
+    const serviceType = serviceTypes.find((type) => type.id === event.serviceTypeId)?.name ?? "Service";
+    return `${event.serviceDate} · ${serviceType}`;
   }
 
 </script>
@@ -216,6 +254,24 @@
           {/each}
         </select>
       </label>
+      {#if selectedChapterId}
+        <label class="block lg:col-span-5">
+          <span class="sl-eyebrow" style="font-size:10.5px">Service event</span>
+          <select bind:value={selectedServiceEventId} required class="sl-select mt-1.5">
+            <option value="" disabled>Pick service event</option>
+            {#each serviceEvents as event (event.id)}
+              <option value={event.id}>{serviceEventLabel(event)}</option>
+            {/each}
+          </select>
+        </label>
+      {:else}
+        <div class="lg:col-span-5">
+          <span class="sl-eyebrow" style="font-size:10.5px">Service event</span>
+          <p class="mt-1.5 border-l-2 border-[var(--rule-strong)] px-3 py-2 text-[12px] text-[var(--ink-mute)]">
+            Zone-wide imports must include service event columns per row.
+          </p>
+        </div>
+      {/if}
       <div class="flex sm:col-span-2 sm:justify-end lg:col-span-3">
         <button type="submit" disabled={!canSubmitUpload} class="sl-btn sl-btn-primary w-full justify-center sm:w-auto">
           {uploading ? "Uploading…" : "Upload + parse"}
@@ -223,7 +279,7 @@
       </div>
     </div>
     <p class="mt-3 text-[11px] text-[var(--ink-mute)]">
-      Files are staged for review before any rows commit. Member and target imports are deferred — export spreadsheets as CSV first.{#if !canZoneWideUpload} A chapter is required for chapter-scoped uploaders.{/if}
+      Files are staged for review before any rows commit. {#if selectedChapterId}The selected service event is applied to every imported row.{:else}Zone-wide files must include chapter and service event columns.{/if}
     </p>
     <div class="mt-4 border-t border-[var(--rule)] pt-4">
       <div class="flex flex-wrap items-center justify-between gap-3">
@@ -231,7 +287,7 @@
           <span class="sl-eyebrow" style="font-size:10px">CSV template</span>
           {#if canZoneWideUpload}
             <p class="mt-1 text-[12px] text-[var(--ink-mute)]">
-              Zone uploads should include <span class="sl-mono">chapter, date, member reference, giving type code, amount, reference, currency, description</span>.
+              Zone uploads should include <span class="sl-mono">chapter, service type, service date, date, member reference, giving type code, amount, reference, currency, description</span>.
             </p>
           {:else}
             <p class="mt-1 text-[12px] text-[var(--ink-mute)]">

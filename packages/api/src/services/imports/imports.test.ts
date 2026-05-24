@@ -20,6 +20,8 @@ import {
   importJobs,
   members,
   processedTransactions,
+  serviceEvents,
+  serviceTypes,
   user as userTable,
   zones,
 } from "@stewardledger/db";
@@ -46,6 +48,8 @@ interface SeededZone {
   id: string;
   chapterId: string;
   otherChapterId: string;
+  serviceEventId: string;
+  otherServiceEventId: string;
   memberRefs: string[];
   userId: string;
   givingTypeShortCode: string;
@@ -110,6 +114,18 @@ async function seedZone(): Promise<SeededZone> {
     .from(givingTypes)
     .where(sql`${givingTypes.zoneId} = ${zone.id} and ${givingTypes.shortCode} = 'TITHE'`)
     .limit(1);
+  const [serviceType] = await db
+    .select({ id: serviceTypes.id })
+    .from(serviceTypes)
+    .where(sql`${serviceTypes.zoneId} = ${zone.id}`)
+    .limit(1);
+  const [event, otherEvent] = await db
+    .insert(serviceEvents)
+    .values([
+      { zoneId: zone.id, chapterId: chapter.id, serviceTypeId: serviceType.id, serviceDate: TODAY },
+      { zoneId: zone.id, chapterId: otherChapter.id, serviceTypeId: serviceType.id, serviceDate: TODAY },
+    ])
+    .returning({ id: serviceEvents.id });
 
   const userId = `u-${unique()}`;
   await db.insert(userTable).values({ id: userId, email: `${userId}@test.local`, emailVerified: true });
@@ -118,6 +134,8 @@ async function seedZone(): Promise<SeededZone> {
     id: zone.id,
     chapterId: chapter.id,
     otherChapterId: otherChapter.id,
+    serviceEventId: event.id,
+    otherServiceEventId: otherEvent.id,
     memberRefs,
     userId,
     givingTypeShortCode: gt.shortCode!,
@@ -199,6 +217,7 @@ afterAll(async () => {
         await tx.execute(sql`delete from import_files where zone_id = ${id}`);
         await tx.execute(sql`delete from contributions where zone_id = ${id}`);
         await tx.execute(sql`delete from contribution_batches where zone_id = ${id}`);
+        await tx.execute(sql`delete from service_events where zone_id = ${id}`);
         await tx.execute(sql`delete from members where zone_id = ${id}`);
         await tx.execute(sql`delete from chapters where zone_id = ${id}`);
         await tx.execute(sql`delete from zones where id = ${id}`);
@@ -222,6 +241,7 @@ describe("import pipeline (end-to-end)", () => {
       .values({
         zoneId: zone.id,
         chapterId: zone.chapterId,
+        serviceEventId: zone.serviceEventId,
         uploadedByUserId: zone.userId,
         originalFileName: "bad.csv",
         storageKey: "test/bad.csv",
@@ -256,6 +276,7 @@ describe("import pipeline (end-to-end)", () => {
       .values({
         zoneId: zone.id,
         chapterId: zone.chapterId,
+        serviceEventId: zone.serviceEventId,
         uploadedByUserId: zone.userId,
         originalFileName: "bad-list.csv",
         storageKey: "test/bad-list.csv",
@@ -295,6 +316,7 @@ describe("import pipeline (end-to-end)", () => {
         fileType: "statement",
         sourceType: "generic_csv",
         chapterId: zone.chapterId,
+        serviceEventId: zone.serviceEventId,
       },
     );
     expect(uploaded.reused).toBe(false);
@@ -343,6 +365,7 @@ describe("import pipeline (end-to-end)", () => {
       fileType: "statement",
       sourceType: "generic_csv",
       chapterId: zone.chapterId,
+      serviceEventId: zone.serviceEventId,
     });
     const second = await uploadImport(db, { zoneId: zone.id, userId: zone.userId }, {
       fileName: "x.csv",
@@ -350,6 +373,7 @@ describe("import pipeline (end-to-end)", () => {
       fileType: "statement",
       sourceType: "generic_csv",
       chapterId: zone.chapterId,
+      serviceEventId: zone.serviceEventId,
     });
     expect(second.reused).toBe(true);
     expect(second.importJobId).toBe(first.importJobId);
@@ -366,6 +390,7 @@ describe("import pipeline (end-to-end)", () => {
       fileType: "statement",
       sourceType: "generic_csv",
       chapterId: zone.chapterId,
+      serviceEventId: zone.serviceEventId,
     });
     const second = await uploadImport(db, { zoneId: zone.id, userId: zone.userId }, {
       fileName: "same.csv",
@@ -373,6 +398,7 @@ describe("import pipeline (end-to-end)", () => {
       fileType: "statement",
       sourceType: "generic_csv",
       chapterId: zone.otherChapterId,
+      serviceEventId: zone.otherServiceEventId,
     });
 
     expect(second.reused).toBe(false);
@@ -389,6 +415,7 @@ describe("import pipeline (end-to-end)", () => {
       fileType: "statement",
       sourceType: "generic_csv",
       chapterId: zone.chapterId,
+      serviceEventId: zone.serviceEventId,
     });
     await scheduleImport(db, { zoneId: zone.id, userId: zone.userId }, j1.importJobId);
     await commitImport(db, { zoneId: zone.id, userId: zone.userId }, j1.importJobId);
@@ -407,6 +434,7 @@ describe("import pipeline (end-to-end)", () => {
       fileType: "statement",
       sourceType: "generic_csv",
       chapterId: zone.chapterId,
+      serviceEventId: zone.serviceEventId,
     });
     expect(j2.reused).toBe(false);
     // Every row should have been flagged as a duplicate by the matcher.
@@ -436,6 +464,7 @@ describe("import pipeline (end-to-end)", () => {
       fileType: "statement",
       sourceType: "generic_csv",
       chapterId: zone.chapterId,
+      serviceEventId: zone.serviceEventId,
     });
     await scheduleImport(db, { zoneId: zone.id, userId: zone.userId }, j.importJobId);
     await commitImport(db, { zoneId: zone.id, userId: zone.userId }, j.importJobId);
@@ -462,5 +491,3 @@ describe("import pipeline (end-to-end)", () => {
     expect(procRows).toHaveLength(0); // freed for re-upload
   });
 });
-
-

@@ -610,6 +610,7 @@ import_files
   id uuid pk
   zone_id uuid not null
   chapter_id uuid null
+  service_event_id uuid null              -- selected once for chapter-scoped contribution imports; null for zone-wide row-level matching
   uploaded_by_user_id uuid not null
   original_file_name text not null
   storage_key text not null               -- object storage key
@@ -725,6 +726,8 @@ paying_in_books
   date_to date null                              -- null = open-ended
   created_at, updated_at
 ```
+
+Church-scoped contribution imports require `import_files.service_event_id`; the matcher copies it to each `import_rows.service_event_id` unless a row-level service event column is present. Zone-wide imports leave `import_files.service_event_id` null and resolve `import_rows.service_event_id` from row columns such as service event id, service type, and service date.
 
 Implemented (Phase 8). Reference codes are stored as `text` and
 compared lexicographically — treasurer pads use either zero-padded

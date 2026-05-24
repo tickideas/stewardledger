@@ -60,6 +60,12 @@ const HEADER_ALIASES: Record<string, keyof ParsedRow["parsed"]> = {
   // payment method
   "payment method": "paymentMethodCode",
   method: "paymentMethodCode",
+  // service event
+  "service event id": "serviceEventId",
+  "service event": "serviceTypeName",
+  "service type": "serviceTypeName",
+  "service type code": "serviceTypeShortCode",
+  "service date": "serviceDate",
   // description / notes
   description: "description",
   narrative: "description",
@@ -82,6 +88,10 @@ export interface ParsedRow {
     externalTransactionId: string | null;
     currencyCode: string | null;
     paymentMethodCode: string | null;
+    serviceEventId: string | null;
+    serviceTypeName: string | null;
+    serviceTypeShortCode: string | null;
+    serviceDate: string | null;
     description: string | null;
   };
 }
@@ -98,6 +108,10 @@ const EMPTY_PARSED: ParsedRow["parsed"] = {
   externalTransactionId: null,
   currencyCode: null,
   paymentMethodCode: null,
+  serviceEventId: null,
+  serviceTypeName: null,
+  serviceTypeShortCode: null,
+  serviceDate: null,
   description: null,
 };
 
@@ -155,6 +169,7 @@ function applyHeader(parsed: ParsedRow["parsed"], header: string, cell: string):
   if (!key) return;
   if (key === "amount") parsed.amount = toAmount(cell);
   else if (key === "contributionDate") parsed.contributionDate = toIsoDate(cell);
+  else if (key === "serviceDate") parsed.serviceDate = toIsoDate(cell);
   else if (key === "currencyCode") parsed.currencyCode = cell.trim().toUpperCase() || null;
   else parsed[key] = cell.trim() || null;
 }

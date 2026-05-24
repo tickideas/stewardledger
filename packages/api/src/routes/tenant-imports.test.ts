@@ -16,6 +16,8 @@ import {
   chapters,
   groups,
   members,
+  serviceEvents,
+  serviceTypes,
   user as userTable,
   userRoleBindings,
   zones,
@@ -40,6 +42,8 @@ interface SeededZone {
   slug: string;
   chapterIdA: string;
   chapterIdB: string;
+  serviceEventIdA: string;
+  serviceEventIdB: string;
   memberRef: string;
   ownerRoleId: string;
   groupAdminRoleId: string;
@@ -95,12 +99,27 @@ async function seedZone(slug: string): Promise<SeededZone> {
     firstName: "Imp",
     lastName: "Tester",
   });
+  const [serviceType] = await db
+    .select({ id: serviceTypes.id })
+    .from(serviceTypes)
+    .where(sql`${serviceTypes.zoneId} = ${zone.id}`)
+    .limit(1);
+  const today = new Date().toISOString().slice(0, 10);
+  const [eventA, eventB] = await db
+    .insert(serviceEvents)
+    .values([
+      { zoneId: zone.id, chapterId: chapterA.id, serviceTypeId: serviceType.id, serviceDate: today },
+      { zoneId: zone.id, chapterId: chapterB.id, serviceTypeId: serviceType.id, serviceDate: today },
+    ])
+    .returning({ id: serviceEvents.id });
 
   return {
     id: zone.id,
     slug: zone.slug,
     chapterIdA: chapterA.id,
     chapterIdB: chapterB.id,
+    serviceEventIdA: eventA.id,
+    serviceEventIdB: eventB.id,
     memberRef,
     ownerRoleId: roleIds.get(ZONE_ROLES.ZONE_OWNER)!,
     groupAdminRoleId: roleIds.get(GROUP_ROLES.GROUP_ADMIN)!,
@@ -254,6 +273,7 @@ describe("tenant import routes", () => {
           await tx.execute(sql`delete from import_files where zone_id = ${z}`);
           await tx.execute(sql`delete from contributions where zone_id = ${z}`);
           await tx.execute(sql`delete from contribution_batches where zone_id = ${z}`);
+          await tx.execute(sql`delete from service_events where zone_id = ${z}`);
           await tx.execute(sql`delete from members where zone_id = ${z}`);
           await tx.execute(sql`delete from chapters where zone_id = ${z}`);
           await tx.execute(sql`delete from groups where zone_id = ${z}`);
@@ -307,6 +327,7 @@ describe("tenant import routes", () => {
     asUser(ownerA, "owner@example.com");
     const upload = buildCsv(zoneA.memberRef, today);
     upload.set("chapterId", zoneA.chapterIdA);
+    upload.set("serviceEventId", zoneA.serviceEventIdA);
     const created = await call(zoneA.slug, "/api/tenant/imports", { multipart: upload });
     expect(created.status).toBe(201);
     const { importJobId } = (await created.json()) as { importJobId: string };
@@ -322,14 +343,29 @@ describe("tenant import routes", () => {
     asUser(ownerA, "owner@example.com");
     const form = buildCsv(zoneA.memberRef, today);
     form.set("chapterId", zoneA.chapterIdB);
+    form.set("serviceEventId", zoneA.serviceEventIdB);
     const res = await call(zoneA.slug, "/api/tenant/imports", { multipart: form });
     expect(res.status).toBe(201);
+  });
+
+  it("rejects chapter-scoped uploads without a service event", async () => {
+    asUser(ownerA, "owner@example.com");
+    const form = buildCsv(zoneA.memberRef, today);
+    form.set("chapterId", zoneA.chapterIdA);
+
+    const res = await call(zoneA.slug, "/api/tenant/imports", { multipart: form });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: { code: "service_event_required" },
+    });
   });
 
   it("rejects unsupported import file types before storing bytes", async () => {
     asUser(ownerA, "owner@example.com");
     const form = buildCsv(zoneA.memberRef, today);
     form.set("chapterId", zoneA.chapterIdA);
+    form.set("serviceEventId", zoneA.serviceEventIdA);
     form.set("fileType", "member");
     const res = await call(zoneA.slug, "/api/tenant/imports", { multipart: form });
 
@@ -343,6 +379,7 @@ describe("tenant import routes", () => {
     asUser(treasurerA, "treasurer@example.com");
     const form = buildCsv(zoneA.memberRef, today);
     form.set("chapterId", zoneA.chapterIdB);
+    form.set("serviceEventId", zoneA.serviceEventIdB);
     const res = await call(zoneA.slug, "/api/tenant/imports", { multipart: form });
     expect(res.status).toBe(403);
   });
@@ -367,6 +404,7 @@ describe("tenant import routes", () => {
     asUser(treasurerA, "treasurer@example.com");
     const form = buildCsv(zoneA.memberRef, today);
     form.set("chapterId", zoneA.chapterIdA);
+    form.set("serviceEventId", zoneA.serviceEventIdA);
     const created = await call(zoneA.slug, "/api/tenant/imports", { multipart: form });
     expect(created.status).toBe(201);
     const { importJobId } = (await created.json()) as { importJobId: string };
@@ -387,6 +425,7 @@ describe("tenant import routes", () => {
     asUser(ownerA, "owner@example.com");
     const form = buildCsv(zoneA.memberRef, today);
     form.set("chapterId", zoneA.chapterIdB);
+    form.set("serviceEventId", zoneA.serviceEventIdB);
     const created = await call(zoneA.slug, "/api/tenant/imports", { multipart: form });
     const { importJobId } = (await created.json()) as { importJobId: string };
     await call(zoneA.slug, `/api/tenant/imports/${importJobId}/schedule`, { method: "POST" });
@@ -408,6 +447,7 @@ describe("tenant import routes", () => {
     asUser(bookkeeperA, "bookkeeper@example.com");
     const form = buildCsv(zoneA.memberRef, today);
     form.set("chapterId", zoneA.chapterIdA);
+    form.set("serviceEventId", zoneA.serviceEventIdA);
     const created = await call(zoneA.slug, "/api/tenant/imports", { multipart: form });
     expect(created.status).toBe(201);
     const { importJobId } = (await created.json()) as { importJobId: string };
@@ -426,12 +466,14 @@ describe("tenant import routes", () => {
     asUser(ownerA, "owner@example.com");
     const fa = buildCsv(zoneA.memberRef, today);
     fa.set("chapterId", zoneA.chapterIdA);
+    fa.set("serviceEventId", zoneA.serviceEventIdA);
     const ra = await call(zoneA.slug, "/api/tenant/imports", { multipart: fa });
     expect(ra.status).toBe(201);
     const { importJobId: jobA } = (await ra.json()) as { importJobId: string };
 
     const fb = buildCsv(zoneA.memberRef, today);
     fb.set("chapterId", zoneA.chapterIdB);
+    fb.set("serviceEventId", zoneA.serviceEventIdB);
     const rb = await call(zoneA.slug, "/api/tenant/imports", { multipart: fb });
     expect(rb.status).toBe(201);
     const { importJobId: jobB } = (await rb.json()) as { importJobId: string };
@@ -466,12 +508,14 @@ describe("tenant import routes", () => {
     asUser(ownerA, "owner@example.com");
     const fa = buildCsv(zoneA.memberRef, today);
     fa.set("chapterId", zoneA.chapterIdA);
+    fa.set("serviceEventId", zoneA.serviceEventIdA);
     const ra = await call(zoneA.slug, "/api/tenant/imports", { multipart: fa });
     expect(ra.status).toBe(201);
     const { importJobId: jobA } = (await ra.json()) as { importJobId: string };
 
     const fb = buildCsv(zoneA.memberRef, today);
     fb.set("chapterId", zoneA.chapterIdB);
+    fb.set("serviceEventId", zoneA.serviceEventIdB);
     const rb = await call(zoneA.slug, "/api/tenant/imports", { multipart: fb });
     expect(rb.status).toBe(201);
     const { importJobId: jobB } = (await rb.json()) as { importJobId: string };
@@ -502,12 +546,14 @@ describe("tenant import routes", () => {
     asUser(ownerA, "owner@example.com");
     const fa = buildCsv(zoneA.memberRef, today);
     fa.set("chapterId", zoneA.chapterIdA);
+    fa.set("serviceEventId", zoneA.serviceEventIdA);
     const ra = await call(zoneA.slug, "/api/tenant/imports", { multipart: fa });
     expect(ra.status).toBe(201);
     const { importJobId: jobA } = (await ra.json()) as { importJobId: string };
 
     const fb = buildCsv(zoneA.memberRef, today);
     fb.set("chapterId", zoneA.chapterIdB);
+    fb.set("serviceEventId", zoneA.serviceEventIdB);
     const rb = await call(zoneA.slug, "/api/tenant/imports", { multipart: fb });
     expect(rb.status).toBe(201);
     const { importJobId: jobB } = (await rb.json()) as { importJobId: string };

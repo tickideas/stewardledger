@@ -166,7 +166,6 @@ async function seedZone(): Promise<SeededZone> {
     .from(paymentMethods)
     .where(sql`${paymentMethods.zoneId} = ${zone.id} and ${paymentMethods.code} = 'cash'`)
     .limit(1);
-
   const userId = `u-${unique()}`;
   await db.insert(userTable).values({
     id: userId,
@@ -187,6 +186,35 @@ async function seedZone(): Promise<SeededZone> {
     offeringGivingTypeId: offering.id,
     cashPaymentMethodId: cash.id,
   };
+}
+
+async function seedImportServiceEvents(zone: SeededZone): Promise<{
+  serviceEventId: string;
+  otherServiceEventId: string;
+}> {
+  const [seededServiceType] = await db
+    .select({ id: serviceTypes.id })
+    .from(serviceTypes)
+    .where(sql`${serviceTypes.zoneId} = ${zone.id}`)
+    .limit(1);
+  const [serviceEvent, otherServiceEvent] = await db
+    .insert(serviceEvents)
+    .values([
+      {
+        zoneId: zone.id,
+        chapterId: zone.chapterId,
+        serviceTypeId: seededServiceType.id,
+        serviceDate: TODAY,
+      },
+      {
+        zoneId: zone.id,
+        chapterId: zone.otherChapterId,
+        serviceTypeId: seededServiceType.id,
+        serviceDate: TODAY,
+      },
+    ])
+    .returning({ id: serviceEvents.id });
+  return { serviceEventId: serviceEvent.id, otherServiceEventId: otherServiceEvent.id };
 }
 
 function zoneCtx(zone: SeededZone): AuthorizedContext {
@@ -474,6 +502,7 @@ describe("import-reconciliation tenancy", () => {
   it("scopes chapter-scoped callers to their bound chapters' import jobs", async () => {
     const zone = await seedZone();
     seededZones.push(zone.id);
+    const events = await seedImportServiceEvents(zone);
 
     // Commit one import for each chapter so we have two jobs to
     // discriminate.
@@ -491,6 +520,7 @@ describe("import-reconciliation tenancy", () => {
       fileType: "statement",
       sourceType: "generic_csv",
       chapterId: zone.chapterId,
+      serviceEventId: events.serviceEventId,
     });
     const uploadedB = await uploadImport(db, { zoneId: zone.id, userId: zone.userId }, {
       fileName: "scope-b.csv",
@@ -498,6 +528,7 @@ describe("import-reconciliation tenancy", () => {
       fileType: "statement",
       sourceType: "generic_csv",
       chapterId: zone.otherChapterId,
+      serviceEventId: events.otherServiceEventId,
     });
 
     const chapterAReader: AuthorizedContext = {
@@ -548,6 +579,7 @@ describe("import-reconciliation report", () => {
   it("surfaces a committed job with posted contributions + per-currency total", async () => {
     const zone = await seedZone();
     seededZones.push(zone.id);
+    const events = await seedImportServiceEvents(zone);
     const csv = [
       "date,member reference,giving type code,amount,reference,currency",
       `${TODAY},${zone.memberRefs[0]},TITHE,100.00,REC-A,GBP`,
@@ -561,6 +593,7 @@ describe("import-reconciliation report", () => {
       fileType: "statement",
       sourceType: "generic_csv",
       chapterId: zone.chapterId,
+      serviceEventId: events.serviceEventId,
     });
     await scheduleImport(db, { zoneId: zone.id, userId: zone.userId }, uploaded.importJobId);
     await commitImport(db, { zoneId: zone.id, userId: zone.userId }, uploaded.importJobId);
@@ -584,6 +617,7 @@ describe("import-reconciliation report", () => {
   it("shows zero contributions posted after a rollback", async () => {
     const zone = await seedZone();
     seededZones.push(zone.id);
+    const events = await seedImportServiceEvents(zone);
     const csv = [
       "date,member reference,giving type code,amount,reference,currency",
       `${TODAY},${zone.memberRefs[0]},TITHE,20.00,REC-RB-A,GBP`,
@@ -595,6 +629,7 @@ describe("import-reconciliation report", () => {
       fileType: "statement",
       sourceType: "generic_csv",
       chapterId: zone.chapterId,
+      serviceEventId: events.serviceEventId,
     });
     await scheduleImport(db, { zoneId: zone.id, userId: zone.userId }, uploaded.importJobId);
     await commitImport(db, { zoneId: zone.id, userId: zone.userId }, uploaded.importJobId);

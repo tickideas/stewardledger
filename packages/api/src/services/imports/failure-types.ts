@@ -59,6 +59,22 @@ export const PLATFORM_FAILURE_TYPES = [
     code: "PERIOD_NOT_FOUND",
     description: "No giving period covers the row's contribution date.",
   },
+  {
+    code: "SERVICE_EVENT_NOT_FOUND",
+    description: "No service event matches the row's service event id or service type/date.",
+  },
+  {
+    code: "SERVICE_EVENT_REQUIRED",
+    description: "Row is missing a service event and the import was not scoped to one.",
+  },
+  {
+    code: "SERVICE_EVENT_AMBIGUOUS",
+    description: "Multiple service events match the row's chapter, service date, and service type.",
+  },
+  {
+    code: "SERVICE_EVENT_CHAPTER_MISMATCH",
+    description: "The resolved service event belongs to a different chapter than the row.",
+  },
 ] as const;
 
 export type FailureCode = (typeof PLATFORM_FAILURE_TYPES)[number]["code"];
@@ -143,5 +159,4 @@ function pickFailureRow<T extends { zoneId: string | null }>(rows: readonly T[])
   );
   return sorted[0];
 }
-
 

@@ -40,6 +40,7 @@
   let creating = $state(false);
   let createError = $state<string | null>(null);
   let loadError = $state<string | null>(null);
+  const canSubmit = $derived(Boolean(chapterId) && Boolean(serviceEventId) && !creating);
 
   // Stale-response tokens — last-request-wins for both `loadEvents` and
   // `loadTemplates`, which re-fire every time the chapter changes.
@@ -199,6 +200,10 @@
       createError = "Pick a chapter.";
       return;
     }
+    if (!serviceEventId) {
+      createError = "Pick the service event for this counted offering batch.";
+      return;
+    }
     creating = true;
     createError = null;
     try {
@@ -206,7 +211,7 @@
         "/api/tenant/contribution-batches",
         {
           chapterId,
-          serviceEventId: serviceEventId || undefined,
+          serviceEventId,
           paymentMethodId: paymentMethodId || undefined,
           sourceType,
           referenceCode: referenceCode || undefined,
@@ -233,7 +238,8 @@
       New <span class="sl-serif-italic font-light text-[var(--brass-deep)]">batch</span>
     </h1>
     <p class="mt-2 max-w-2xl text-[14px] text-[var(--ink-mute)]">
-      Open the Sunday close. After this you'll add member rows and split by giving type.
+      Start a counted-offering batch for one service. After the church has counted and tabulated
+      the offering, record the batch here, add the member rows, review it, then submit for posting.
     </p>
   </div>
 
@@ -268,13 +274,18 @@
     </label>
 
     <label class="block">
-      <span class="sl-eyebrow" style="font-size:10.5px">Service event (optional)</span>
-      <select bind:value={serviceEventId} class="sl-select mt-1.5">
-        <option value="">No service event</option>
+      <span class="sl-eyebrow" style="font-size:10.5px">Service event</span>
+      <select bind:value={serviceEventId} required class="sl-select mt-1.5">
+        <option value="" disabled>Pick the service this offering belongs to</option>
         {#each events as ev (ev.id)}
           <option value={ev.id}>{eventLabel(ev)}</option>
         {/each}
       </select>
+      {#if events.length === 0}
+        <p class="mt-1.5 text-[11.5px] text-[var(--ink-mute)]">
+          No recent service events found for this chapter. Create one in <a class="underline decoration-[var(--rule-strong)]" href="/church/settings">church settings</a> or <a class="underline decoration-[var(--rule-strong)]" href="/zone/giving-settings">zone giving settings</a>.
+        </p>
+      {/if}
     </label>
 
     <div class="grid grid-cols-2 gap-3">
@@ -322,8 +333,8 @@
       <p class="border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{createError}</p>
     {/if}
 
-    <button type="submit" disabled={creating} class="sl-btn sl-btn-primary">
-      {creating ? "Creating…" : "Create batch"}
+    <button type="submit" disabled={!canSubmit} class="sl-btn sl-btn-primary">
+      {creating ? "Creating…" : "Start batch"}
     </button>
   </form>
 </div>

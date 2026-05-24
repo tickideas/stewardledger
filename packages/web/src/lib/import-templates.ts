@@ -13,7 +13,9 @@ const baseRows = [
 ];
 
 const zoneRows = baseRows.map((row, index) =>
-  index === 0 ? ["chapter", ...row] : ["C000001", ...row],
+  index === 0
+    ? ["chapter", "service type", "service date", ...row]
+    : ["C000001", "Sunday service", "2026-05-24", ...row],
 );
 
 function toCsv(rows: string[][]): string {

@@ -9,6 +9,7 @@ import {
   givingCategoryUpdateSchema,
   givingTypeCreateSchema,
   givingTypeUpdateSchema,
+  CHAPTER_ROLES,
   type AuthorizedContext,
 } from "@stewardledger/shared";
 import { and, asc, eq } from "drizzle-orm";
@@ -59,6 +60,13 @@ async function zoneDefaultCurrency(zoneId: string): Promise<string> {
     .limit(1);
   if (!zone) throw new Error(`Zone ${zoneId} missing while creating account`);
   return zone.defaultCurrencyCode;
+}
+
+function canCreateGivingType(ctx: AuthorizedContext): boolean {
+  return (
+    hasAnyRole(ctx, ...GIVING_WRITE_ROLES) ||
+    ctx.roleCodes.includes(CHAPTER_ROLES.CHAPTER_ADMIN)
+  );
 }
 
 // ─── Categories ──────────────────────────────────────────────────────
@@ -241,7 +249,7 @@ tenantGivingRouter.get("/giving/types", async (c) => {
 
 tenantGivingRouter.post("/giving/types", zValidator("json", givingTypeCreateSchema), async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
-  if (!hasAnyRole(ctx, ...GIVING_WRITE_ROLES)) return forbidden(c);
+  if (!canCreateGivingType(ctx)) return forbidden(c);
   const input = c.req.valid("json");
   if (!(await ensureCategoryInZone(ctx.zoneId, input.categoryId))) {
     return c.json({ error: { code: "category_not_found", message: "Category not in this zone" } }, 404);

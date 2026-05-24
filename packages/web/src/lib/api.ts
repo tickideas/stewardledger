@@ -95,6 +95,7 @@ type Arg = AbortSignal | RequestOptions | typeof fetch | undefined;
 export const api = {
   get: <T>(path: string, arg?: Arg) => request<T>("GET", path, undefined, asOpts(arg)),
   post: <T>(path: string, body: unknown, arg?: Arg) => request<T>("POST", path, body, asOpts(arg)),
+  put: <T>(path: string, body: unknown, arg?: Arg) => request<T>("PUT", path, body, asOpts(arg)),
   patch: <T>(path: string, body: unknown, arg?: Arg) => request<T>("PATCH", path, body, asOpts(arg)),
   delete: <T>(path: string, arg?: Arg) => request<T>("DELETE", path, undefined, asOpts(arg)),
 };

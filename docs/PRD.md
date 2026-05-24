@@ -384,6 +384,8 @@ Users are global accounts (one per email). A user can belong to many zones (diff
 - Accounts/funds (where giving is allocated).
 - Giving-type-to-account mapping.
 - Service types and service events (with date, period auto-derivation).
+- Zonal admins can manage giving types and service types; chapter admins can add giving types their chapter needs, while those giving types remain zone-scoped.
+- Service-event attendance can be recorded against each service event.
 - Calendars: fiscal year, ministry year, partnership period, giving period — all reconciled in one model.
 
 ### 7.5 Contributions (the heart of the app)
@@ -396,6 +398,7 @@ Required:
 - Batch contribution entry for a service event (treasurer's Sunday workflow).
 - Online giving entry / reconciliation.
 - Bank statement import → contributions.
+- Church-scoped imports require a selected service event; zone-wide imports resolve service events per row from CSV service columns.
 - Editing with full audit; posted contributions are not mutated, they are reversed/adjusted.
 - Voiding with reason.
 - Splitting (one envelope = multiple giving types).

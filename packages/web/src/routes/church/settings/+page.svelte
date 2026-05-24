@@ -62,6 +62,25 @@
     createdAt: string;
     updatedAt: string;
   };
+  type GivingCategory = { id: string; name: string };
+  type GivingType = { id: string; categoryId: string; name: string; shortCode: string | null; isActive: boolean };
+  type ServiceType = { id: string; name: string; shortCode: string | null };
+  type ServiceEvent = {
+    id: string;
+    chapterId: string | null;
+    serviceTypeId: string;
+    serviceDate: string;
+    notes: string | null;
+  };
+  type Attendance = {
+    men: number;
+    women: number;
+    teens: number;
+    children: number;
+    firstTimers: number;
+    newConverts: number;
+    notes: string | null;
+  };
 
   const ZONE_ADMIN_CODES = new Set(["zone_owner", "zone_admin"]);
   const CHAPTER_ADMIN_CODE = "chapter_admin";
@@ -146,6 +165,33 @@
     }, 4000);
   }
 
+  // ─── Giving and service setup ────────────────────────────────────────
+  let givingCategories = $state<GivingCategory[]>([]);
+  let givingTypes = $state<GivingType[]>([]);
+  let serviceTypes = $state<ServiceType[]>([]);
+  let serviceEvents = $state<ServiceEvent[]>([]);
+  let givingTypeName = $state("");
+  let givingTypeCode = $state("");
+  let givingTypeCategoryId = $state("");
+  let creatingGivingType = $state(false);
+  let givingSetupError = $state<string | null>(null);
+  let serviceTypeId = $state("");
+  let serviceDate = $state(new Date().toISOString().slice(0, 10));
+  let serviceNotes = $state("");
+  let creatingServiceEvent = $state(false);
+  let selectedAttendanceEventId = $state("");
+  let attendance = $state<Attendance>({
+    men: 0,
+    women: 0,
+    teens: 0,
+    children: 0,
+    firstTimers: 0,
+    newConverts: 0,
+    notes: null,
+  });
+  let attendanceError = $state<string | null>(null);
+  let savingAttendance = $state(false);
+
   // ─── Invitations ─────────────────────────────────────────────────────
   let invitations = $state<Invitation[]>([]);
   let invError = $state<string | null>(null);
@@ -208,6 +254,35 @@
     }
   }
 
+  async function loadGivingSetup(chapterId: string, signal?: AbortSignal) {
+    try {
+      const params = new URLSearchParams({
+        chapterId,
+        limit: "50",
+      });
+      const [categoryRes, givingRes, serviceTypeRes, serviceEventRes] = await Promise.all([
+        api.get<{ items: GivingCategory[] }>("/api/tenant/giving/categories", signal),
+        api.get<{ items: GivingType[] }>("/api/tenant/giving/types", signal),
+        api.get<{ items: ServiceType[] }>("/api/tenant/giving/service-types", signal),
+        api.get<{ items: ServiceEvent[] }>(`/api/tenant/giving/service-events?${params.toString()}`, signal),
+      ]);
+      givingCategories = categoryRes.items;
+      givingTypes = givingRes.items;
+      serviceTypes = serviceTypeRes.items;
+      serviceEvents = serviceEventRes.items;
+      if (!givingTypeCategoryId && categoryRes.items.length > 0) givingTypeCategoryId = categoryRes.items[0].id;
+      if (!serviceTypeId && serviceTypeRes.items.length > 0) serviceTypeId = serviceTypeRes.items[0].id;
+      if (!selectedAttendanceEventId && serviceEventRes.items.length > 0) {
+        selectedAttendanceEventId = serviceEventRes.items[0].id;
+        await loadAttendance(selectedAttendanceEventId);
+      }
+      givingSetupError = null;
+    } catch (err) {
+      if (isAbortError(err)) return;
+      givingSetupError = err instanceof ApiError ? err.message : "Could not load giving setup.";
+    }
+  }
+
   async function loadInvitations(chapterId: string, signal: AbortSignal) {
     try {
       const res = await api.get<{ items: Invitation[] }>(
@@ -236,6 +311,7 @@
     loadRoster(here.id, controller.signal);
     loadInvitations(here.id, controller.signal);
     loadTemplates(here.id, controller.signal);
+    loadGivingSetup(here.id, controller.signal);
     return () => controller.abort();
   });
 
@@ -379,6 +455,95 @@
       templates = templates.filter((x) => x.id !== t.id);
     } catch (err) {
       templatesError = err instanceof ApiError ? err.message : "Could not delete template.";
+    }
+  }
+
+  function serviceTypeName(id: string): string {
+    return serviceTypes.find((type) => type.id === id)?.name ?? "Service";
+  }
+
+  function normaliseShortCode(value: string): string | null {
+    return value.trim().toUpperCase() || null;
+  }
+
+  async function createGivingType(e: SubmitEvent) {
+    e.preventDefault();
+    const here = active();
+    if (!here) return;
+    creatingGivingType = true;
+    givingSetupError = null;
+    try {
+      await api.post("/api/tenant/giving/types", {
+        name: givingTypeName.trim(),
+        shortCode: normaliseShortCode(givingTypeCode),
+        categoryId: givingTypeCategoryId,
+        isChapter: true,
+        isZonal: false,
+      });
+      givingTypeName = "";
+      givingTypeCode = "";
+      const controller = new AbortController();
+      await loadGivingSetup(here.id, controller.signal);
+    } catch (err) {
+      givingSetupError = err instanceof ApiError ? err.message : "Could not create giving type.";
+    } finally {
+      creatingGivingType = false;
+    }
+  }
+
+  async function createServiceEvent(e: SubmitEvent) {
+    e.preventDefault();
+    const here = active();
+    if (!here) return;
+    creatingServiceEvent = true;
+    givingSetupError = null;
+    try {
+      await api.post("/api/tenant/giving/service-events", {
+        chapterId: here.id,
+        serviceTypeId,
+        serviceDate,
+        notes: serviceNotes.trim() || null,
+      });
+      serviceNotes = "";
+      const controller = new AbortController();
+      await loadGivingSetup(here.id, controller.signal);
+    } catch (err) {
+      givingSetupError = err instanceof ApiError ? err.message : "Could not create service event.";
+    } finally {
+      creatingServiceEvent = false;
+    }
+  }
+
+  async function loadAttendance(eventId: string) {
+    attendanceError = null;
+    try {
+      const res = await api.get<{ attendance: Attendance }>(
+        `/api/tenant/giving/service-events/${eventId}/attendance`,
+      );
+      attendance = res.attendance;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        attendance = { men: 0, women: 0, teens: 0, children: 0, firstTimers: 0, newConverts: 0, notes: null };
+        return;
+      }
+      attendanceError = err instanceof ApiError ? err.message : "Could not load attendance.";
+    }
+  }
+
+  async function saveAttendance(e: SubmitEvent) {
+    e.preventDefault();
+    if (!selectedAttendanceEventId) return;
+    savingAttendance = true;
+    attendanceError = null;
+    try {
+      await api.put(
+        `/api/tenant/giving/service-events/${selectedAttendanceEventId}/attendance`,
+        attendance,
+      );
+    } catch (err) {
+      attendanceError = err instanceof ApiError ? err.message : "Could not save attendance.";
+    } finally {
+      savingAttendance = false;
     }
   }
 
@@ -539,6 +704,155 @@
         <p class="mt-3 border-l-2 border-[var(--ok)] bg-[var(--ok-soft)] px-3 py-2 text-[13px] text-[var(--ok)]">{bankingFlash}</p>
       {/if}
     </form>
+
+    <!-- ─── Giving setup ────────────────────────────────────────── -->
+    <section class="sl-reveal sl-reveal-4 mt-12 max-w-3xl">
+      <span class="sl-eyebrow">Giving setup</span>
+      <h2 class="sl-display mt-1 text-[24px] tracking-tight text-[var(--ink)]">Giving types &amp; services</h2>
+      <p class="mt-2 max-w-2xl text-[13px] text-[var(--ink-mute)]">
+        Add chapter giving labels, create service events before offerings are recorded, and keep attendance beside the event.
+      </p>
+
+      {#if givingSetupError}
+        <p class="mt-3 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{givingSetupError}</p>
+      {/if}
+
+      <div class="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <form class="sl-card-warm p-5" onsubmit={createGivingType}>
+          <span class="sl-eyebrow">Giving type</span>
+          <div class="mt-4 grid grid-cols-12 gap-3">
+            <label class="col-span-12">
+              <span class="sl-eyebrow" style="font-size:10.5px">Name</span>
+              <input required maxlength="120" bind:value={givingTypeName} disabled={!canEdit} class="sl-input mt-1.5" placeholder="Special seed" />
+            </label>
+            <label class="col-span-5">
+              <span class="sl-eyebrow" style="font-size:10.5px">Code</span>
+              <input maxlength="32" bind:value={givingTypeCode} disabled={!canEdit} class="sl-input sl-mono mt-1.5 uppercase" placeholder="SEED" />
+            </label>
+            <label class="col-span-7">
+              <span class="sl-eyebrow" style="font-size:10.5px">Category</span>
+              <select bind:value={givingTypeCategoryId} disabled={!canEdit} class="sl-select mt-1.5">
+                {#each givingCategories as category (category.id)}
+                  <option value={category.id}>{category.name}</option>
+                {/each}
+              </select>
+            </label>
+            {#if canEdit}
+              <div class="col-span-12 flex justify-end">
+                <button type="submit" disabled={creatingGivingType || !givingTypeCategoryId} class="sl-btn sl-btn-primary">
+                  {creatingGivingType ? "Adding…" : "Add giving type"}
+                </button>
+              </div>
+            {/if}
+          </div>
+        </form>
+
+        <form class="sl-card-warm p-5" onsubmit={createServiceEvent}>
+          <span class="sl-eyebrow">Service event</span>
+          <div class="mt-4 grid grid-cols-12 gap-3">
+            <label class="col-span-7">
+              <span class="sl-eyebrow" style="font-size:10.5px">Service type</span>
+              <select bind:value={serviceTypeId} disabled={!canEdit} class="sl-select mt-1.5">
+                {#each serviceTypes as type (type.id)}
+                  <option value={type.id}>{type.name}</option>
+                {/each}
+              </select>
+            </label>
+            <label class="col-span-5">
+              <span class="sl-eyebrow" style="font-size:10.5px">Date</span>
+              <input type="date" required bind:value={serviceDate} disabled={!canEdit} class="sl-input mt-1.5" />
+            </label>
+            <label class="col-span-12">
+              <span class="sl-eyebrow" style="font-size:10.5px">Notes</span>
+              <input maxlength="2000" bind:value={serviceNotes} disabled={!canEdit} class="sl-input mt-1.5" placeholder="optional" />
+            </label>
+            {#if canEdit}
+              <div class="col-span-12 flex justify-end">
+                <button type="submit" disabled={creatingServiceEvent || !serviceTypeId} class="sl-btn sl-btn-primary">
+                  {creatingServiceEvent ? "Creating…" : "Create event"}
+                </button>
+              </div>
+            {/if}
+          </div>
+        </form>
+      </div>
+
+      <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div class="sl-card overflow-hidden">
+          <div class="border-b border-[var(--rule)] bg-[var(--paper-soft)] px-5 py-3">
+            <span class="sl-eyebrow">Active giving types</span>
+          </div>
+          <div class="divide-y divide-[var(--rule)]">
+            {#each givingTypes.filter((type) => type.isActive).slice(0, 8) as type (type.id)}
+              <div class="flex items-center justify-between gap-3 px-5 py-3 text-[13px]">
+                <span class="text-[var(--ink)]">{type.name}</span>
+                <span class="sl-mono text-[11px] text-[var(--ink-mute)]">{type.shortCode ?? "—"}</span>
+              </div>
+            {/each}
+            {#if givingTypes.length === 0}
+              <p class="px-5 py-5 text-[13px] text-[var(--ink-mute)]">No giving types loaded yet.</p>
+            {/if}
+          </div>
+        </div>
+
+        <div class="sl-card overflow-hidden">
+          <div class="border-b border-[var(--rule)] bg-[var(--paper-soft)] px-5 py-3">
+            <span class="sl-eyebrow">Recent service events</span>
+          </div>
+          <div class="divide-y divide-[var(--rule)]">
+            {#each serviceEvents.slice(0, 8) as event (event.id)}
+              <div class="flex items-center justify-between gap-3 px-5 py-3 text-[13px]">
+                <span class="text-[var(--ink)]">{serviceTypeName(event.serviceTypeId)}</span>
+                <span class="sl-mono text-[11px] text-[var(--ink-mute)]">{event.serviceDate}</span>
+              </div>
+            {/each}
+            {#if serviceEvents.length === 0}
+              <p class="px-5 py-5 text-[13px] text-[var(--ink-mute)]">No service events yet.</p>
+            {/if}
+          </div>
+        </div>
+      </div>
+
+      <form class="mt-6 sl-card-warm p-5" onsubmit={saveAttendance}>
+        <div class="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <span class="sl-eyebrow">Attendance</span>
+            <p class="mt-1 text-[12px] text-[var(--ink-mute)]">Record headcount against a service event.</p>
+          </div>
+          <label class="min-w-64">
+            <span class="sl-eyebrow" style="font-size:10.5px">Event</span>
+            <select
+              bind:value={selectedAttendanceEventId}
+              onchange={() => selectedAttendanceEventId && loadAttendance(selectedAttendanceEventId)}
+              class="sl-select mt-1.5"
+            >
+              <option value="">Pick event</option>
+              {#each serviceEvents as event (event.id)}
+                <option value={event.id}>{event.serviceDate} · {serviceTypeName(event.serviceTypeId)}</option>
+              {/each}
+            </select>
+          </label>
+        </div>
+        <div class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-6">
+          <label><span class="sl-eyebrow" style="font-size:10.5px">Men</span><input type="number" min="0" bind:value={attendance.men} class="sl-input mt-1.5" /></label>
+          <label><span class="sl-eyebrow" style="font-size:10.5px">Women</span><input type="number" min="0" bind:value={attendance.women} class="sl-input mt-1.5" /></label>
+          <label><span class="sl-eyebrow" style="font-size:10.5px">Teens</span><input type="number" min="0" bind:value={attendance.teens} class="sl-input mt-1.5" /></label>
+          <label><span class="sl-eyebrow" style="font-size:10.5px">Children</span><input type="number" min="0" bind:value={attendance.children} class="sl-input mt-1.5" /></label>
+          <label><span class="sl-eyebrow" style="font-size:10.5px">First timers</span><input type="number" min="0" bind:value={attendance.firstTimers} class="sl-input mt-1.5" /></label>
+          <label><span class="sl-eyebrow" style="font-size:10.5px">New converts</span><input type="number" min="0" bind:value={attendance.newConverts} class="sl-input mt-1.5" /></label>
+        </div>
+        {#if attendanceError}
+          <p class="mt-3 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{attendanceError}</p>
+        {/if}
+        {#if canEdit}
+          <div class="mt-4 flex justify-end">
+            <button type="submit" disabled={savingAttendance || !selectedAttendanceEventId} class="sl-btn sl-btn-primary">
+              {savingAttendance ? "Saving…" : "Save attendance"}
+            </button>
+          </div>
+        {/if}
+      </form>
+    </section>
 
     <!-- ─── Roster ────────────────────────────────────────────── -->
     <section class="sl-reveal sl-reveal-4 mt-12 max-w-3xl">

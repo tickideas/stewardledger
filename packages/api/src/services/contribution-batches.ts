@@ -99,26 +99,27 @@ export async function createBatch(
     if (!(await existsInZone(tx, chapters, ctx.zoneId, input.chapterId))) {
       throw new ContributionError("chapter_not_found", "Chapter not in this zone.");
     }
-    if (input.serviceEventId) {
-      const [evt] = await tx
-        .select({ id: serviceEvents.id, chapterId: serviceEvents.chapterId })
-        .from(serviceEvents)
-        .where(
-          and(
-            eq(serviceEvents.zoneId, ctx.zoneId),
-            eq(serviceEvents.id, input.serviceEventId),
-          ),
-        )
-        .limit(1);
-      if (!evt) {
-        throw new ContributionError("service_event_not_found", "Service event not in this zone.");
-      }
-      if (evt.chapterId !== null && evt.chapterId !== input.chapterId) {
-        throw new ContributionError(
-          "service_event_chapter_mismatch",
-          "Service event belongs to a different chapter than the batch.",
-        );
-      }
+    if (!input.serviceEventId) {
+      throw new ContributionError("service_event_required", "Service event is required for batches.");
+    }
+    const [evt] = await tx
+      .select({ id: serviceEvents.id, chapterId: serviceEvents.chapterId })
+      .from(serviceEvents)
+      .where(
+        and(
+          eq(serviceEvents.zoneId, ctx.zoneId),
+          eq(serviceEvents.id, input.serviceEventId),
+        ),
+      )
+      .limit(1);
+    if (!evt) {
+      throw new ContributionError("service_event_not_found", "Service event not in this zone.");
+    }
+    if (evt.chapterId !== null && evt.chapterId !== input.chapterId) {
+      throw new ContributionError(
+        "service_event_chapter_mismatch",
+        "Service event belongs to a different chapter than the batch.",
+      );
     }
     if (
       input.paymentMethodId &&
@@ -139,9 +140,9 @@ export async function createBatch(
     // Paying-in book validation: when a treasurer attaches a
     // reference code, confirm it falls within an active book for
     // the chapter on the batch's date. "Batch date" is the
-    // attached service event's date when present, otherwise today
-    // UTC — the same calendar a treasurer would use to look up
-    // an active pad. Normalising empty-string to null up front
+    // required attached service event's date — the same calendar a
+    // treasurer would use to look up an active pad. Normalising
+    // empty-string to null up front
     // means the validator gate AND the persisted column treat the
     // two identically — a "" code can't slip past validation and
     // land in the DB as an empty string.
@@ -150,7 +151,7 @@ export async function createBatch(
       const onDate = await resolveBatchValidationDate(
         tx,
         ctx.zoneId,
-        input.serviceEventId ?? null,
+        input.serviceEventId,
       );
       try {
         await assertReferenceCodeInRange(tx, {
@@ -171,7 +172,7 @@ export async function createBatch(
       .values({
         zoneId: ctx.zoneId,
         chapterId: input.chapterId,
-        serviceEventId: input.serviceEventId ?? null,
+        serviceEventId: input.serviceEventId,
         paymentMethodId: input.paymentMethodId ?? null,
         sourceType: input.sourceType,
         referenceCode,
@@ -227,6 +228,9 @@ export async function updateDraftBatch(
         `Only draft batches can be edited (status='${existing.status}').`,
       );
     }
+    if ("serviceEventId" in patch && patch.serviceEventId == null) {
+      throw new ContributionError("service_event_required", "Service event is required for batches.");
+    }
     if (patch.serviceEventId) {
       const [evt] = await tx
         .select({ id: serviceEvents.id, chapterId: serviceEvents.chapterId })
@@ -259,8 +263,7 @@ export async function updateDraftBatch(
     // "" → null up front: the validator gate skips, and the DB
     // write below clears the column rather than persisting "".
     // The lookup date follows the patch's service event when the
-    // key is supplied (including an explicit `null`, which clears
-    // the link); otherwise the existing batch's service event.
+    // key is supplied; otherwise the existing batch's service event.
     // "Key supplied" semantics matter here because
     // `?? existing.serviceEventId` would silently ignore an
     // explicit `serviceEventId: null` and validate against the
