@@ -122,6 +122,12 @@
       groups = res.items;
       total = res.total;
       loadError = null;
+      // Clamp page if the dataset shrank under us (e.g. delete on the
+      // last page leaves offset past the end — we'd render an empty
+      // table with a nonsensical "51–50 of 50" indicator otherwise).
+      // One refetch is enough because clampPage only fires when the
+      // observed page no longer fits the new total.
+      if (clampPage()) void refresh();
     } catch (err) {
       if (isAbortError(err)) return;
       if (my !== refreshToken) return;
@@ -200,6 +206,21 @@
     if (target === page) return;
     page = target;
     void refresh();
+  }
+
+  /**
+   * Clamp `page` to a valid index for the current `total`. Returns true
+   * when the value actually changed so the caller can decide whether to
+   * refetch. Only fires when the page is past-the-end *and* the dataset
+   * still has rows — a result set that genuinely went empty should keep
+   * page=0 and let the "No groups match this search" empty-state render.
+   */
+  function clampPage(): boolean {
+    if (total === null || total === 0 || page === 0) return false;
+    const maxPage = Math.max(0, Math.ceil(total / DIRECTORY_PAGE_SIZE) - 1);
+    if (page <= maxPage) return false;
+    page = maxPage;
+    return true;
   }
 
   async function create(e: SubmitEvent) {

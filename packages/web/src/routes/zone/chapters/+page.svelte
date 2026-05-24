@@ -187,6 +187,11 @@
       chapters = res.items;
       total = res.total;
       loadError = null;
+      // Clamp page if the dataset shrank under us (e.g. assign-group
+      // narrowed the filtered set, or a search returned fewer matches
+      // than the page we were on). Without this we'd render an empty
+      // table with an indicator like "51–50 of 50".
+      if (clampPage()) void refresh();
     } catch (err) {
       if (isAbortError(err)) return;
       if (my !== refreshToken) return;
@@ -230,6 +235,21 @@
     if (target === page) return;
     page = target;
     void refresh();
+  }
+
+  /**
+   * Clamp `page` to a valid index for the current `total`. Returns true
+   * when the value actually changed so the caller can decide whether to
+   * refetch. Only fires when the page is past-the-end *and* the dataset
+   * still has rows — a genuinely empty result should keep page=0 and
+   * render the empty-state copy.
+   */
+  function clampPage(): boolean {
+    if (total === null || total === 0 || page === 0) return false;
+    const maxPage = Math.max(0, Math.ceil(total / DIRECTORY_PAGE_SIZE) - 1);
+    if (page <= maxPage) return false;
+    page = maxPage;
+    return true;
   }
 
   async function create(e: SubmitEvent) {
