@@ -18,7 +18,8 @@
     "test:watch": "ENV_FILE=../../.env.test vitest",
     "seed:demo": "tsx scripts/seed-demo.ts",
     "make-super-admin": "tsx scripts/make-super-admin.ts",
-    "create-admin": "tsx scripts/create-admin.ts"
+    "create-admin": "tsx scripts/create-admin.ts",
+    "restore-export": "tsx scripts/restore-export.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.4",

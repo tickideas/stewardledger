@@ -98,6 +98,7 @@ export const ZONAL_NAV: NavGroup[] = [
     items: [
       { href: "/zone/administrators", label: "Team access" },
       { href: "/zone/audit", label: "Audit search" },
+      { href: "/zone/settings", label: "Zone settings" },
     ],
   },
 ];

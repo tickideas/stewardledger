@@ -60,7 +60,19 @@ async function request<T>(
   return json as T;
 }
 
-function currentZoneSlug(): string | null {
+/**
+ * Resolve the active zone slug the same way `api.get/post/...` does:
+ * URL `?zone=` query param (writes through to localStorage) →
+ * `localStorage.stewardledger.activeZoneSlug` →
+ * `session.current.activeZoneSlug`.
+ *
+ * Exported so direct-`fetch` paths (e.g. blob downloads where the
+ * tenant header has to be set on a non-`api.*` request) can stay
+ * in sync with the wrapper's resolution — reading localStorage
+ * alone misses the session-store fallback that fresh browsers /
+ * private windows depend on.
+ */
+export function currentZoneSlug(): string | null {
   if (typeof window === "undefined") return null;
   const fromUrl = new URLSearchParams(window.location.search).get("zone");
   if (fromUrl) {
