@@ -576,7 +576,7 @@
             disabled={!mfaDirty || mfaSaving}
             onclick={saveMfa}
           >
-            {mfaSaving ? "Saving…" : mfaDirty ? "Save changes" : "Saved"}
+            {mfaSaving ? "Saving…" : mfaDirty ? "Save changes" : "No changes"}
           </button>
         </div>
       </div>

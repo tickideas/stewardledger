@@ -17,7 +17,7 @@ import {
   MFA_ENFORCEABLE_ROLE_CODES,
   type MfaEnforceableRoleCode,
 } from "@stewardledger/shared";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import { writeAudit } from "../audit";
 
@@ -48,12 +48,6 @@ function normalise(codes: readonly string[]): string[] {
   return [...seen].sort();
 }
 
-function arraysEqual(a: readonly string[], b: readonly string[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
-  return true;
-}
-
 export interface UpdateMfaRoleCodesInput {
   zoneId: string;
   actorUserId: string | null;
@@ -74,27 +68,37 @@ export async function updateMfaRequiredRoleCodes(
   { zoneId, actorUserId, codes }: UpdateMfaRoleCodesInput,
 ): Promise<MfaEnforceableRoleCode[]> {
   const normalised = normalise(codes);
-  const unknown = normalised.filter((c) => !ENFORCEABLE.has(c));
-  if (unknown.length > 0) {
+  const unknownCodes = normalised.filter((c) => !ENFORCEABLE.has(c));
+  if (unknownCodes.length > 0) {
     throw new ZoneMfaError(
       "invalid_role",
-      `unknown role code(s): ${unknown.join(", ")}`,
-      { unknown },
+      `unknown role code(s): ${unknownCodes.join(", ")}`,
+      { unknownCodes },
     );
   }
   return await database.transaction(async (tx) => {
+    // `.for("update")` serialises concurrent PATCHes against the
+    // same zone. Without it, two operators saving in parallel each
+    // see the same `before` snapshot, both compute `after` against
+    // it, and both write — leaving an audit trail where one row's
+    // `before` is already stale (a state the column never actually
+    // occupied). The lock keeps the audit log readable as a real
+    // sequence of transitions.
     const [row] = await tx
       .select({ codes: zones.mfaRequiredRoleCodes })
       .from(zones)
       .where(and(eq(zones.id, zoneId), isNull(zones.deletedAt)))
+      .for("update")
       .limit(1);
     if (!row) {
       throw new ZoneMfaError("zone_not_found", `zone ${zoneId} not found`);
     }
     // Re-normalise the stored value too — historical SQL surgery
-    // may have left mixed-case or unsorted entries.
+    // may have left mixed-case or unsorted entries. Because both
+    // sides are normalised + sorted, a join-equality check is
+    // sufficient (codes are ASCII, no commas).
     const before = normalise(row.codes ?? []);
-    if (arraysEqual(before, normalised)) {
+    if (before.join(",") === normalised.join(",")) {
       return before as MfaEnforceableRoleCode[];
     }
     await tx
@@ -127,7 +131,7 @@ export interface MfaEnforcementSummary {
  * "Blast radius" counter for the UI: how many users hold an
  * enforcement-required role in this zone, and how many of them have
  * already enrolled in TOTP. Returns `{ required: 0, enrolled: 0 }`
- * when the column is empty so the UI can render the no-op state
+ * when the codes list is empty so the UI can render the no-op state
  * without a null-check.
  *
  * Bindings are filtered by `revoked_at IS NULL`; only active bindings
@@ -135,23 +139,35 @@ export interface MfaEnforcementSummary {
  * holding both zone_owner and zone_admin) so the counts match the
  * "people who would be locked out tomorrow" question the operator is
  * actually asking.
+ *
+ * Codes can be passed in by a caller that already loaded them (the
+ * GET handler does this to avoid a redundant SELECT against the
+ * same row). When omitted, the codes are fetched here.
  */
 export async function mfaEnforcementSummary(
   database: Db,
   zoneId: string,
+  codes?: readonly string[],
 ): Promise<MfaEnforcementSummary> {
-  const [zone] = await database
-    .select({ codes: zones.mfaRequiredRoleCodes })
-    .from(zones)
-    .where(eq(zones.id, zoneId))
-    .limit(1);
-  if (!zone) return { required: 0, enrolled: 0 };
-  const codes = normalise(zone.codes ?? []);
-  if (codes.length === 0) return { required: 0, enrolled: 0 };
+  let resolved: string[];
+  if (codes !== undefined) {
+    resolved = normalise(codes);
+  } else {
+    const [zone] = await database
+      .select({ codes: zones.mfaRequiredRoleCodes })
+      .from(zones)
+      .where(and(eq(zones.id, zoneId), isNull(zones.deletedAt)))
+      .limit(1);
+    if (!zone) return { required: 0, enrolled: 0 };
+    resolved = normalise(zone.codes ?? []);
+  }
+  if (resolved.length === 0) return { required: 0, enrolled: 0 };
 
-  // `user_role_bindings.roleId` references `roles.id`; the role code
-  // lives on the `roles` row. Join through.
-  const rows = await database
+  // Aggregate in SQL rather than streaming rows back and counting in
+  // JS. `user_role_bindings.roleId` references `roles.id`; the role
+  // code lives on the `roles` row. We `SELECT DISTINCT` so a user
+  // holding two enforced roles is counted once, then aggregate.
+  const distinctUsers = database
     .selectDistinct({
       userId: userTable.id,
       twoFactorEnabled: userTable.twoFactorEnabled,
@@ -163,18 +179,27 @@ export async function mfaEnforcementSummary(
       and(
         eq(userRoleBindings.zoneId, zoneId),
         isNull(userRoleBindings.revokedAt),
-        inArray(roles.code, codes),
+        inArray(roles.code, resolved),
       ),
-    );
-  const required = rows.length;
-  const enrolled = rows.filter((r) => r.twoFactorEnabled).length;
-  return { required, enrolled };
+    )
+    .as("u");
+  const [agg] = await database
+    .select({
+      required: sql<number>`count(*)::int`,
+      enrolled: sql<number>`count(*) filter (where ${distinctUsers.twoFactorEnabled})::int`,
+    })
+    .from(distinctUsers);
+  return {
+    required: agg?.required ?? 0,
+    enrolled: agg?.enrolled ?? 0,
+  };
 }
 
 /**
  * Read helper used by the GET payload so the UI can render the
  * current list without a second round-trip. Always returns the
- * canonical normalised shape.
+ * canonical normalised shape. Filters on `deletedAt IS NULL` as
+ * defence-in-depth — a soft-deleted zone has no MFA enforcement.
  */
 export async function loadMfaRequiredRoleCodes(
   database: Db,
@@ -183,7 +208,7 @@ export async function loadMfaRequiredRoleCodes(
   const [row] = await database
     .select({ codes: zones.mfaRequiredRoleCodes })
     .from(zones)
-    .where(eq(zones.id, zoneId))
+    .where(and(eq(zones.id, zoneId), isNull(zones.deletedAt)))
     .limit(1);
   if (!row) return [];
   return normalise(row.codes ?? []) as MfaEnforceableRoleCode[];

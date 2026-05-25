@@ -470,12 +470,15 @@ adminRouter.get("/zones/:slug", async (c) => {
   const totalContributionCount = subtotals.reduce((acc, s) => acc + s.count, 0);
 
   // MFA enforcement bundle for the "Two-factor enforcement" card on
-  // the platform-admin zone-detail page. Read in parallel with the
-  // existing aggregates so the GET stays single-round-trip.
-  const [mfaRequiredRoleCodes, mfaSummary] = await Promise.all([
-    loadMfaRequiredRoleCodes(db, zone.id),
-    mfaEnforcementSummary(db, zone.id),
-  ]);
+  // the platform-admin zone-detail page. The codes are read once and
+  // passed through to the summary helper to avoid a redundant SELECT
+  // against the same row.
+  const mfaRequiredRoleCodes = await loadMfaRequiredRoleCodes(db, zone.id);
+  const mfaSummary = await mfaEnforcementSummary(
+    db,
+    zone.id,
+    mfaRequiredRoleCodes,
+  );
 
   return c.json({
     zone,
