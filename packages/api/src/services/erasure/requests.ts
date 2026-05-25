@@ -576,19 +576,52 @@ export async function applyErasureRequest(
       ? toSummary(final)
       : toSummary({ ...row, status: "applied", appliedAt: now, updatedAt: now });
   } catch (err) {
-    log.error(
-      { err, requestId: row.id, zoneId: row.zoneId },
-      "erasure apply: scrub failed; marking request failed",
-    );
-    await database
-      .update(erasureRequests)
-      .set({
-        status: "failed",
-        errorCode: "apply_failed",
-        errorMessage: err instanceof Error ? err.message : String(err),
-        updatedAt: now,
-      })
-      .where(eq(erasureRequests.id, row.id));
+    // The zone-scope path commits its `applied` status + the
+    // platform-scope `platform.zone.erase.applied` audit row
+    // BEFORE running the hard-purge (so the GDPR evidence trail
+    // outlives the cascade). If the purge subsequently raises,
+    // the request row is already terminal at `applied` — a
+    // naive UPDATE to `failed` here would contradict the audit
+    // log ("applied" written, then state "failed") and leave
+    // the zone in a half-purged state. We re-read the row's
+    // current status: only `pending` rows are eligible for the
+    // `failed` transition.
+    const [latest] = await database
+      .select({ status: erasureRequests.status })
+      .from(erasureRequests)
+      .where(eq(erasureRequests.id, row.id))
+      .limit(1);
+    if (latest?.status === "pending") {
+      log.error(
+        { err, requestId: row.id, zoneId: row.zoneId },
+        "erasure apply: scrub failed; marking request failed",
+      );
+      await database
+        .update(erasureRequests)
+        .set({
+          status: "failed",
+          errorCode: "apply_failed",
+          errorMessage: err instanceof Error ? err.message : String(err),
+          updatedAt: now,
+        })
+        .where(eq(erasureRequests.id, row.id));
+    } else {
+      // The request committed to `applied` (zone-scope: audit
+      // row + status flip ran first, hard-purge raised second).
+      // The DB state is correct — the request DID apply — but
+      // the storage / cascade is half-done. This is operator-
+      // attention territory; log loudly and re-throw without
+      // mutating the row.
+      log.error(
+        {
+          err,
+          requestId: row.id,
+          zoneId: row.zoneId,
+          status: latest?.status ?? "unknown",
+        },
+        "erasure apply: post-commit failure on already-applied request; operator must verify hard-purge state manually",
+      );
+    }
     throw err;
   }
 }

@@ -23,7 +23,7 @@
 
 import type { Context } from "hono";
 import { Hono } from "hono";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { zones } from "@stewardledger/db/schema";
 import { PLATFORM_ROLES } from "@stewardledger/shared";
 
@@ -76,13 +76,14 @@ function requireSuperAdmin(c: Context): Response | null {
  * Resolve a zone slug → id. Returns null when the slug doesn't
  * match a live zone (the admin surface intentionally refuses
  * already-soft-deleted zones; a half-purged tenant should not
- * be re-erased via this surface).
+ * be re-erased via this surface). `deletedAt IS NULL` matches
+ * the same gate the tenant middleware uses for resolution.
  */
 async function resolveZoneId(slug: string): Promise<string | null> {
   const [row] = await db
     .select({ id: zones.id })
     .from(zones)
-    .where(and(eq(zones.slug, slug)))
+    .where(and(eq(zones.slug, slug), isNull(zones.deletedAt)))
     .limit(1);
   return row?.id ?? null;
 }

@@ -18,7 +18,7 @@ import {
 } from "@stewardledger/db/schema";
 import { db } from "../../db";
 import { InMemoryStorage, setStorageForTesting } from "../storage";
-import { createErasureRequest } from "./requests";
+import { applyErasureRequest, createErasureRequest } from "./requests";
 import { runErasureSweep } from "./cron";
 
 function unique(): string {
@@ -162,65 +162,79 @@ describe("runErasureSweep", () => {
     expect(sweepAudits.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("isolates a failing row: marks it failed, continues, summary reports the failure", async () => {
-    // Two past-due rows. The second points at a member whose
-    // surrounding zone has just been hard-deleted in-band (we
-    // simulate by dropping the request's zone row between
-    // scheduling and the sweep). Because the apply path runs
-    // inside a transaction that writes an audit row with that
-    // zone_id, the FK fails and the row is marked failed.
-    const ok = await seedMember();
-    const broken = await seedMember();
-    cleanupZoneIds.push(ok.zoneId); // broken zone is hard-deleted below
-    cleanupUserIds.push(ok.userId, broken.userId);
+  it("isolates a failing row: continues the loop, counts the failure in the summary", async () => {
+    // Two genuinely past-due pending rows. We inject a failure
+    // by spying on `applyErasureRequest` so the second call
+    // throws; the cron must catch, bump `summary.failed`, and
+    // keep going through the rest of the batch.
+    const okA = await seedMember();
+    const failingB = await seedMember();
+    cleanupZoneIds.push(okA.zoneId, failingB.zoneId);
+    cleanupUserIds.push(okA.userId, failingB.userId);
 
-    const okReq = await createErasureRequest(db, {
-      zoneId: ok.zoneId,
-      actorUserId: ok.userId,
+    const reqA = await createErasureRequest(db, {
+      zoneId: okA.zoneId,
+      actorUserId: okA.userId,
       scope: "member",
-      memberId: ok.memberId,
+      memberId: okA.memberId,
       windowDays: 1,
     });
-    const brokenReq = await createErasureRequest(db, {
-      zoneId: broken.zoneId,
-      actorUserId: broken.userId,
+    const reqB = await createErasureRequest(db, {
+      zoneId: failingB.zoneId,
+      actorUserId: failingB.userId,
       scope: "member",
-      memberId: broken.memberId,
+      memberId: failingB.memberId,
       windowDays: 1,
     });
-    await db
-      .update(erasureRequests)
-      .set({
-        appliesAt: new Date(Date.now() - 1000),
-        createdAt: new Date(Date.now() - 1_000_000),
-      })
-      .where(eq(erasureRequests.id, okReq.id));
-    await db
-      .update(erasureRequests)
-      .set({
-        appliesAt: new Date(Date.now() - 1000),
-        createdAt: new Date(Date.now() - 1_000_000),
-      })
-      .where(eq(erasureRequests.id, brokenReq.id));
+    for (const id of [reqA.id, reqB.id]) {
+      await db
+        .update(erasureRequests)
+        .set({
+          appliesAt: new Date(Date.now() - 1000),
+          createdAt: new Date(Date.now() - 1_000_000),
+        })
+        .where(eq(erasureRequests.id, id));
+    }
 
-    // Force the broken row's apply to fail: corrupt the request
-    // row's scope to `zone` while still in pending state. The
-    // CHECK rejects scope='zone' with non-null member_id, so the
-    // UPDATE itself raises and we fall into the failed branch.
-    // Instead, simpler: pre-flip the broken row's status to
-    // `applied` so the apply path's "not_pending" check raises
-    // before it can succeed.
-    await db
-      .update(erasureRequests)
-      .set({ status: "applied", appliedAt: new Date() })
-      .where(eq(erasureRequests.id, brokenReq.id));
+    // Inject a stub apply path: when the failing row's id
+    // comes through, throw. The cron must catch + count +
+    // continue with the next row.
+    const summary = await runErasureSweep(
+      db,
+      undefined,
+      async (database, input) => {
+        if (input.requestId === reqB.id) {
+          throw new Error("simulated apply failure");
+        }
+        return applyErasureRequest(database, input);
+      },
+    );
 
-    const summary = await runErasureSweep(db);
-
-    // The "applied" row is not picked up (filter is status='pending'),
-    // so `considered` is just 1 — the genuinely past-due one.
-    expect(summary.considered).toBe(1);
+    expect(summary.considered).toBe(2);
     expect(summary.applied).toBe(1);
-    expect(summary.failed).toBe(0);
+    expect(summary.failed).toBe(1);
+
+    // The good row still applied + scrubbed cleanly.
+    const [appliedRow] = await db
+      .select({ status: erasureRequests.status })
+      .from(erasureRequests)
+      .where(eq(erasureRequests.id, reqA.id))
+      .limit(1);
+    expect(appliedRow.status).toBe("applied");
+
+    // The failing row stays `pending` (the spy threw before the
+    // apply path could mark it failed). The cron's catch only
+    // counts the failure for telemetry; flipping the request
+    // status is the apply path's job, and the apply path was
+    // intercepted. This matches production: a thrown error
+    // outside `applyErasureRequest`'s own catch (e.g. a process
+    // crash mid-call) leaves the row in `pending` for the next
+    // sweep to retry.
+    const [failingRow] = await db
+      .select({ status: erasureRequests.status })
+      .from(erasureRequests)
+      .where(eq(erasureRequests.id, reqB.id))
+      .limit(1);
+    expect(failingRow.status).toBe("pending");
   });
 });

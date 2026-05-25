@@ -57,14 +57,35 @@ export interface ErasureSweepSummary {
 }
 
 /**
+ * Signature of the apply path. Extracted so tests can inject a
+ * spy without resorting to module-binding rewrites — `cron.ts`
+ * imports `applyErasureRequest` at module init time, which means
+ * a `vi.spyOn` on the exported binding wouldn't be seen by
+ * `runErasureSweep`.
+ */
+type ApplyFn = (
+  database: Db,
+  input: {
+    requestId: string;
+    actorUserId: string | null;
+    now?: Date;
+  },
+) => Promise<unknown>;
+
+/**
  * Find every `pending` row whose `applies_at` has passed and run
  * the apply path on each. Per-row failures are caught + logged +
  * surface as `status='failed'` (the apply path itself handles the
  * status flip) so the loop keeps going.
+ *
+ * The `applyFn` parameter defaults to the real apply path; tests
+ * inject a stub to exercise the per-row failure-isolation branch
+ * without needing to set up a real scrub-failure scenario.
  */
 export async function runErasureSweep(
   database: Db,
   now: Date = new Date(),
+  applyFn: ApplyFn = applyErasureRequest,
 ): Promise<ErasureSweepSummary> {
   const due = await database
     .select({ id: erasureRequests.id })
@@ -84,7 +105,7 @@ export async function runErasureSweep(
 
   for (const row of due) {
     try {
-      await applyErasureRequest(database, {
+      await applyFn(database, {
         requestId: row.id,
         actorUserId: null, // cron-applied: no operator
         now,
