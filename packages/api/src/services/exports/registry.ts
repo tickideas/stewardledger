@@ -80,10 +80,11 @@ export interface ExcludedZoneScopedTable {
 /**
  * Restore order rationale:
  *
- *   100s — the zone row itself + per-zone tables every other
- *          table FK's into.
- *   200s — chapter / group taxonomy (chapters depend on regions /
- *          zones; groups depend on chapters via history).
+ *   100s — the zone row + per-zone identity tables every other
+ *          table FK's into (zones, custom_domains, roles).
+ *   200s — chapter / group taxonomy (groups first because
+ *          `chapters` has a composite FK
+ *          `chapters_zone_group_fk → groups`).
  *   300s — member identity (depends on chapters + lookups).
  *   400s — period dimension (depends on zones only).
  *   500s — financial taxonomy (giving categories / accounts /
@@ -96,11 +97,30 @@ export interface ExcludedZoneScopedTable {
  *          targets, paying-in-books, saved filters, report jobs,
  *          zone_exports itself is NOT included — see exclusions).
  *
- * The `zones` row sits at the front (`restoreOrder: 100`) because
- * every other entry FK's `zone_id → zones.id`. The restorer is
- * responsible for ensuring `regions.id` referenced by the zone
- * either pre-exists in the target schema or is nulled out (region
- * is a platform-managed global lookup, not per-zone data).
+ * The FK-order coverage test (`registry.test.ts`) parses every
+ * `references(() => parent.X)` and `foreignKey({foreignColumns:
+ * [parent.X, parent.Y]})` declaration in the schema, checks each
+ * parent that's also in this registry, and fails if any
+ * parent.restoreOrder >= child.restoreOrder. A future schema
+ * author can't quietly introduce a restore ordering bug.
+ *
+ * Out-of-bundle parents (the restorer's responsibility):
+ *
+ *   - `zones.regionId → regions.id` — `regions` is a
+ *     platform-managed global lookup. The restorer must either
+ *     pre-seed the referenced region in the target schema or
+ *     accept the `ON DELETE SET NULL` semantic and null it out.
+ *   - `user` FK columns (`createdByUserId`, `userId`,
+ *     `actorUserId`, etc., across ~20 tables) — Better Auth's
+ *     global `user` table is intentionally NOT exported (a tenant
+ *     bundle must not leak global account data into a different
+ *     deployment). The restorer's contract is to either:
+ *       (a) pre-seed referenced user rows in the target schema, or
+ *       (b) rewrite/null `*_by_user_id` columns before INSERT.
+ *     Option (b) is the v1 plan for the restore-helper script
+ *     (`scripts/restore-export.ts`, PR 3) since the typical
+ *     restore target is a fresh / different deployment where the
+ *     original user identities don't exist.
  */
 export const ZONE_SCOPED_TABLES: readonly ZoneScopedTable[] = [
   // 100s — zone identity + per-zone overrides
@@ -124,30 +144,32 @@ export const ZONE_SCOPED_TABLES: readonly ZoneScopedTable[] = [
     note: "Per-zone role rows (system + custom). User bindings later FK these.",
   },
 
-  // 200s — chapter + group taxonomy
+  // 200s — chapter + group taxonomy. `groups` first because
+  // `chapters_zone_group_fk` is a composite FK from chapters to
+  // groups (the chapter can claim membership of a group).
+  {
+    name: "groups",
+    table: schema.groups,
+    restoreOrder: 210,
+    note: "Group rows for the zone (feature-flagged by `zones.groups_enabled`). Restored before chapters because `chapters_zone_group_fk` references it.",
+  },
   {
     name: "chapters",
     table: schema.chapters,
-    restoreOrder: 210,
-    note: "Chapter rows for the zone.",
+    restoreOrder: 220,
+    note: "Chapter rows for the zone. Composite FK `chapters_zone_group_fk → groups`.",
   },
   {
     name: "chapter_name_history",
     table: schema.chapterNameHistory,
-    restoreOrder: 220,
-    note: "Append-only chapter rename log.",
-  },
-  {
-    name: "groups",
-    table: schema.groups,
-    restoreOrder: 230,
-    note: "Group rows for the zone (feature-flagged by `zones.groups_enabled`).",
+    restoreOrder: 225,
+    note: "Append-only chapter rename log. FKs `chapters`.",
   },
   {
     name: "chapter_group_history",
     table: schema.chapterGroupHistory,
-    restoreOrder: 240,
-    note: "Append-only chapter↔group reassignment log.",
+    restoreOrder: 230,
+    note: "Append-only chapter↔group reassignment log. FKs both `groups` and `chapters`.",
   },
 
   // 300s — lookups + members

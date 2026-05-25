@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import { getTableColumns, getTableName, is } from "drizzle-orm";
-import { PgTable } from "drizzle-orm/pg-core";
+import { PgTable, getTableConfig } from "drizzle-orm/pg-core";
 import * as schema from "@stewardledger/db/schema";
 import {
   EXCLUDED_ZONE_SCOPED_TABLES,
@@ -130,5 +130,38 @@ describe("zone export registry coverage", () => {
     expect(order.indexOf("user_role_bindings")).toBeGreaterThan(
       order.indexOf("roles"),
     );
+  });
+
+  it("every in-bundle FK respects restore order (parent before child)", () => {
+    // Reflect on every declared table's `foreignKeys` array, look
+    // up the parent table by name in the registry, and assert
+    // parent.restoreOrder < child.restoreOrder. This catches *any*
+    // future ordering bug — not just the hand-picked spot checks
+    // above — because it derives the parent set from the live
+    // schema rather than from a maintained allowlist.
+    const byName = new Map(
+      ZONE_SCOPED_TABLES.map((t) => [t.name, t.restoreOrder]),
+    );
+    const violations: string[] = [];
+    for (const entry of ZONE_SCOPED_TABLES) {
+      const { foreignKeys } = getTableConfig(entry.table);
+      for (const fk of foreignKeys) {
+        const ref = fk.reference();
+        const parentName = getTableName(ref.foreignTable);
+        // Self-references (e.g. a table FK'ing its own PK for a
+        // tree structure) are fine — the row is its own parent.
+        if (parentName === entry.name) continue;
+        // Parents outside the bundle (e.g. `user`, `regions`) are
+        // the restorer's problem, not the registry's — see header.
+        const parentOrder = byName.get(parentName);
+        if (parentOrder === undefined) continue;
+        if (parentOrder >= entry.restoreOrder) {
+          violations.push(
+            `${entry.name} (order=${entry.restoreOrder}) FKs ${parentName} (order=${parentOrder}) — parent must restore first`,
+          );
+        }
+      }
+    }
+    expect(violations, "FK restore-order violations").toEqual([]);
   });
 });
