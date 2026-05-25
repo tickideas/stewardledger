@@ -13,11 +13,13 @@ import { zones } from "@stewardledger/db/schema";
 import {
   DEFAULT_RETENTION_POLICY,
   hydrateRetentionPolicy,
+  zoneRetentionPolicySchema,
   type ZoneRetentionPolicy,
   type ZoneRetentionPolicyInput,
 } from "@stewardledger/shared";
 import { eq } from "drizzle-orm";
 
+import { log } from "../../logger";
 import { writeAudit } from "../audit";
 
 export class RetentionPolicyError extends Error {
@@ -27,6 +29,26 @@ export class RetentionPolicyError extends Error {
   ) {
     super(message);
   }
+}
+
+/**
+ * Read the stored partial policy from the column, defending against a
+ * corrupted blob (manual SQL surgery, downgraded code, etc.) by
+ * re-validating with the Zod schema. On a parse failure we fall back
+ * to `{}` (= every default) and log a warning so an operator can
+ * investigate without taking the zone offline.
+ */
+function safeParseStored(
+  zoneId: string,
+  raw: unknown,
+): ZoneRetentionPolicyInput {
+  const parsed = zoneRetentionPolicySchema.safeParse(raw ?? {});
+  if (parsed.success) return parsed.data;
+  log.warn(
+    { zoneId, raw, issues: parsed.error.issues },
+    "retention: stored policy failed validation; falling back to defaults",
+  );
+  return {};
 }
 
 /**
@@ -46,7 +68,7 @@ export async function loadRetentionPolicy(
   if (!row) {
     throw new RetentionPolicyError("zone_not_found", `zone ${zoneId} not found`);
   }
-  return hydrateRetentionPolicy(row.retentionPolicy as ZoneRetentionPolicyInput);
+  return hydrateRetentionPolicy(safeParseStored(zoneId, row.retentionPolicy));
 }
 
 /**
@@ -80,17 +102,30 @@ export interface UpdateRetentionPolicyInput {
  * Write a new policy. Returns the post-write hydrated shape so the
  * caller can hand it straight back to the client.
  *
+ * **PUT semantics: merge, not replace.** The incoming payload is an
+ * incremental edit on top of the prior effective policy — a client
+ * sending `{ audit_events: { retainDays: 30 } }` should not silently
+ * reset every other dimension to its default. We compute `after` by
+ * overlaying the validated input on the prior effective shape, then
+ * persist only the entries that differ from the system defaults
+ * (compaction keeps the stored column small).
+ *
  * No-op writes (the new effective policy matches the prior effective
  * policy) skip the column update **and** the audit row to keep the
  * audit log readable for actual changes. The `before` payload in the
  * audit row carries the prior **effective** shape, not the raw
  * compacted column, so an operator reading the audit log doesn't have
  * to mentally hydrate defaults.
+ *
+ * The service re-validates the input via `zoneRetentionPolicySchema`
+ * so non-route callers (scripts, tests, future workers) can't slip
+ * past the contract.
  */
 export async function updateRetentionPolicy(
   database: Db,
   { zoneId, actorUserId, policy }: UpdateRetentionPolicyInput,
 ): Promise<ZoneRetentionPolicy> {
+  const validated = zoneRetentionPolicySchema.parse(policy);
   return await database.transaction(async (tx) => {
     const [row] = await tx
       .select({ retentionPolicy: zones.retentionPolicy })
@@ -103,10 +138,18 @@ export async function updateRetentionPolicy(
         `zone ${zoneId} not found`,
       );
     }
-    const before = hydrateRetentionPolicy(
-      row.retentionPolicy as ZoneRetentionPolicyInput,
-    );
-    const compact = compactPolicy(policy);
+    const before = hydrateRetentionPolicy(safeParseStored(zoneId, row.retentionPolicy));
+    // Merge incoming partial onto the prior **effective** shape so a
+    // single-dimension edit cannot silently revert other dimensions.
+    const merged: ZoneRetentionPolicyInput = {
+      audit_events: validated.audit_events ?? before.audit_events,
+      import_files: validated.import_files ?? before.import_files,
+      import_rows: validated.import_rows ?? before.import_rows,
+      report_jobs: validated.report_jobs ?? before.report_jobs,
+      member_soft_deletes:
+        validated.member_soft_deletes ?? before.member_soft_deletes,
+    };
+    const compact = compactPolicy(merged);
     const after = hydrateRetentionPolicy(compact);
     if (effectivelyEqual(before, after)) {
       return before;

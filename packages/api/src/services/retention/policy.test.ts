@@ -132,6 +132,39 @@ describe("updateRetentionPolicy", () => {
     expect(audits.length).toBe(1);
   });
 
+  it("merges partial input on top of the stored shape (does not reset other dimensions)", async () => {
+    const zone = await seedZone();
+    const actor = await seedUser();
+    // First write tightens import_files.
+    await updateRetentionPolicy(db, {
+      zoneId: zone.id,
+      actorUserId: actor,
+      policy: { import_files: { retainDays: 30 } },
+    });
+    // Second write tightens audit_events only. The previous
+    // import_files override must survive.
+    const after = await updateRetentionPolicy(db, {
+      zoneId: zone.id,
+      actorUserId: actor,
+      policy: { audit_events: { retainDays: 60 } },
+    });
+    expect(after.audit_events.retainDays).toBe(60);
+    expect(after.import_files.retainDays).toBe(30);
+  });
+
+  it("re-validates input inside the service layer", async () => {
+    const zone = await seedZone();
+    const actor = await seedUser();
+    await expect(
+      updateRetentionPolicy(db, {
+        zoneId: zone.id,
+        actorUserId: actor,
+        // Bypassing the route, so the service has to be the guard.
+        policy: { audit_events: { retainDays: -1 } } as never,
+      }),
+    ).rejects.toThrow();
+  });
+
   it("strips defaults from the stored column (compactPolicy)", async () => {
     const zone = await seedZone();
     const actor = await seedUser();

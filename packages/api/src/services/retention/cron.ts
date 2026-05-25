@@ -1,16 +1,22 @@
 // packages/api/src/services/retention/cron.ts
-// Phase 9 \u2014 pg-boss schedule that runs the per-zone retention sweep
+// Phase 9 — pg-boss schedule that runs the per-zone retention sweep
 // once a day. Mirrors the shape of `services/reports/jobs-pgboss.ts`
 // so the operational model stays consistent: one queue, one
 // idempotent schedule, idempotent boot.
 //
-// The handler iterates every non-deleted zone, loads its policy, runs
-// each dimension sweep, and writes a single platform-scope audit row
-// per zone with the per-dimension deletion counts.
+// The handler iterates every non-soft-deleted zone, loads its policy,
+// runs each dimension sweep, and emits two kinds of audit rows:
+//
+//   - one **tenant-scope** `zone.retention.sweep` row PER ZONE when the
+//     pass actually deleted anything (skipped on a no-op so the audit
+//     log stays signal-heavy);
+//   - one **platform-scope** `platform.retention.sweep.run` row PER
+//     PASS carrying the cross-tenant summary, regardless of whether
+//     individual zones changed.
 //
 // RELEVANT FILES: ./policy.ts, ./sweep.ts, packages/api/src/services/queue.ts
 
-import { and, isNull } from "drizzle-orm";
+import { isNull } from "drizzle-orm";
 import { zones } from "@stewardledger/db/schema";
 
 import { db } from "../../db";
@@ -21,7 +27,7 @@ import { loadRetentionPolicy } from "./policy";
 import { sweepZone, type ZoneSweepSummary } from "./sweep";
 
 const SWEEP_QUEUE = "zone.retention.sweep";
-// 04:00 UTC \u2014 one hour after the report-cleanup schedule at 03:00.
+// 04:00 UTC — one hour after the report-cleanup schedule at 03:00.
 // Stacking the two daily jobs avoids competing for the same off-hour
 // window without needing a coordination layer.
 const SWEEP_CRON = "0 4 * * *";
@@ -51,13 +57,15 @@ export async function startRetentionSweep(): Promise<void> {
 }
 
 /**
- * Run a single sweep pass across every active zone. Exported so
- * tests can call it directly without pg-boss.
+ * Run a single sweep pass across every non-soft-deleted zone
+ * (`zones.deleted_at IS NULL`). Exported so tests can call it
+ * directly without pg-boss.
  *
- * Errors per zone are caught + logged \u2014 one zone's broken state
- * shouldn't block sweeps for every other tenant. The platform-scope
- * audit row carries the per-dimension deletion counts; an aggregate
- * row at the end carries the run summary.
+ * Errors per zone are caught + logged — one zone's broken state
+ * shouldn't block sweeps for every other tenant. The per-zone
+ * `zone.retention.sweep` audit row carries the per-dimension counts;
+ * the platform-scope `platform.retention.sweep.run` row carries the
+ * cross-tenant run summary.
  */
 export async function runRetentionSweep(
   database: typeof db,
@@ -65,7 +73,7 @@ export async function runRetentionSweep(
   const activeZones = await database
     .select({ id: zones.id })
     .from(zones)
-    .where(and(isNull(zones.deletedAt)));
+    .where(isNull(zones.deletedAt));
 
   const totals: ZoneSweepSummary = {
     audit_events: 0,
@@ -82,7 +90,7 @@ export async function runRetentionSweep(
       totals.import_files += summary.import_files;
       totals.import_rows += summary.import_rows;
       totals.report_jobs += summary.report_jobs;
-      // Per-zone tenant-scope audit row \u2014 readable from the existing
+      // Per-zone tenant-scope audit row — readable from the existing
       // `/zone/audit` surface. Skip the write when the pass was a
       // pure no-op so the audit log stays signal-heavy.
       const touchedAny =

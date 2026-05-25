@@ -85,15 +85,20 @@ New module `packages/api/src/services/retention/`:
     means platform-scope rows are untouched (we never scope
     them to a zone).
   - `sweepImportFiles(db, zoneId, retainDays)` — selects expired
-    `import_files` rows, calls `storage().delete(storageKey)` on
-    each, flips the row to a new `purged_at` timestamp on
-    `import_files`. The row itself stays for the audit trail
-    (mirrors the report-job `expired` pattern).
+    `import_files` rows still missing a `purged_at`, calls
+    `storage().delete(storageKey)` on each (best-effort), and
+    flips `purged_at = now()` on the row. The row itself is
+    **never hard-deleted** because `import_jobs(import_file_id)`
+    is `restrict` — historical jobs would block the DELETE.
+    Mirrors the report-job `expired` pattern.
   - `sweepImportRows(db, zoneId, retainDays)` — `DELETE FROM
     import_rows WHERE zone_id = $1 AND created_at < now() -
-    interval '$2 days' AND job_id NOT IN (SELECT id FROM
-    import_jobs WHERE status NOT IN ('committed',
-    'rolled_back'))`. Never purges rows from active jobs.
+    interval '$2 days' AND import_job_id NOT IN (SELECT id FROM
+    import_jobs WHERE zone_id = $1 AND status IN ('received',
+    'parsing', 'parsed', 'matching', 'matched', 'scheduled',
+    'committing'))`. Only protects **non-terminal** jobs;
+    `failed` and `rolled_back` are terminal, so their rows age
+    out (a re-upload would create a fresh job).
   - `sweepReportJobs(db, zoneId, retainDays)` — `DELETE FROM
     report_jobs WHERE zone_id = $1 AND status = 'expired' AND
     completed_at < now() - interval '$2 days'`. Sits on top of
@@ -104,14 +109,16 @@ New module `packages/api/src/services/retention/`:
 - `cron.ts` — registers a daily pg-boss schedule `zone.retention.sweep`
   at `0 4 * * *` (one hour after the report cleanup). The
   handler:
-  1. Loads every active zone.
+  1. Loads every non-soft-deleted zone (`zones.deleted_at IS NULL`).
   2. For each zone, loads the policy and calls each sweep
      function with the configured window. A `retainDays === 0`
-     skip is logged at `info`.
-  3. Aggregates totals and writes a single
-     `platform.zone.retention.sweep` audit row per zone with
-     `{ deleted: { auditEvents, importFiles, importRows,
-     reportJobs } }`.
+     dimension is a hard no-op.
+  3. Writes a **tenant-scope** `zone.retention.sweep` row PER
+     ZONE (skipped on a no-op pass) carrying the per-dimension
+     deletion counts, plus a single **platform-scope**
+     `platform.retention.sweep.run` row PER PASS carrying the
+     cross-tenant summary (always written, even when no zones
+     changed).
 - `*.test.ts` — vitest integration for each sweep with a
   seeded fixture (e.g. 100 audit rows spanning 10 years,
   `retainDays: 365` → leaves 365 rows give-or-take, deletes the

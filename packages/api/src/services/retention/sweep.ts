@@ -1,5 +1,5 @@
 // packages/api/src/services/retention/sweep.ts
-// Phase 9 \u2014 per-dimension retention sweeps.
+// Phase 9 — per-dimension retention sweeps.
 //
 // One exported function per dimension. Each:
 //   - Is bounded by a `LIMIT` chunk to avoid long-running transactions.
@@ -22,7 +22,7 @@ import {
   importRows,
   reportJobs,
 } from "@stewardledger/db/schema";
-import { and, eq, inArray, lt, notInArray } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, notInArray } from "drizzle-orm";
 
 import { log } from "../../logger";
 import { storage } from "../storage";
@@ -88,12 +88,18 @@ export async function sweepAuditEvents(
 }
 
 /**
- * Delete the **bytes** for expired import files and remove the row.
- * Best-effort storage delete: a 404 / transient error is logged but
- * the row still drops so we don't loop on it forever.
+ * Purge the **bytes** for expired import files. The row itself stays —
+ * `import_jobs(import_file_id)` is `restrict`, so a hard delete would
+ * throw whenever historical jobs reference the file. Instead we delete
+ * the blob from object storage and flip `purged_at` so downstream code
+ * can render the file as "no longer recoverable" without losing the
+ * audit trail.
  *
- * Note: `import_files.uploaded_at` is the anchor, not `committed_at`,
- * because a long-uncommitted file is itself a candidate for cleanup.
+ * Anchored on `uploaded_at` (not `committed_at`): a long-uncommitted
+ * file is itself a candidate for cleanup. Best-effort storage delete:
+ * a 404 / transient error is logged but the row still flips so we
+ * don't loop on it forever. Loops in chunks of {@link SWEEP_BATCH} so
+ * a single zone with many ancient files drains over multiple passes.
  */
 export async function sweepImportFiles(
   database: Database,
@@ -102,47 +108,62 @@ export async function sweepImportFiles(
 ): Promise<SweepResult> {
   if (retainDays <= 0) return { deleted: 0 };
   const cutoff = cutoffFor(retainDays);
-  const candidates = await database
-    .select({ id: importFiles.id, storageKey: importFiles.storageKey })
-    .from(importFiles)
-    .where(
-      and(eq(importFiles.zoneId, zoneId), lt(importFiles.uploadedAt, cutoff)),
-    )
-    .limit(SWEEP_BATCH);
-  if (candidates.length === 0) return { deleted: 0 };
-  for (const row of candidates) {
-    try {
-      await storage().delete(row.storageKey);
-    } catch (err) {
-      log.warn(
-        { err, zoneId, fileId: row.id },
-        "retention: import file blob delete failed",
-      );
-    }
-  }
-  const deleted = await database
-    .delete(importFiles)
-    .where(
-      and(
-        eq(importFiles.zoneId, zoneId),
-        inArray(
-          importFiles.id,
-          candidates.map((c) => c.id),
+  let total = 0;
+  for (;;) {
+    const candidates = await database
+      .select({ id: importFiles.id, storageKey: importFiles.storageKey })
+      .from(importFiles)
+      .where(
+        and(
+          eq(importFiles.zoneId, zoneId),
+          lt(importFiles.uploadedAt, cutoff),
+          isNull(importFiles.purgedAt),
         ),
-      ),
-    )
-    .returning({ id: importFiles.id });
-  log.info(
-    { zoneId, deleted: deleted.length },
-    "retention: swept import_files",
-  );
-  return { deleted: deleted.length };
+      )
+      .limit(SWEEP_BATCH);
+    if (candidates.length === 0) break;
+    for (const row of candidates) {
+      try {
+        await storage().delete(row.storageKey);
+      } catch (err) {
+        log.warn(
+          { err, zoneId, fileId: row.id },
+          "retention: import file blob delete failed",
+        );
+      }
+    }
+    const now = new Date();
+    const flipped = await database
+      .update(importFiles)
+      .set({ purgedAt: now })
+      .where(
+        and(
+          eq(importFiles.zoneId, zoneId),
+          isNull(importFiles.purgedAt),
+          inArray(
+            importFiles.id,
+            candidates.map((c) => c.id),
+          ),
+        ),
+      )
+      .returning({ id: importFiles.id });
+    total += flipped.length;
+    if (candidates.length < SWEEP_BATCH) break;
+  }
+  if (total > 0) {
+    log.info({ zoneId, purged: total }, "retention: swept import_files");
+  }
+  return { deleted: total };
 }
 
 /**
- * Drop expired `import_rows` whose owning job is in a terminal state.
- * Rows attached to active jobs (`received`, `parsing`, `matched`,
- * `scheduled`) are left alone \u2014 they're still being worked on.
+ * Drop expired `import_rows` whose owning job is in a **terminal**
+ * state. Terminal = `committed | failed | rolled_back`; every other
+ * status (the seven listed below) means the job is still being worked
+ * on and its rows must stay around for the dashboard / inline-fix
+ * flow. Rows on `failed` jobs DO age out: once the job has been
+ * failed for `retainDays`, the parse output is no longer useful for
+ * investigation and a re-upload would create a fresh job.
  */
 const NON_TERMINAL_JOB_STATUSES = [
   "received",
