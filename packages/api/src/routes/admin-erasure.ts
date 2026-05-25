@@ -97,6 +97,11 @@ function fromErasureError(c: Context, e: ErasureRequestError) {
         { error: { code: "not_pending", message: e.message } },
         409,
       );
+    case "concurrent_apply":
+      return c.json(
+        { error: { code: "concurrent_apply", message: e.message } },
+        409,
+      );
     case "duplicate_pending":
       return c.json(
         {

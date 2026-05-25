@@ -20,6 +20,7 @@ import {
   erasureRequests,
   members,
   zoneExports,
+  zones,
   type ErasureRequest,
 } from "@stewardledger/db/schema";
 import type { Db } from "@stewardledger/db";
@@ -28,7 +29,7 @@ import { log } from "../../logger";
 import { writeAudit } from "../audit";
 import { loadRetentionPolicy } from "../retention/policy";
 import { buildMemberScrubPatch } from "./scrub-member";
-import { hardPurgeZone, softDecommissionZone } from "./scrub-zone";
+import { hardPurgeZone } from "./scrub-zone";
 
 export type ErasureScope = "member" | "zone";
 export type ErasureStatus = "pending" | "applied" | "cancelled" | "failed";
@@ -59,7 +60,8 @@ export class ErasureRequestError extends Error {
       | "duplicate_pending"
       | "not_found"
       | "not_pending"
-      | "recent_export_required",
+      | "recent_export_required"
+      | "concurrent_apply",
     message: string,
     readonly details?: Record<string, unknown>,
   ) {
@@ -424,59 +426,92 @@ export interface ApplyErasureRequestInput {
 }
 
 /**
- * Run the scrub. Idempotent only at the row-status level —
- * calling this twice on a `pending` row is undefined; the cron
- * sweep + the route use `for update skip locked` to claim a row
- * before the call so only one worker apply per row at a time.
+ * Run the scrub. The apply path opens a transaction that claims
+ * the row with `SELECT ... FOR UPDATE SKIP LOCKED` so concurrent
+ * workers (cron beat + operator-triggered apply, or two cron
+ * beats in a multi-node future) can never both process the same
+ * row: the second caller sees zero rows from the locking SELECT
+ * and surfaces a `concurrent_apply` error.
  *
- * Member-scope: UPDATE the member row in place with the scrub
- * patch, hard-delete every `member_addresses` row, write the
- * tenant-scope `member.erase.applied` audit row carrying the
- * pre-scrub member shape as `before` (the audit-truth
- * requirement).
+ * Member-scope: claim → load member → UPDATE the member row
+ * with the scrub patch → hard-delete every `member_addresses`
+ * row → write the tenant-scope `member.erase.applied` audit row
+ * carrying the pre-scrub member shape as `before` (the audit-
+ * truth requirement) → flip status to `applied`. All in one
+ * transaction; the row lock is released at COMMIT.
  *
- * Zone-scope: call `hardPurgeZone` which deletes every blob and
- * DELETEs the zone tree. The platform-scope
- * `platform.zone.erase.applied` audit row is written BEFORE the
- * hard-purge so a CASCADE failure mid-write doesn't lose the
- * GDPR evidence trail.
+ * Zone-scope: claim → soft-decommission (idempotent UPDATE inside
+ * the same tx) → write platform-scope
+ * `platform.zone.erase.applied` audit row → flip status to
+ * `applied` → COMMIT (releasing the row lock). The hard-purge
+ * (`hardPurgeZone`) then runs OUTSIDE the transaction because it
+ * cascades the row away — including the erasure_requests row we
+ * just updated — and we don't want to hold a lock on a row
+ * across a `DELETE FROM zones` that's about to remove it. The
+ * audit row + status commit BEFORE the hard-purge so a CASCADE
+ * failure mid-write doesn't lose the GDPR evidence trail.
  */
 export async function applyErasureRequest(
   database: Db,
   input: ApplyErasureRequestInput,
 ): Promise<ErasureRequestSummary> {
   const now = input.now ?? new Date();
-  // We deliberately split the transactions: the read-and-claim
-  // is one tx; the scrub work is the next. For zone-scope the
-  // hard-purge has to span an inter-table cascade that's larger
-  // than we want to hold the row lock for, and a failure after
-  // the claim is correctly captured as `failed` via the catch.
-  const [row] = await database
-    .select()
-    .from(erasureRequests)
-    .where(eq(erasureRequests.id, input.requestId))
-    .limit(1);
-  if (!row) {
-    throw new ErasureRequestError("not_found", "erasure request not found");
-  }
-  if (row.status !== "pending") {
-    throw new ErasureRequestError(
-      "not_pending",
-      `cannot apply request in status ${row.status}`,
-    );
-  }
 
+  // Claim + scrub inside one transaction. The locking SELECT
+  // (FOR UPDATE SKIP LOCKED) is the concurrency boundary — a
+  // second concurrent caller against the same row sees zero
+  // rows here and falls into the `concurrent_apply` branch.
+  // Returns the captured row for the zone-scope hard-purge
+  // that has to run after COMMIT (it cascades the row away).
+  type Captured = {
+    row: ErasureRequest;
+    appliedRow: ErasureRequest | undefined;
+  };
+  let captured: Captured;
   try {
-    if (row.scope === "member") {
-      if (!row.memberId) {
-        // Defensive: a pending member-scope row without a
-        // member_id would violate the CHECK; the row shouldn't
-        // exist. Surface as a hard error.
-        throw new Error(
-          `pending member-scope erasure_request ${row.id} has null member_id`,
+    captured = await database.transaction<Captured>(async (tx) => {
+      const [row] = await tx
+        .select()
+        .from(erasureRequests)
+        .where(eq(erasureRequests.id, input.requestId))
+        .for("update", { skipLocked: true })
+        .limit(1);
+      if (!row) {
+        // Either the row doesn't exist OR another worker is
+        // already holding the lock. Distinguish with a quick
+        // unlocked probe so callers get the correct error code.
+        const [probe] = await tx
+          .select({ id: erasureRequests.id })
+          .from(erasureRequests)
+          .where(eq(erasureRequests.id, input.requestId))
+          .limit(1);
+        if (!probe) {
+          throw new ErasureRequestError(
+            "not_found",
+            "erasure request not found",
+          );
+        }
+        throw new ErasureRequestError(
+          "concurrent_apply",
+          "erasure request is being applied by another worker",
         );
       }
-      await database.transaction(async (tx) => {
+      if (row.status !== "pending") {
+        throw new ErasureRequestError(
+          "not_pending",
+          `cannot apply request in status ${row.status}`,
+        );
+      }
+
+      if (row.scope === "member") {
+        if (!row.memberId) {
+          // Defensive: a pending member-scope row without a
+          // member_id would violate the CHECK; the row shouldn't
+          // exist. Surface as a hard error.
+          throw new Error(
+            `pending member-scope erasure_request ${row.id} has null member_id`,
+          );
+        }
         // The `pending` member-scope row CHECK guarantees a
         // non-null member_id, and the FK ON DELETE SET NULL
         // collides with that CHECK — so the member row is
@@ -485,7 +520,7 @@ export async function applyErasureRequest(
         const [pre] = await tx
           .select()
           .from(members)
-          .where(eq(members.id, row.memberId as string))
+          .where(eq(members.id, row.memberId))
           .limit(1);
         if (!pre) {
           // Defensive: a manual SQL surgery could in theory
@@ -518,112 +553,115 @@ export async function applyErasureRequest(
           before: pre,
           after: patch,
         });
-        await tx
+        const [appliedRow] = await tx
           .update(erasureRequests)
           .set({ status: "applied", appliedAt: now, updatedAt: now })
-          .where(eq(erasureRequests.id, row.id));
-      });
-    } else {
-      // Zone-scope apply. Order:
+          .where(eq(erasureRequests.id, row.id))
+          .returning();
+        return { row, appliedRow };
+      }
+
+      // Zone-scope apply (in-tx phase). Order:
       //   1. Soft-decommission so the tenant middleware refuses
       //      every authenticated request mid-purge (a long-
       //      running purge could otherwise overlap with a final
       //      pre-cancel write).
       //   2. Commit the platform-scope audit row + status flip
       //      so the GDPR evidence trail outlives the cascade.
-      //   3. Hard-purge.
-      await softDecommissionZone(database, { zoneId: row.zoneId, now });
-      await database.transaction(async (tx) => {
-        await writeAudit(tx, {
-          zoneId: null,
-          actorUserId: input.actorUserId,
-          action: "platform.zone.erase.applied",
-          entityType: "zone",
-          entityId: row.zoneId,
-          before: toSummary(row),
-          after: {
-            ...toSummary(row),
-            status: "applied",
-            appliedAt: now.toISOString(),
-          },
-        });
-        await tx
-          .update(erasureRequests)
-          .set({ status: "applied", appliedAt: now, updatedAt: now })
-          .where(eq(erasureRequests.id, row.id));
+      //   3. (Outside this tx) Hard-purge.
+      await tx
+        .update(zones)
+        .set({ deletedAt: now, updatedAt: now })
+        .where(eq(zones.id, row.zoneId));
+      await writeAudit(tx, {
+        zoneId: null,
+        actorUserId: input.actorUserId,
+        action: "platform.zone.erase.applied",
+        entityType: "zone",
+        entityId: row.zoneId,
+        before: toSummary(row),
+        after: {
+          ...toSummary(row),
+          status: "applied",
+          appliedAt: now.toISOString(),
+        },
       });
-      // The hard-purge is outside the audit transaction because
-      // it cascades the zone row away — including the
-      // erasure_requests row we just updated. We've already
-      // committed the platform-scope audit row and the request
-      // status, so a failure here just leaves orphan blobs (the
-      // zone is already soft-decommissioned + invisible).
+      const [appliedRow] = await tx
+        .update(erasureRequests)
+        .set({ status: "applied", appliedAt: now, updatedAt: now })
+        .where(eq(erasureRequests.id, row.id))
+        .returning();
+      return { row, appliedRow };
+    });
+  } catch (err) {
+    // In-tx failures: the transaction rolled back, no audit row
+    // committed, no member scrub committed, no status flip. The
+    // row is still `pending` and another sweep can retry it.
+    // We additionally write a non-tx status='failed' marker so
+    // an operator can see the failure on the next list call.
+    if (err instanceof ErasureRequestError) throw err;
+    log.error(
+      { err, requestId: input.requestId },
+      "erasure apply: in-transaction failure; marking request failed",
+    );
+    await database
+      .update(erasureRequests)
+      .set({
+        status: "failed",
+        errorCode: "apply_failed",
+        errorMessage: err instanceof Error ? err.message : String(err),
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(erasureRequests.id, input.requestId),
+          eq(erasureRequests.status, "pending"),
+        ),
+      );
+    throw err;
+  }
+
+  const { row, appliedRow } = captured;
+
+  if (row.scope === "zone") {
+    // Post-commit hard-purge. Runs outside the audit tx because
+    // it cascades the zone row away — including the
+    // erasure_requests row we just updated. The platform-scope
+    // audit row + the request status are already committed, so
+    // a failure here just leaves orphan blobs (the zone is
+    // already soft-decommissioned + invisible). We log loudly
+    // and re-throw so the cron telemetry counts the failure;
+    // we deliberately do NOT flip the request status back to
+    // `failed` because the request DID apply at the audit-log
+    // level — a status mismatch would contradict the audit row.
+    try {
       const summary = await hardPurgeZone(database, row.zoneId);
       log.info(
         { requestId: row.id, zoneId: row.zoneId, summary },
         "erasure apply: zone hard-purge complete",
       );
-    }
-
-    const [final] = await database
-      .select()
-      .from(erasureRequests)
-      .where(eq(erasureRequests.id, row.id))
-      .limit(1);
-    // Zone-scope: the row is gone (cascade swept it).
-    // Return a synthetic summary built from the pre-cascade row.
-    return final
-      ? toSummary(final)
-      : toSummary({ ...row, status: "applied", appliedAt: now, updatedAt: now });
-  } catch (err) {
-    // The zone-scope path commits its `applied` status + the
-    // platform-scope `platform.zone.erase.applied` audit row
-    // BEFORE running the hard-purge (so the GDPR evidence trail
-    // outlives the cascade). If the purge subsequently raises,
-    // the request row is already terminal at `applied` — a
-    // naive UPDATE to `failed` here would contradict the audit
-    // log ("applied" written, then state "failed") and leave
-    // the zone in a half-purged state. We re-read the row's
-    // current status: only `pending` rows are eligible for the
-    // `failed` transition.
-    const [latest] = await database
-      .select({ status: erasureRequests.status })
-      .from(erasureRequests)
-      .where(eq(erasureRequests.id, row.id))
-      .limit(1);
-    if (latest?.status === "pending") {
+    } catch (err) {
       log.error(
         { err, requestId: row.id, zoneId: row.zoneId },
-        "erasure apply: scrub failed; marking request failed",
+        "erasure apply: post-commit hard-purge failed; request remains 'applied' (audit row already written); operator must clean up storage / cascade state manually",
       );
-      await database
-        .update(erasureRequests)
-        .set({
-          status: "failed",
-          errorCode: "apply_failed",
-          errorMessage: err instanceof Error ? err.message : String(err),
-          updatedAt: now,
-        })
-        .where(eq(erasureRequests.id, row.id));
-    } else {
-      // The request committed to `applied` (zone-scope: audit
-      // row + status flip ran first, hard-purge raised second).
-      // The DB state is correct — the request DID apply — but
-      // the storage / cascade is half-done. This is operator-
-      // attention territory; log loudly and re-throw without
-      // mutating the row.
-      log.error(
-        {
-          err,
-          requestId: row.id,
-          zoneId: row.zoneId,
-          status: latest?.status ?? "unknown",
-        },
-        "erasure apply: post-commit failure on already-applied request; operator must verify hard-purge state manually",
-      );
+      throw err;
     }
-    throw err;
   }
+
+  // Member-scope: appliedRow holds the post-update row.
+  // Zone-scope: appliedRow held the row pre-cascade (or undefined
+  // if hard-purge already swept it before we got here, which can
+  // happen if the cascade fired synchronously in a follow-up
+  // race). Synthesise from the captured `row` as a fallback.
+  return appliedRow
+    ? toSummary(appliedRow)
+    : toSummary({
+        ...row,
+        status: "applied",
+        appliedAt: now,
+        updatedAt: now,
+      });
 }
 
 export interface ListErasureRequestsInput {

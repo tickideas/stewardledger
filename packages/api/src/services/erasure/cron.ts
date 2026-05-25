@@ -81,6 +81,14 @@ type ApplyFn = (
  * The `applyFn` parameter defaults to the real apply path; tests
  * inject a stub to exercise the per-row failure-isolation branch
  * without needing to set up a real scrub-failure scenario.
+ *
+ * Concurrency: this SELECT is a candidate enumeration, not a
+ * claim. The actual row claim happens inside `applyErasureRequest`
+ * via `SELECT ... FOR UPDATE SKIP LOCKED` so a second concurrent
+ * worker (multi-node future, or operator-triggered apply
+ * overlapping a cron beat) racing on the same row sees zero
+ * locked rows and raises `concurrent_apply`, which this loop
+ * catches and counts as a failure for telemetry.
  */
 export async function runErasureSweep(
   database: Db,
