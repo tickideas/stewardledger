@@ -207,8 +207,13 @@
   let exportRequestError = $state<string | null>(null);
   let exportRequesting = $state(false);
   let copiedSha = $state<string | null>(null);
+  // Download is a native browser flow via a hidden <a> link — the
+  // browser handles the save dialog + bytes-to-disk. There's no
+  // JS-observable failure event for a same-origin download, so
+  // upstream errors (expired / 4xx) surface as the browser's own
+  // error UI rather than a panel-level message. The spinner is
+  // cleared on a short timer below.
   let downloadingExportId = $state<string | null>(null);
-  let downloadError = $state<string | null>(null);
 
   // Auto-refresh while any export is non-terminal so the badge / size
   // catches up without the owner reloading.
@@ -317,17 +322,17 @@
    * header for split-host dev. Both cases stay in sync with
    * `currentZoneSlug()` from `$lib/api`.
    *
-   * Use a hidden `<iframe>` rather than navigating the page so a
-   * 4xx upstream (expired / not_ready) doesn't replace the
-   * settings UI with a JSON error blob. Browsers treat
-   * `Content-Disposition: attachment` responses as downloads even
-   * when loaded into a frame, but error pages render inside the
-   * (hidden) frame, leaving the settings UI intact.
+   * Use a hidden `<a>` element rather than navigating the page
+   * (`window.location.href`) so a 4xx upstream (expired /
+   * not_ready) doesn't replace the settings UI with a JSON error
+   * blob. The browser fires the download via the `attachment`
+   * Content-Disposition header without unmounting the page; on a
+   * 4xx the browser surfaces its own error UI and the settings
+   * page stays interactive.
    */
   function downloadExport(row: ExportSummary) {
     if (row.status !== "completed") return;
     downloadingExportId = row.id;
-    downloadError = null;
     const slug = currentZoneSlug();
     const params = new URLSearchParams();
     if (slug) params.set("zone", slug);
@@ -586,11 +591,6 @@
           {#if exportsLoadError}
             <p class="mt-4 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">
               {exportsLoadError}
-            </p>
-          {/if}
-          {#if downloadError}
-            <p class="mt-4 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">
-              {downloadError}
             </p>
           {/if}
 

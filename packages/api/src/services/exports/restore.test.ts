@@ -22,6 +22,9 @@
 // test DB already carries the migrated schema).
 
 import { createHash } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 
@@ -170,6 +173,10 @@ describe("zone export bundle — restoreZoneExportBundle (round-trip)", () => {
   const sourceZoneIds: string[] = [];
   const targetZoneIds: string[] = [];
   const userIds: string[] = [];
+  // Every test that materialises a bundle to disk pushes its temp
+  // directory here; afterAll wipes them so repeated local runs
+  // don't accumulate `sl-restore-*` directories under the OS temp.
+  const tempDirs: string[] = [];
 
   beforeAll(() => {
     if (!/_test\b/.test(process.env.DATABASE_URL ?? "")) {
@@ -184,6 +191,9 @@ describe("zone export bundle — restoreZoneExportBundle (round-trip)", () => {
     for (const id of targetZoneIds) await cleanupZone(id);
     for (const id of userIds) {
       await db.execute(sql`delete from "user" where id = ${id}`);
+    }
+    for (const dir of tempDirs) {
+      await rm(dir, { recursive: true, force: true });
     }
     setStorageForTesting(null);
   });
@@ -215,11 +225,10 @@ describe("zone export bundle — restoreZoneExportBundle (round-trip)", () => {
     // Pull the gzipped artefact back from in-memory storage and
     // write it to a temp file so `restoreZoneExportBundle` can open
     // it from disk (matching the operator-facing `pnpm
-    // restore-export <file>` flow).
-    const { writeFile, mkdtemp } = await import("node:fs/promises");
-    const { tmpdir } = await import("node:os");
-    const { join } = await import("node:path");
+    // restore-export <file>` flow). The temp dir is tracked for
+    // afterAll cleanup.
     const tmp = await mkdtemp(join(tmpdir(), "sl-restore-test-"));
+    tempDirs.push(tmp);
     const bundlePath = join(tmp, "bundle.tar.gz");
     await writeFile(bundlePath, Buffer.from(await storage.get(bundleKey)));
 
@@ -337,10 +346,8 @@ describe("zone export bundle — restoreZoneExportBundle (round-trip)", () => {
       storageKey: bundleKey,
     });
 
-    const { writeFile, mkdtemp } = await import("node:fs/promises");
-    const { tmpdir } = await import("node:os");
-    const { join } = await import("node:path");
     const tmp = await mkdtemp(join(tmpdir(), "sl-restore-dry-"));
+    tempDirs.push(tmp);
     const bundlePath = join(tmp, "bundle.tar.gz");
     await writeFile(bundlePath, Buffer.from(await storage.get(bundleKey)));
 

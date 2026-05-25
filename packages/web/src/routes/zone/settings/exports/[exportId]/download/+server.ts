@@ -1,5 +1,5 @@
 // packages/web/src/routes/zone/settings/exports/[exportId]/download/+server.ts
-// Phase 9 \u00a73 \u2014 streaming proxy for the per-zone export bundle.
+// Phase 9 §3 — streaming proxy for the per-zone export bundle.
 //
 // Why a SvelteKit proxy instead of a direct browser fetch:
 //
@@ -21,10 +21,13 @@
 //     `x-stewardledger-zone-slug` header (split-host dev). The
 //     loader picks the right one from the request cookies + URL.
 //
-// Auth + tenant: every header on the inbound request is forwarded
-// to the API, including the Better Auth session cookie. The API
+// Auth + tenant: the Better Auth session cookie and the active
+// zone slug are forwarded to the API; nothing else. The API
 // re-runs the same role gate as the JSON endpoints, so this proxy
-// adds no new trust assumptions \u2014 a non-owner still 403s upstream.
+// adds no new trust assumptions — a non-owner still 403s upstream.
+// Forwarding the *entire* inbound header set would leak
+// frame-ancestor / origin headers scoped to the web origin and
+// unrelated to the API's authorisation contract.
 //
 // RELEVANT FILES: ../../+page.svelte, packages/api/src/routes/tenant-exports.ts
 
@@ -32,8 +35,10 @@ import { error } from "@sveltejs/kit";
 import type { RequestHandler } from "./$types";
 import { PUBLIC_API_URL } from "$lib/env";
 
+// `prerender = false` keeps the route out of any static build pass
+// even on adapters that try to crawl GETs. (`csr` is a page/layout
+// option — omitted here because it's a no-op on `+server.ts`.)
 export const prerender = false;
-export const csr = false; // pure server-side proxy; no client hydration needed
 
 export const GET: RequestHandler = async ({ params, request, url }) => {
   const exportId = params.exportId;
@@ -45,12 +50,22 @@ export const GET: RequestHandler = async ({ params, request, url }) => {
   // proxy keeps the same resolution semantics as `api.ts`
   // (`currentZoneSlug` writes the slug into the URL on every
   // wrapper call). Falling back to the inbound header keeps the
-  // dev split-host path working.
-  const zoneSlug =
+  // dev split-host path working. Whichever source wins, the value
+  // must match the same kebab-case shape `zoneSlugSchema`
+  // validates — bare forwarding would let a crafted header
+  // probe odd values upstream.
+  const rawSlug =
     url.searchParams.get("zone") ??
     request.headers.get("x-stewardledger-zone-slug") ??
     "";
+  const zoneSlug = /^[a-z0-9][a-z0-9-]{1,63}$/.test(rawSlug) ? rawSlug : "";
 
+  // Only the two headers the API's tenant + auth middleware
+  // actually read: the Better Auth session cookie and the
+  // zone-slug header (split-host dev / explicit override).
+  // Everything else (accept-language, sec-*, x-forwarded-*) is
+  // dropped — the upstream JSON routes don't depend on them
+  // and forwarding them blindly would be a surprise channel.
   const headers = new Headers();
   const cookie = request.headers.get("cookie");
   if (cookie) headers.set("cookie", cookie);

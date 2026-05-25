@@ -686,6 +686,17 @@ async function copyReportBlobs(args: CopyArgs): Promise<number> {
  * directory, pulls every PK from the filenames, fetches their
  * storage_keys in a single batched query, and copies each blob
  * to the storage backend at the new key.
+ *
+ * Memory note: `readFile(...)` materialises each blob in JS heap
+ * before the `storage.put` call. The current `ObjectStorageLike`
+ * interface takes `Uint8Array`, not a `ReadableStream`, so a
+ * streaming-multipart restore path is gated on the same Phase 11
+ * upgrade that lifts `bundle.ts`'s memory ceiling (`storage().put`
+ * accepts a stream). Until then a single import file / report
+ * artefact larger than the API container's free heap will OOM the
+ * restore. Operationally this matches `bundle.ts` — the deployment
+ * note in `docs/DEPLOYMENT.md` warns operators to size the API
+ * container at least 2× the largest expected bundle blob.
  */
 async function copyBlobsByPkLookup(args: {
   dir: string;
@@ -722,6 +733,8 @@ async function copyBlobsByPkLookup(args: {
       args.log(`skip ${args.kind} (no row): ${file.name}`);
       continue;
     }
+    // See header memory note: gated on a Phase 11 streaming
+    // ObjectStorageLike. Today this is the ceiling per blob.
     const body = await readFile(pathJoin(args.dir, file.name));
     await args.storage.put(storageKey, body);
     copied++;
