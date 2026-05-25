@@ -57,7 +57,11 @@ import * as tar from "tar-stream";
 
 import * as schema from "@stewardledger/db/schema";
 import type { Database } from "@stewardledger/db";
-import { restoreOrder, type ZoneScopedTable } from "./registry";
+import {
+  RESTORE_CONTRACT_TABLES,
+  restoreOrder,
+  type ZoneScopedTable,
+} from "./registry";
 
 /**
  * Restore rows in batches of this size. A drizzle multi-row insert
@@ -635,24 +639,32 @@ async function insertRows(
  *   marker so an operator can grep for the auto-cancellations in
  *   the audit trail.
  */
+/** Restore-contract marker for the `erasure_requests` auto-cancel. */
+const ERASURE_RESTORE_CANCEL_MARKER = "auto-cancelled on bundle restore";
+
 function applyTableRestoreContract(
   tableName: string,
   row: Record<string, unknown>,
   now: Date,
 ): void {
-  if (tableName === "erasure_requests") {
+  if (tableName === RESTORE_CONTRACT_TABLES.erasureRequests) {
     if (row.status === "pending") {
       row.status = "cancelled";
       row.cancelledAt = now;
       // The cancelled-by-user FK is `ON DELETE SET NULL` already;
       // the auto-cancel has no operator behind it on the restore
       // target, so leave the FK null and surface the auto-cancel
-      // in the reason string (existing reason is preserved with a
-      // suffix so the operator can see the original context).
+      // in the reason string. Idempotent: if a row already carries
+      // the marker (e.g. a re-restored bundle that was previously
+      // restored, then re-bundled, then re-restored), we don't
+      // double-append.
       row.cancelledByUserId = null;
       const prior = typeof row.reason === "string" ? row.reason : "";
-      const marker = "auto-cancelled on bundle restore";
-      row.reason = prior ? `${prior} — ${marker}` : marker;
+      if (!prior.endsWith(ERASURE_RESTORE_CANCEL_MARKER)) {
+        row.reason = prior
+          ? `${prior} — ${ERASURE_RESTORE_CANCEL_MARKER}`
+          : ERASURE_RESTORE_CANCEL_MARKER;
+      }
       row.updatedAt = now;
     }
   }

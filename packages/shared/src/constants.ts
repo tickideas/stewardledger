@@ -40,3 +40,33 @@ export const INVITATION_VALIDITY_HOURS = 168; // 7 days
 /** Money precision: numeric(19,4). Display rounded to 2 dp. */
 export const MONEY_PRECISION = 4;
 export const MONEY_DISPLAY_DECIMALS = 2;
+
+// ─── GDPR erasure (Phase 9 §6) ────────────────────────────────────
+// Single source of truth for the windows the server enforces in
+// `services/erasure/requests.ts` and the UI mirrors in
+// `routes/zone/settings/+page.svelte`. If the server-side gate
+// moves, importing here keeps the UI predicate aligned in lockstep
+// rather than silently drifting.
+
+/**
+ * Default reversibility window for member-scope erases (days).
+ * Zone-scope is fixed at this value; member-scope reads the
+ * per-zone retention policy and floors to this value when the
+ * policy is 0 ("never purge"). An operator can override via the
+ * UI modal up to 365.
+ */
+export const ERASURE_DEFAULT_WINDOW_DAYS = 14;
+
+/**
+ * Reversibility window for zone-scope erases (days). Fixed; the
+ * retention policy doesn't move it.
+ */
+export const ERASURE_ZONE_WINDOW_DAYS = 14;
+
+/**
+ * Recency requirement for the `confirmExportId` gate on a
+ * zone-scope erase: the referenced `zone_exports` row must have
+ * completed within this window. Stops an owner decommissioning
+ * the tenant without a fresh take-with-them artefact.
+ */
+export const ERASURE_RECENT_EXPORT_WINDOW_DAYS = 7;

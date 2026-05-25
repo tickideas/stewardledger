@@ -14,6 +14,8 @@
   } from "$lib/retention/access";
   import {
     DEFAULT_RETENTION_POLICY,
+    ERASURE_RECENT_EXPORT_WINDOW_DAYS,
+    ERASURE_ZONE_WINDOW_DAYS,
     RETENTION_DIMENSIONS,
     type AuthorizedContext,
     type RetentionDimension,
@@ -424,10 +426,12 @@
   let zoneErasureLoadError = $state<string | null>(null);
   let zoneErasureActionError = $state<string | null>(null);
 
-  // 7-day recency window for the most-recent completed export.
-  // The server enforces the same window when scheduling; mirroring
-  // it client-side avoids the round-trip + the 422 dance.
-  const RECENT_EXPORT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+  // Recency window for the most-recent completed export.
+  // The server enforces the same window when scheduling; the
+  // shared constant keeps the mirror in lockstep so a future
+  // server-side bump doesn't silently 422 the UI.
+  const RECENT_EXPORT_WINDOW_MS =
+    ERASURE_RECENT_EXPORT_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 
   const recentCompletedExport = $derived.by(() => {
     const cutoff = Date.now() - RECENT_EXPORT_WINDOW_MS;
@@ -506,8 +510,7 @@
       await loadZoneErasure();
     } catch (err) {
       if (err instanceof ApiError && err.code === "recent_export_required") {
-        zoneErasureActionError =
-          "A recent export is required. Generate one first — it must be less than 7 days old.";
+        zoneErasureActionError = `A recent export is required. Generate one first — it must be less than ${ERASURE_RECENT_EXPORT_WINDOW_DAYS} days old.`;
       } else if (
         err instanceof ApiError &&
         err.code === "duplicate_pending"
@@ -930,7 +933,7 @@
                   <p class="text-[13px] text-[var(--ink-soft)]">
                     Generate a completed export bundle (above) before you
                     can decommission. The most recent export must be
-                    less than 7 days old.
+                    less than {ERASURE_RECENT_EXPORT_WINDOW_DAYS} days old.
                   </p>
                 {/if}
                 {#if zoneErasure && zoneErasure.status !== "pending"}
@@ -991,7 +994,9 @@
             This will permanently delete every record on
             <span class="sl-mono text-[var(--ink)]">
               {formatDateTime(
-                new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+                new Date(
+                  Date.now() + ERASURE_ZONE_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+                ).toISOString(),
               )}
             </span>
             unless cancelled before then. The bundle you exported is

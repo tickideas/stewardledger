@@ -73,6 +73,14 @@
   let maritalStatuses = $state<Lookup[]>([]);
   let memberTypes = $state<Lookup[]>([]);
   let loadError = $state<string | null>(null);
+  // True when GET /members/:id returned 404. Distinguished from
+  // the generic `loadError` so the page can render the GDPR
+  // "this member has been erased" shell when the 404 is caused
+  // by the soft-delete the erase pass writes, rather than a
+  // genuine "member doesn't exist". The discrimination is the
+  // presence of an `applied` member-scope erasure_request for
+  // this id (resolved by `loadErasure`).
+  let memberNotFound = $state(false);
 
   // ─── Erasure (Phase 9 §6) ───────────────────────────────────────
   // Auth context drives the Privacy panel: gate the Request /
@@ -117,15 +125,39 @@
 
   async function load() {
     try {
+      // Member fetch separately so a 404 (the case the GDPR
+      // scrub writes by setting `deletedAt`) can be distinguished
+      // from a network / permission error on the auxiliary calls.
+      // The lookup endpoints are zone-scoped reads we want even
+      // for the erased shell so the chapter dropdown stays
+      // populated (still relevant if we ever re-instate edit on
+      // a never-erased row in this same component instance).
       const [m, a, ch, t, ms, mt] = await Promise.all([
-        api.get<{ member: Member }>(`/api/tenant/members/${memberId}`),
-        api.get<{ items: Address[] }>(`/api/tenant/members/${memberId}/addresses`),
+        api
+          .get<{ member: Member }>(`/api/tenant/members/${memberId}`)
+          .catch((err: unknown) => {
+            if (err instanceof ApiError && err.status === 404) return null;
+            throw err;
+          }),
+        api
+          .get<{ items: Address[] }>(
+            `/api/tenant/members/${memberId}/addresses`,
+          )
+          .catch((err: unknown) => {
+            // The addresses endpoint also 404s on an erased member.
+            // Treat as empty so the erased-shell render doesn't
+            // surface a noisy error.
+            if (err instanceof ApiError && err.status === 404)
+              return { items: [] };
+            throw err;
+          }),
         api.get<{ items: Chapter[] }>("/api/tenant/chapters"),
         api.get<{ items: Lookup[] }>("/api/tenant/lookups/titles"),
         api.get<{ items: Lookup[] }>("/api/tenant/lookups/marital-statuses"),
         api.get<{ items: Lookup[] }>("/api/tenant/lookups/member-types"),
       ]);
-      member = m.member;
+      member = m?.member ?? null;
+      memberNotFound = m === null;
       addresses = a.items;
       chapters = ch.items;
       titles = t.items;
@@ -156,22 +188,23 @@
   async function loadErasure(signal?: AbortSignal) {
     if (!canEraseMember || !memberId) return;
     try {
-      // Tenant-scope list returns every erasure request for the
-      // zone; filter client-side by member to find the at-most-one
-      // open or recently-applied row. The list endpoint already
-      // orders newest-first via the `(zone_id, status, created_at
-      // DESC)` index.
+      // Server-side narrowing via `memberId` returns at most a
+      // handful of rows per member (one open + a thin history)
+      // instead of the zone's entire erasure log. The endpoint
+      // orders newest-first via `(zone_id, status, created_at
+      // DESC)`, so the head row is the freshest one.
       const res = await api.get<{ requests: ErasureRequest[] }>(
-        "/api/tenant/erasure-requests?scope=member",
+        `/api/tenant/erasure-requests?scope=member&memberId=${encodeURIComponent(memberId)}`,
         signal,
       );
-      erasureRequest =
-        res.requests.find((r) => r.memberId === memberId) ?? null;
+      erasureRequest = res.requests[0] ?? null;
       erasureLoadError = null;
     } catch (err) {
       if (isAbortError(err)) return;
       erasureLoadError =
         err instanceof ApiError ? err.message : "Could not load erasure status.";
+    } finally {
+      if (!signal?.aborted) erasureLoaded = true;
     }
   }
 
@@ -187,10 +220,13 @@
 
   // Re-fetch the erasure row once both auth and the member id are
   // known. `auth` resolution is independent of `memberId` so this
-  // effect waits for both to settle.
+  // effect waits for both to settle. `erasureLoaded` is reset on
+  // every fresh fetch so the not-found fallback re-arms its wait
+  // for the new id.
   $effect(() => {
     if (!auth || !memberId) return;
     if (!canEraseMember) return;
+    erasureLoaded = false;
     const controller = new AbortController();
     void loadErasure(controller.signal);
     return () => controller.abort();
@@ -268,12 +304,30 @@
     }
   }
 
-  // True when the member's `first_name` literally equals 'erased'
-  // — the canonical post-scrub marker the apply path writes. We
-  // could also key off `metadata.erased_at`, but the field is the
-  // visible signal so we render the banner off it directly.
-  const isErased = $derived(
-    !!member && member.firstName === "erased" && !member.lastName,
+  // The erased shell is rendered when GET /members/:id 404'd AND
+  // we've found an `applied` member-scope erasure_request for the
+  // same id. The 404 alone could be a genuine missing row; the
+  // erasure-row confirms the soft-delete came from the GDPR
+  // scrub. `appliedErasure` mirrors the schema's terminal-status
+  // semantics — once `applied`, the row stays applied; that's
+  // our long-lived marker.
+  const appliedErasure = $derived(
+    erasureRequest && erasureRequest.status === "applied"
+      ? erasureRequest
+      : null,
+  );
+  const isErased = $derived(memberNotFound && appliedErasure !== null);
+  // Track whether the (gated) erasure call has resolved so the
+  // 404 → "not found" fallback doesn't flash before the
+  // "erased" determination has had a chance to land.
+  let erasureLoaded = $state(false);
+  // For non-PII-tier viewers, the erasure endpoint never fires;
+  // they should fall through to the plain "not found" view
+  // immediately rather than waiting on a request that never
+  // happens. `canEraseMember` is the same predicate that gates
+  // the erasure load itself.
+  const showNotFound = $derived(
+    memberNotFound && !isErased && (erasureLoaded || !canEraseMember),
   );
 
   async function save(e: SubmitEvent) {
@@ -370,22 +424,55 @@
 <div class="pt-2 pb-10 lg:pt-0">
   {#if loadError}
     <p class="mt-6 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{loadError}</p>
+  {:else if memberNotFound && isErased && appliedErasure}
+    <!-- Erased-member shell. The GET endpoint refuses the row
+         (soft-deleted), but the operator landed on the URL
+         (e.g. via an audit-log link), so we render a contextual
+         placeholder instead of "not found". The PII is gone
+         from the DB; only the reference code + the audit-trail
+         dates remain. -->
+    <div class="sl-reveal sl-reveal-1 mt-4">
+      <span class="sl-eyebrow">§ II · Erased member record</span>
+      <h1 class="mt-3 sl-display text-[40px] leading-[1] text-[var(--ink)]">
+        Erased member
+        <span class="sl-mono text-[16px] text-[var(--ink-mute)]">
+          #{memberId}
+        </span>
+      </h1>
+      <p class="mt-2 text-[14px] text-[var(--ink-mute)]">
+        <span class="sl-badge sl-badge-bad">erased</span>
+      </p>
+    </div>
+    <div class="sl-reveal sl-reveal-2 mt-6 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-4 py-3 text-[13px] text-[var(--bad)]">
+      <strong>This member's personal data has been erased</strong> in
+      response to a GDPR request applied on
+      {formatDateTime(appliedErasure.appliedAt ?? appliedErasure.updatedAt)}.
+      The contribution ledger entries are retained under the
+      legitimate-interest legal basis for financial record-keeping
+      and remain visible elsewhere in the app.
+      <a href="/zone/members" class="ml-2 sl-btn sl-btn-ghost">
+        ← Back to directory
+      </a>
+    </div>
+  {:else if showNotFound}
+    <div class="mt-6">
+      <p class="text-[13px] text-[var(--ink-mute)]">
+        Member not found.
+      </p>
+      <a href="/zone/members" class="sl-btn sl-btn-ghost mt-3">
+        ← Back to directory
+      </a>
+    </div>
   {:else if member}
     <div class="sl-reveal sl-reveal-1 flex flex-wrap items-end justify-between gap-6">
       <div>
         <span class="sl-eyebrow">§ II · Identity record</span>
         <p class="mt-3 sl-mono text-[11.5px] text-[var(--ink-mute)]" style="letter-spacing:0.08em">{member.referenceCode}</p>
         <h1 class="mt-1 sl-display text-[40px] leading-[1] text-[var(--ink)]">
-          {#if isErased}
-            Erased member <span class="sl-mono text-[16px] text-[var(--ink-mute)]">#{member.referenceCode}</span>
-          {:else}
-            {member.fullName ?? `${member.firstName} ${member.lastName ?? ""}`.trim()}
-          {/if}
+          {member.fullName ?? `${member.firstName} ${member.lastName ?? ""}`.trim()}
         </h1>
         <p class="mt-2 text-[14px] text-[var(--ink-mute)]">
-          {#if isErased}
-            <span class="sl-badge sl-badge-bad">erased</span>
-          {:else if member.isActive}
+          {#if member.isActive}
             <span class="sl-badge sl-badge-ok">active</span>
           {:else}
             <span class="sl-badge sl-badge-mute">inactive</span>
@@ -394,23 +481,13 @@
       </div>
       <div class="flex items-center gap-3">
         <a href="/zone/members" class="sl-btn sl-btn-ghost">← Back to directory</a>
-        {#if !isErased}
-          <button type="button" class="sl-btn sl-btn-danger-ghost" onclick={softDelete}>
-            Soft-delete
-          </button>
-        {/if}
+        <button type="button" class="sl-btn sl-btn-danger-ghost" onclick={softDelete}>
+          Soft-delete
+        </button>
       </div>
     </div>
 
-    {#if isErased}
-      <div class="sl-reveal sl-reveal-2 mt-6 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-4 py-3 text-[13px] text-[var(--bad)]">
-        <strong>This member's personal data has been erased</strong> in
-        response to a GDPR request. The contribution ledger entries
-        are retained under the legitimate-interest legal basis for
-        financial record-keeping; they appear as &ldquo;Erased member
-        #{member.referenceCode}&rdquo; in totals and statements.
-      </div>
-    {/if}
+
 
     <form class="sl-reveal sl-reveal-2 sl-card-warm mt-8 grid grid-cols-12 gap-3 p-6" onsubmit={save}>
       <label class="col-span-12 sm:col-span-2">

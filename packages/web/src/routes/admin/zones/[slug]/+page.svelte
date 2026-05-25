@@ -4,6 +4,10 @@
   import { fmtMoney } from "$lib/format";
   import { ALL_TENANT_ROLE_OPTIONS_BY_SCOPE } from "$lib/role-options";
   import { session } from "$lib/session.svelte";
+  import {
+    ERASURE_RECENT_EXPORT_WINDOW_DAYS,
+    ERASURE_ZONE_WINDOW_DAYS,
+  } from "@stewardledger/shared";
 
   type ChapterRow = {
     id: string;
@@ -305,6 +309,12 @@
   let zoneErasure = $state<AdminErasureRequest | null>(null);
   let zoneErasureLoadError = $state<string | null>(null);
   let zoneErasureActionError = $state<string | null>(null);
+  // Race-protection for fast slug-change navigation between
+  // tenants. The admin page already uses `fetchEpoch` for the
+  // primary `refresh()` call; the erasure load gets its own
+  // controller so an older zone-A response can't clobber
+  // `zoneErasure` after the user jumped to zone-B.
+  let erasureLoadController: AbortController | null = null;
 
   let decomModalOpen = $state(false);
   let decomSlugInput = $state("");
@@ -322,15 +332,21 @@
     );
   });
 
-  async function loadZoneErasure() {
+  async function loadZoneErasure(signal?: AbortSignal) {
     if (!isSuperAdmin || !data) return;
     try {
       const res = await api.get<{ requests: AdminErasureRequest[] }>(
         `/api/admin/zones/${data.zone.slug}/erasure-requests`,
+        signal,
       );
       zoneErasure = res.requests[0] ?? null;
       zoneErasureLoadError = null;
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
+      // Loading is structural, not user-actioned, so it lands in
+      // the panel's own slot rather than the unified `status`
+      // banner used by Resend/Revoke/MFA. Action errors below
+      // continue to flow through `setStatus(...)`.
       zoneErasureLoadError =
         err instanceof ApiError
           ? err.message
@@ -339,11 +355,18 @@
   }
 
   // Re-load when `data` becomes available (after `refresh()` lands)
-  // OR when the slug changes (admin nav between tenants).
+  // OR when the slug changes (admin nav between tenants). A fresh
+  // AbortController per effect run cancels any in-flight earlier
+  // load so a slow zone-A response can't overwrite zone-B's data.
   $effect(() => {
     if (data?.zone.slug && isSuperAdmin) {
-      void loadZoneErasure();
+      erasureLoadController?.abort();
+      erasureLoadController = new AbortController();
+      void loadZoneErasure(erasureLoadController.signal);
+      return () => erasureLoadController?.abort();
     } else {
+      erasureLoadController?.abort();
+      erasureLoadController = null;
       zoneErasure = null;
       zoneErasureLoadError = null;
     }
@@ -389,8 +412,7 @@
       await loadZoneErasure();
     } catch (err) {
       if (err instanceof ApiError && err.code === "recent_export_required") {
-        zoneErasureActionError =
-          "That export bundle ID is either invalid or older than 7 days. The owner must generate a fresh export first.";
+        zoneErasureActionError = `That export bundle ID is either invalid or older than ${ERASURE_RECENT_EXPORT_WINDOW_DAYS} days. The owner must generate a fresh export first.`;
       } else if (err instanceof ApiError && err.code === "duplicate_pending") {
         zoneErasureActionError =
           "A decommission is already pending for this zone. Refresh to see it.";
@@ -954,9 +976,10 @@
               </h2>
               <p class="mt-2 text-[13px] text-[var(--ink-mute)]">
                 Confirms a permanent purge for this zone after the
-                reversibility window (14 days). The owner's export
-                bundle ID is required — paste it from the owner's
-                request or from the tenant's `zone_exports` row.
+                reversibility window ({ERASURE_ZONE_WINDOW_DAYS} days).
+                The owner's export bundle ID is required — paste it
+                from the owner's request or from the tenant's
+                `zone_exports` row.
               </p>
             </div>
             <form class="space-y-4 px-6 py-5" onsubmit={submitDecom}>
@@ -973,7 +996,8 @@
                 />
                 <p class="mt-1 text-[11.5px] text-[var(--ink-mute)]">
                   Must reference a completed `zone_exports` row created in
-                  the last 7 days, owned by this zone.
+                  the last {ERASURE_RECENT_EXPORT_WINDOW_DAYS} days, owned
+                  by this zone.
                 </p>
               </label>
               <label class="block">
