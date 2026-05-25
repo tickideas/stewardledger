@@ -558,7 +558,7 @@ adminRouter.patch(
             error: {
               code: err.code,
               message: err.message,
-              ...err.extra,
+              details: err.extra,
             },
           },
           422,

@@ -1,7 +1,7 @@
 // packages/web/src/lib/role-options.ts
 // Shared display metadata for tenant roles.
 //
-// `INVITABLE_*` drives invitation forms; `ALL_TENANT_ROLE_OPTIONS`
+// `INVITABLE_*` drives invitation forms; `ALL_TENANT_ROLE_OPTIONS_BY_SCOPE`
 // drives surfaces that need every code (e.g. the platform-admin
 // MFA enforcement form). `roleLabel(code)` resolves either set.
 //

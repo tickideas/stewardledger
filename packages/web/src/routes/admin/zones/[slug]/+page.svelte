@@ -216,6 +216,14 @@
 
   // ─── Two-factor enforcement ───────────────────────────────────────
 
+  // The set of codes the UI knows how to render. Anything in the
+  // server snapshot outside this set is a legacy entry from the
+  // SQL-only era and gets surfaced separately so the operator can
+  // see what they're about to remove.
+  const KNOWN_MFA_CODES = new Set(
+    ALL_TENANT_ROLE_OPTIONS_BY_SCOPE.flatMap((g) => g.options.map((o) => o.value)),
+  );
+
   // Local working copy of the checkbox state. Reset on every `data`
   // refresh so a discarded edit doesn't survive a re-fetch.
   let mfaSelection = $state<Set<string>>(new Set());
@@ -223,15 +231,35 @@
 
   $effect(() => {
     // Re-sync whenever the server snapshot changes (initial load,
-    // post-save refresh, slug change).
-    if (data) mfaSelection = new Set(data.mfa.requiredRoleCodes);
+    // post-save refresh, slug change). Filter to KNOWN codes so a
+    // legacy entry (e.g. left over from SQL editing) is removed on
+    // the next save instead of round-tripping back as `invalid_role`.
+    if (data) {
+      mfaSelection = new Set(
+        data.mfa.requiredRoleCodes.filter((c) => KNOWN_MFA_CODES.has(c)),
+      );
+    }
   });
+
+  // Codes on the server that this UI doesn't recognise. Rendered as
+  // a warning so the operator knows the next save will drop them.
+  const mfaUnknownCodes = $derived(
+    data
+      ? data.mfa.requiredRoleCodes.filter((c) => !KNOWN_MFA_CODES.has(c))
+      : [],
+  );
 
   const mfaDirty = $derived.by(() => {
     if (!data) return false;
-    const server = new Set(data.mfa.requiredRoleCodes);
-    if (server.size !== mfaSelection.size) return true;
-    for (const code of server) if (!mfaSelection.has(code)) return true;
+    // Compare against the SANITISED server snapshot — if the only
+    // difference is unknown legacy codes, that's a dirty state
+    // (saving will clean them up).
+    const serverKnown = data.mfa.requiredRoleCodes.filter((c) =>
+      KNOWN_MFA_CODES.has(c),
+    );
+    if (mfaUnknownCodes.length > 0) return true;
+    if (serverKnown.length !== mfaSelection.size) return true;
+    for (const code of serverKnown) if (!mfaSelection.has(code)) return true;
     return false;
   });
 
@@ -246,9 +274,14 @@
     if (!data || !mfaDirty) return;
     mfaSaving = true;
     try {
+      // Send only known codes. Anything else is either a typo or a
+      // legacy entry from SQL-only editing; the service would 422
+      // on them. Sanitising client-side lets the save succeed and
+      // cleans up the legacy entry as a side-effect.
+      const known = [...mfaSelection].filter((c) => KNOWN_MFA_CODES.has(c));
       const res = await api.patch<{ codes: string[] }>(
         `/api/admin/zones/${data.zone.slug}/mfa-required-role-codes`,
-        { codes: [...mfaSelection] },
+        { codes: known },
       );
       setStatus(
         "success",
@@ -545,9 +578,19 @@
           this list doesn’t disable MFA for users who already have it
           — it only stops forcing new ones.
         </p>
+        {#if mfaUnknownCodes.length > 0}
+          <div class="mt-3 border-l-2 border-[var(--warn)] bg-[var(--warn-soft)] px-3 py-2 text-[12.5px] text-[var(--warn)]">
+            <strong>Unknown role codes on this zone:</strong>
+            {#each mfaUnknownCodes as code, i (code)}
+              <code class="sl-mono text-[11.5px]">{code}</code>{i < mfaUnknownCodes.length - 1 ? ", " : ""}
+            {/each}
+            . Saving will remove them (likely left over from SQL editing
+            before this UI existed).
+          </div>
+        {/if}
         <div class="mt-4 grid gap-5 sm:grid-cols-3">
           {#each ALL_TENANT_ROLE_OPTIONS_BY_SCOPE as group (group.scope)}
-            <fieldset class="space-y-2">
+            <fieldset class="space-y-2" disabled={mfaSaving}>
               <legend class="sl-eyebrow" style="font-size:10.5px">
                 {group.label}
               </legend>

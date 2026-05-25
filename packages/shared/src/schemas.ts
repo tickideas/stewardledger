@@ -166,12 +166,16 @@ export type MfaEnforceableRoleCode = (typeof MFA_ENFORCEABLE_ROLE_CODES)[number]
 
 /**
  * Wire schema for the PATCH endpoint. Membership is checked in the
- * service layer so the failure mode is a structured `invalid_role`
- * error rather than a generic Zod refinement.
+ * service layer so an unknown role surfaces as `invalid_role` (422)
+ * rather than a generic Zod refinement (400). The per-entry length
+ * cap is intentionally absent for the same reason: a too-long string
+ * is just another unknown code and should travel through the same
+ * structured error path. The array-level cap stays as a cheap DoS
+ * guard against a client posting a million entries.
  */
 export const zoneMfaRequiredRoleCodesSchema = z
   .object({
-    codes: z.array(z.string().min(1).max(64)).max(64),
+    codes: z.array(z.string().min(1)).max(64),
   })
   .strict();
 export type ZoneMfaRequiredRoleCodesInput = z.infer<

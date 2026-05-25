@@ -616,10 +616,10 @@ describe("PATCH /api/admin/zones/:slug/mfa-required-role-codes", () => {
     );
     expect(res.status).toBe(422);
     const body = (await res.json()) as {
-      error: { code: string; unknownCodes?: string[] };
+      error: { code: string; details?: { unknownCodes?: string[] } };
     };
     expect(body.error.code).toBe("invalid_role");
-    expect(body.error.unknownCodes).toEqual(["bogus_role"]);
+    expect(body.error.details?.unknownCodes).toEqual(["bogus_role"]);
   });
 
   it("GET /zones/:slug includes the mfa bundle", async () => {
