@@ -8,6 +8,7 @@ import { env } from "./env";
 import { log } from "./logger";
 import { stopBoss } from "./services/queue";
 import { startReportQueue } from "./services/reports/jobs-pgboss";
+import { startErasureSweep } from "./services/erasure/cron";
 import { startRetentionSweep } from "./services/retention/cron";
 import { startZoneExportQueue } from "./services/exports/jobs-pgboss";
 
@@ -42,6 +43,12 @@ void startRetentionSweep().catch((err) =>
 // `startZoneExportQueue` recovers orphaned rows.
 void startZoneExportQueue().catch((err) =>
   log.error({ err }, "zone export queue: failed to start"),
+);
+
+// Phase 9 §6: daily GDPR-erasure apply sweep. Same posture as the
+// retention sweep — idempotent boot, per-row failure isolation.
+void startErasureSweep().catch((err) =>
+  log.error({ err }, "erasure sweep: failed to start"),
 );
 
 const shutdown = async (signal: string): Promise<void> => {

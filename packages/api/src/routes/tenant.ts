@@ -67,6 +67,7 @@ import { tenantReportsRouter } from "./tenant-reports";
 import { tenantPayingInBooksRouter } from "./tenant-paying-in-books";
 import { tenantPeriodsRouter } from "./tenant-periods";
 import { tenantTargetsRouter } from "./tenant-targets";
+import { tenantErasureRouter } from "./tenant-erasure";
 import { tenantExportsRouter } from "./tenant-exports";
 import { tenantZonesRouter } from "./tenant-zones";
 
@@ -89,6 +90,7 @@ tenantRouter.route("/", tenantPayingInBooksRouter);
 tenantRouter.route("/", tenantPeriodsRouter);
 tenantRouter.route("/", tenantZonesRouter);
 tenantRouter.route("/", tenantExportsRouter);
+tenantRouter.route("/", tenantErasureRouter);
 
 /** Current user's authorization context for the resolved zone. */
 tenantRouter.get("/me", async (c) => {
