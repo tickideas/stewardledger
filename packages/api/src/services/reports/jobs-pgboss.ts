@@ -17,7 +17,7 @@
 //
 // RELEVANT FILES: packages/api/src/services/queue.ts, packages/api/src/services/reports/jobs.ts
 
-import { and, eq, lt } from "drizzle-orm";
+import { and, eq, isNotNull, lt } from "drizzle-orm";
 import { reportJobs } from "@stewardledger/db/schema";
 import { db } from "../../db";
 import { log } from "../../logger";
@@ -35,7 +35,11 @@ import {
 const GENERATE_QUEUE = "report.generate";
 const CLEANUP_QUEUE = "report.cleanup";
 const CLEANUP_CRON = "0 3 * * *"; // daily at 03:00 UTC
-const BOOT_SWEEP_AGE_MS = 60_000;
+const BOOT_SWEEP_QUEUED_AGE_MS = 60_000;
+// A `running` row older than this is presumed orphaned by a worker
+// crash: real exports take seconds, a large one a minute or two.
+// 15 minutes is comfortably past any legitimate in-flight job.
+const STALE_RUNNING_AGE_MS = 15 * 60_000;
 
 let queuesRegistered = false;
 
@@ -124,18 +128,66 @@ async function handleGenerate(jobId: string): Promise<void> {
 }
 
 /**
- * Re-publish queued rows that pg-boss doesn't know about. The
- * publish path is `INSERT row` \u2192 `boss.send`; a crash between the
- * two leaves the row visible to us but invisible to pg-boss. Run
- * once at boot.
+ * Re-publish queued / stuck rows that pg-boss doesn't know about.
+ * Run once at boot. Recovers two failure modes:
+ *
+ *   1. `INSERT row` committed but the subsequent `boss.send` failed
+ *      (crash between the two). The row is visible to us but
+ *      invisible to pg-boss. Detected by `status='queued'` AND
+ *      `created_at < now() - 60s`.
+ *   2. `claimJobById` flipped the row to `running` but the worker
+ *      crashed before `finalizeJob`. pg-boss may retry, but its
+ *      handler sees `status='running'` and bails. Detected by
+ *      `status='running'` AND `started_at < now() - 15m`. The row
+ *      is flipped back to `queued` (clearing `started_at`) and
+ *      re-enqueued in the same pass.
  */
+/**
+ * Flip stale `running` rows back to `queued`. The handler can't
+ * recover these on its own because `claimJobById` only matches
+ * `queued`. Exported so it can be unit-tested without booting
+ * pg-boss; the sweep below calls it inline.
+ */
+export async function recoverStaleRunningJobs(
+  database: typeof db,
+  ageMs: number = STALE_RUNNING_AGE_MS,
+): Promise<string[]> {
+  const cutoff = new Date(Date.now() - ageMs);
+  const reset = await database
+    .update(reportJobs)
+    .set({ status: "queued", startedAt: null, updatedAt: new Date() })
+    .where(
+      and(
+        eq(reportJobs.status, "running"),
+        isNotNull(reportJobs.startedAt),
+        lt(reportJobs.startedAt, cutoff),
+      ),
+    )
+    .returning({ id: reportJobs.id });
+  if (reset.length > 0) {
+    log.warn(
+      { count: reset.length, ids: reset.map((r) => r.id) },
+      "report queue: reset stale running rows to queued",
+    );
+  }
+  return reset.map((r) => r.id);
+}
+
 async function sweepOrphanedQueuedRows(): Promise<void> {
-  const cutoff = new Date(Date.now() - BOOT_SWEEP_AGE_MS);
+  // Step 1: stale `running` rows — worker crashed mid-export. We
+  // flip them back to `queued` here so the SELECT below picks them
+  // up alongside legitimately-orphaned `queued` rows.
+  await recoverStaleRunningJobs(db);
+
+  // Step 2: pick up every queued row older than the publish cutoff
+  // (covers both the original boot-sweep case + anything we just
+  // reset, since their createdAt is well past the cutoff).
+  const queuedCutoff = new Date(Date.now() - BOOT_SWEEP_QUEUED_AGE_MS);
   const rows = await db
     .select({ id: reportJobs.id })
     .from(reportJobs)
     .where(
-      and(eq(reportJobs.status, "queued"), lt(reportJobs.createdAt, cutoff)),
+      and(eq(reportJobs.status, "queued"), lt(reportJobs.createdAt, queuedCutoff)),
     )
     .limit(200);
   if (rows.length === 0) return;
