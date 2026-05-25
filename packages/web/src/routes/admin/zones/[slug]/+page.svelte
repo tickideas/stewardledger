@@ -2,6 +2,7 @@
   import { page } from "$app/state";
   import { api, ApiError } from "$lib/api";
   import { fmtMoney } from "$lib/format";
+  import { ALL_TENANT_ROLE_OPTIONS_BY_SCOPE } from "$lib/role-options";
 
   type ChapterRow = {
     id: string;
@@ -54,6 +55,11 @@
       postedContributionSubtotals: Subtotal[];
     };
     openInvitations: OpenInvitation[];
+    mfa: {
+      requiredRoleCodes: string[];
+      enrolled: number;
+      required: number;
+    };
   };
 
   let data = $state<ZoneDetail | null>(null);
@@ -206,6 +212,62 @@
     if (e.key !== "Escape") return;
     if (resendOpen) closeResend();
     else if (confirmingRevoke) closeRevokeConfirm();
+  }
+
+  // ─── Two-factor enforcement ───────────────────────────────────────
+
+  // Local working copy of the checkbox state. Reset on every `data`
+  // refresh so a discarded edit doesn't survive a re-fetch.
+  let mfaSelection = $state<Set<string>>(new Set());
+  let mfaSaving = $state(false);
+
+  $effect(() => {
+    // Re-sync whenever the server snapshot changes (initial load,
+    // post-save refresh, slug change).
+    if (data) mfaSelection = new Set(data.mfa.requiredRoleCodes);
+  });
+
+  const mfaDirty = $derived.by(() => {
+    if (!data) return false;
+    const server = new Set(data.mfa.requiredRoleCodes);
+    if (server.size !== mfaSelection.size) return true;
+    for (const code of server) if (!mfaSelection.has(code)) return true;
+    return false;
+  });
+
+  function toggleMfaCode(code: string, checked: boolean): void {
+    const next = new Set(mfaSelection);
+    if (checked) next.add(code);
+    else next.delete(code);
+    mfaSelection = next;
+  }
+
+  async function saveMfa(): Promise<void> {
+    if (!data || !mfaDirty) return;
+    mfaSaving = true;
+    try {
+      const res = await api.patch<{ codes: string[] }>(
+        `/api/admin/zones/${data.zone.slug}/mfa-required-role-codes`,
+        { codes: [...mfaSelection] },
+      );
+      setStatus(
+        "success",
+        res.codes.length === 0
+          ? "Two-factor enforcement is off for this zone."
+          : `Two-factor enforcement updated (${res.codes.length} role${res.codes.length === 1 ? "" : "s"}).`,
+        6000,
+      );
+      await refresh();
+    } catch (err) {
+      setStatus(
+        "error",
+        err instanceof ApiError
+          ? err.message
+          : "Could not update two-factor enforcement.",
+      );
+    } finally {
+      mfaSaving = false;
+    }
   }
 </script>
 
@@ -468,6 +530,57 @@
         </div>
       </div>
     {/if}
+
+    <div class="sl-reveal sl-reveal-5 mt-10">
+      <div class="mb-3 flex items-baseline justify-between">
+        <span class="sl-eyebrow">Two-factor enforcement</span>
+        <span class="sl-mono text-[11px] text-[var(--ink-mute)]">
+          {data.mfa.enrolled} / {data.mfa.required} enrolled
+        </span>
+      </div>
+      <div class="sl-card p-5">
+        <p class="text-[12.5px] text-[var(--ink-mute)]">
+          Users holding any of these roles in this zone must enrol in
+          TOTP before they can use the application. Removing a role from
+          this list doesn’t disable MFA for users who already have it
+          — it only stops forcing new ones.
+        </p>
+        <div class="mt-4 grid gap-5 sm:grid-cols-3">
+          {#each ALL_TENANT_ROLE_OPTIONS_BY_SCOPE as group (group.scope)}
+            <fieldset class="space-y-2">
+              <legend class="sl-eyebrow" style="font-size:10.5px">
+                {group.label}
+              </legend>
+              {#each group.options as opt (opt.value)}
+                <label class="flex items-center gap-2 text-[13px] text-[var(--ink)]">
+                  <input
+                    type="checkbox"
+                    checked={mfaSelection.has(opt.value)}
+                    onchange={(e) =>
+                      toggleMfaCode(
+                        opt.value,
+                        (e.currentTarget as HTMLInputElement).checked,
+                      )}
+                  />
+                  <span>{opt.label}</span>
+                  <code class="sl-mono text-[11px] text-[var(--ink-faint)]">{opt.value}</code>
+                </label>
+              {/each}
+            </fieldset>
+          {/each}
+        </div>
+        <div class="mt-5 flex items-center justify-end gap-3 border-t border-[var(--rule)] pt-4">
+          <button
+            type="button"
+            class="sl-btn sl-btn-primary"
+            disabled={!mfaDirty || mfaSaving}
+            onclick={saveMfa}
+          >
+            {mfaSaving ? "Saving…" : mfaDirty ? "Save changes" : "Saved"}
+          </button>
+        </div>
+      </div>
+    </div>
 
     <div class="sl-reveal sl-reveal-5 mt-10">
       <span class="sl-eyebrow">Metadata</span>

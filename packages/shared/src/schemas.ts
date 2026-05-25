@@ -139,6 +139,46 @@ export const zoneEnableGroupsSchema = z
 export type ZoneEnableGroupsInput = z.infer<typeof zoneEnableGroupsSchema>;
 
 // ---------------------------------------------------------------------------
+// Zone MFA enforcement (Phase 9 §5 follow-up)
+// ---------------------------------------------------------------------------
+//
+// `zones.mfa_required_role_codes` is a `text[]` listing the role codes
+// whose holders must enrol in TOTP before they can use the app. The
+// platform-admin UI on `/admin/zones/[slug]` writes this column via
+// `PATCH /api/admin/zones/:slug/mfa-required-role-codes`. The wire
+// schema is intentionally permissive (any string) because the
+// per-entry **role taxonomy** check belongs in the service layer where
+// it can reference the canonical `ZONE_ROLES ∪ GROUP_ROLES ∪ CHAPTER_ROLES`
+// set without dragging the import graph here.
+
+/**
+ * The set of role codes that MAY appear in
+ * `zones.mfa_required_role_codes`. Platform roles are intentionally
+ * excluded — platform admins aren't bound to a single zone, so an
+ * MFA toggle on one zone wouldn't apply to them consistently.
+ */
+export const MFA_ENFORCEABLE_ROLE_CODES = [
+  ...(Object.values(ZONE_ROLES) as string[]),
+  ...(Object.values(GROUP_ROLES) as string[]),
+  ...(Object.values(CHAPTER_ROLES) as string[]),
+] as const;
+export type MfaEnforceableRoleCode = (typeof MFA_ENFORCEABLE_ROLE_CODES)[number];
+
+/**
+ * Wire schema for the PATCH endpoint. Membership is checked in the
+ * service layer so the failure mode is a structured `invalid_role`
+ * error rather than a generic Zod refinement.
+ */
+export const zoneMfaRequiredRoleCodesSchema = z
+  .object({
+    codes: z.array(z.string().min(1).max(64)).max(64),
+  })
+  .strict();
+export type ZoneMfaRequiredRoleCodesInput = z.infer<
+  typeof zoneMfaRequiredRoleCodesSchema
+>;
+
+// ---------------------------------------------------------------------------
 // Zone retention policy (Phase 9)
 // ---------------------------------------------------------------------------
 //

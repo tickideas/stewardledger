@@ -19,6 +19,7 @@ import {
   regionPromoteSchema,
   regionUpdateSchema,
   ZONE_ROLES,
+  zoneMfaRequiredRoleCodesSchema,
   zoneOwnerInviteResendSchema,
   zoneSignupSchema,
 } from "@stewardledger/shared";
@@ -32,6 +33,12 @@ import {
   requireSession,
   type SessionUser,
 } from "../middleware/auth";
+import {
+  loadMfaRequiredRoleCodes,
+  mfaEnforcementSummary,
+  updateMfaRequiredRoleCodes,
+  ZoneMfaError,
+} from "../services/admin/zone-mfa";
 import { writeAudit } from "../services/audit";
 import { brandedEmailHtml, sendEmail } from "../services/email";
 import {
@@ -462,6 +469,14 @@ adminRouter.get("/zones/:slug", async (c) => {
     subtotals.find((s) => s.currencyCode === zone.defaultCurrencyCode) ?? subtotals[0];
   const totalContributionCount = subtotals.reduce((acc, s) => acc + s.count, 0);
 
+  // MFA enforcement bundle for the "Two-factor enforcement" card on
+  // the platform-admin zone-detail page. Read in parallel with the
+  // existing aggregates so the GET stays single-round-trip.
+  const [mfaRequiredRoleCodes, mfaSummary] = await Promise.all([
+    loadMfaRequiredRoleCodes(db, zone.id),
+    mfaEnforcementSummary(db, zone.id),
+  ]);
+
   return c.json({
     zone,
     chapters: chaptersWithCounts,
@@ -480,8 +495,76 @@ adminRouter.get("/zones/:slug", async (c) => {
       createdAt: r.createdAt.toISOString(),
       expired: r.expiresAt.getTime() < Date.now(),
     })),
+    mfa: {
+      requiredRoleCodes: mfaRequiredRoleCodes,
+      enrolled: mfaSummary.enrolled,
+      required: mfaSummary.required,
+    },
   });
 });
+
+/**
+ * Update the per-zone MFA enforcement list. Super-admin only —
+ * support-admin gets the read on `GET /zones/:slug` but cannot flip a
+ * security control. See `tasks/admin-mfa-role-codes-ui.md` for the
+ * design rationale.
+ */
+adminRouter.patch(
+  "/zones/:slug/mfa-required-role-codes",
+  zValidator("json", zoneMfaRequiredRoleCodesSchema),
+  async (c) => {
+    const denied = superAdminGate(c);
+    if (denied) return denied;
+    const user = c.get("user") as SessionUser;
+    const slug = c.req.param("slug");
+    const { codes } = c.req.valid("json");
+    logAdminAccess(c, "admin.zones.mfa_required_role_codes.update", {
+      zoneSlug: slug,
+      codes,
+    });
+
+    const [zone] = await db
+      .select({ id: zones.id })
+      .from(zones)
+      .where(and(eq(zones.slug, slug), isNull(zones.deletedAt)))
+      .limit(1);
+    if (!zone) {
+      return c.json(
+        { error: { code: "not_found", message: "Zone not found" } },
+        404,
+      );
+    }
+
+    try {
+      const next = await updateMfaRequiredRoleCodes(db, {
+        zoneId: zone.id,
+        actorUserId: user.id,
+        codes,
+      });
+      return c.json({ codes: next });
+    } catch (err) {
+      if (err instanceof ZoneMfaError) {
+        if (err.code === "zone_not_found") {
+          return c.json(
+            { error: { code: "not_found", message: "Zone not found" } },
+            404,
+          );
+        }
+        return c.json(
+          {
+            error: {
+              code: err.code,
+              message: err.message,
+              ...err.extra,
+            },
+          },
+          422,
+        );
+      }
+      throw err;
+    }
+  },
+);
 
 /**
  * Remove a zone from the platform dashboard by soft-deleting it. We keep the
