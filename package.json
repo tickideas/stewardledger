@@ -28,5 +28,38 @@
   "packageManager": "pnpm@9.15.0",
   "engines": {
     "node": ">=20.19.0 <25"
+  },
+  "pnpm": {
+    "peerDependencyRules": {
+      "ignoreMissing": [
+        "@aws-sdk/client-rds-data",
+        "@cloudflare/workers-types",
+        "@electric-sql/pglite",
+        "@libsql/client",
+        "@libsql/client-wasm",
+        "@neondatabase/serverless",
+        "@op-engineering/op-sqlite",
+        "@opentelemetry/api",
+        "@planetscale/database",
+        "@prisma/client",
+        "@tidbcloud/serverless",
+        "@types/better-sqlite3",
+        "@types/pg",
+        "@types/sql.js",
+        "@vercel/postgres",
+        "@xata.io/client",
+        "better-sqlite3",
+        "bun-types",
+        "expo-sqlite",
+        "knex",
+        "kysely",
+        "mysql2",
+        "pg",
+        "sql.js",
+        "sqlite3",
+        "gel",
+        "@upstash/redis"
+      ]
+    }
   }
 }

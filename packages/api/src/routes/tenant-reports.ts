@@ -514,6 +514,7 @@ tenantReportsRouter.get("/reports/jobs/:jobId", async (c) => {
     createdAt: job.createdAt.toISOString(),
     startedAt: job.startedAt?.toISOString() ?? null,
     completedAt: job.completedAt?.toISOString() ?? null,
+    emailSentAt: job.emailSentAt?.toISOString() ?? null,
   };
   c.header("cache-control", NO_STORE);
   return c.json({ job: summary });
@@ -526,6 +527,12 @@ tenantReportsRouter.get("/reports/jobs/:jobId/download", async (c) => {
     return forbidden(c, "forbidden_export", "Export requires a finance role");
   const job = await getJobForReader(db, ctx, c.req.param("jobId"));
   if (!job) return c.json({ error: { code: "not_found", message: "Job not found" } }, 404);
+  if (job.status === "expired") {
+    return c.json(
+      { error: { code: "expired", message: "Artefact has expired" } },
+      404,
+    );
+  }
   if (job.status !== "completed" || !job.storageKey) {
     return c.json(
       { error: { code: "not_ready", message: `Job is ${job.status}` } },
