@@ -63,6 +63,16 @@ export const importFiles = pgTable(
     /** "bank_csv" | "generic_csv" | "online_giving" | ... */
     sourceType: text("source_type").notNull().default("generic_csv"),
     uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * Set by the Phase 9 retention sweep when the blob has been
+     * deleted from object storage. The row itself stays for audit /
+     * FK integrity — `import_jobs(import_file_id)` is `restrict`, so a
+     * hard delete here would throw whenever processed jobs reference
+     * the file. A purged row should be treated as "file no longer
+     * recoverable"; downstream re-runs / restores must be served
+     * from a fresh upload.
+     */
+    purgedAt: timestamp("purged_at", { withTimezone: true }),
   },
   (table) => [
     unique("import_files_zone_id_unique").on(table.zoneId, table.id),

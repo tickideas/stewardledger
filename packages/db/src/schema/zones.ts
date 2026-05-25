@@ -50,6 +50,14 @@ export const zones = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
+    /**
+     * Per-zone data retention policy. `jsonb` so dimensions can grow
+     * without a migration each time. The Zod schema in
+     * `@stewardledger/shared` is the canonical contract — every read
+     * hydrates defaults so the column itself can stay empty for new
+     * zones. See `packages/api/src/services/retention/`.
+     */
+    retentionPolicy: jsonb("retention_policy").notNull().default({}),
     groupsEnabled: boolean("groups_enabled").notNull().default(false),
     activatedAt: timestamp("activated_at", { withTimezone: true }),
     primaryContactUserId: text("primary_contact_user_id").references(() => user.id, {

@@ -8,6 +8,7 @@ import { env } from "./env";
 import { log } from "./logger";
 import { stopBoss } from "./services/queue";
 import { startReportQueue } from "./services/reports/jobs-pgboss";
+import { startRetentionSweep } from "./services/retention/cron";
 
 const app = createApp();
 
@@ -26,6 +27,13 @@ const server = serve({ fetch: app.fetch, port: env.PORT }, (info) => {
 // any rows whose `boss.send` failed during a previous crash window.
 void startReportQueue().catch((err) =>
   log.error({ err }, "report queue: failed to start"),
+);
+
+// Phase 9: daily per-zone retention sweep. Same posture as the report
+// queue — a failure here logs but never blocks the API. Reuses the
+// same pg-boss singleton.
+void startRetentionSweep().catch((err) =>
+  log.error({ err }, "retention sweep: failed to start"),
 );
 
 const shutdown = async (signal: string): Promise<void> => {

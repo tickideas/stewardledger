@@ -7,6 +7,7 @@ import { sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   CHAPTER_ROLES,
+  DEFAULT_RETENTION_POLICY,
   GROUP_ROLES,
   ZONE_ROLES,
 } from "@stewardledger/shared";
@@ -349,6 +350,132 @@ describe("POST /api/tenant/zones/groups-enabled", () => {
     const res = await call(zone.slug, "/api/tenant/zones/groups-enabled", {
       method: "POST",
       body: {},
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("/api/tenant/zones/retention-policy", () => {
+  const cleanupSlugs: string[] = [];
+  const cleanupUserIds: string[] = [];
+
+  beforeAll(async () => {
+    if (!/_test\b/.test(process.env.DATABASE_URL ?? "")) {
+      throw new Error("tenant-zones.test.ts requires a *_test DATABASE_URL");
+    }
+  });
+
+  afterAll(async () => {
+    for (const slug of cleanupSlugs) {
+      const zoneIdSubq = sql`(select id from zones where slug = ${slug})`;
+      await db.execute(sql`delete from audit_events where zone_id = ${zoneIdSubq}`);
+      await db.execute(sql`delete from user_role_bindings where zone_id = ${zoneIdSubq}`);
+      await db.execute(sql`delete from zones where slug = ${slug}`);
+    }
+    for (const id of cleanupUserIds) {
+      await db.execute(sql`delete from "user" where id = ${id}`);
+    }
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function asUser(userId: string, email: string) {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userId, email));
+  }
+
+  it("GET returns hydrated defaults for a fresh zone", async () => {
+    const zone = await seedZone(`zn-rp-get-${unique()}`);
+    cleanupSlugs.push(zone.slug);
+    const owner = await seedUser(`zn-rp-get+${unique()}@example.com`);
+    cleanupUserIds.push(owner);
+    await bindUser(owner, zone.id, zone.ownerRoleId, { scope: "zone" });
+    asUser(owner, "owner@example.com");
+
+    const res = await call(zone.slug, "/api/tenant/zones/retention-policy");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { policy: typeof DEFAULT_RETENTION_POLICY };
+    expect(body.policy.audit_events.retainDays).toBe(
+      DEFAULT_RETENTION_POLICY.audit_events.retainDays,
+    );
+    expect(body.policy.report_jobs.retainDays).toBe(
+      DEFAULT_RETENTION_POLICY.report_jobs.retainDays,
+    );
+  });
+
+  it("PUT as zone_owner writes the policy and audits the change", async () => {
+    const zone = await seedZone(`zn-rp-put-${unique()}`);
+    cleanupSlugs.push(zone.slug);
+    const owner = await seedUser(`zn-rp-put+${unique()}@example.com`);
+    cleanupUserIds.push(owner);
+    await bindUser(owner, zone.id, zone.ownerRoleId, { scope: "zone" });
+    asUser(owner, "owner@example.com");
+
+    const res = await call(zone.slug, "/api/tenant/zones/retention-policy", {
+      method: "PUT",
+      body: { audit_events: { retainDays: 365 } },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      policy: { audit_events: { retainDays: number } };
+    };
+    expect(body.policy.audit_events.retainDays).toBe(365);
+
+    const [audit] = await db.execute<{ action: string }>(
+      sql`select action from audit_events where zone_id = ${zone.id} and action = 'zone.retention_policy.update' limit 1`,
+    );
+    expect(audit?.action).toBe("zone.retention_policy.update");
+  });
+
+  it("PUT is a no-op when the policy matches the prior effective shape (no audit row)", async () => {
+    const zone = await seedZone(`zn-rp-noop-${unique()}`);
+    cleanupSlugs.push(zone.slug);
+    const owner = await seedUser(`zn-rp-noop+${unique()}@example.com`);
+    cleanupUserIds.push(owner);
+    await bindUser(owner, zone.id, zone.ownerRoleId, { scope: "zone" });
+    asUser(owner, "owner@example.com");
+
+    // Two identical writes — the second should not produce a second audit row.
+    const body = { audit_events: { retainDays: 90 } };
+    await call(zone.slug, "/api/tenant/zones/retention-policy", {
+      method: "PUT",
+      body,
+    });
+    await call(zone.slug, "/api/tenant/zones/retention-policy", {
+      method: "PUT",
+      body,
+    });
+    const auditCount = await db.execute<{ count: string }>(
+      sql`select count(*)::text as count from audit_events where zone_id = ${zone.id} and action = 'zone.retention_policy.update'`,
+    );
+    expect(Number(auditCount[0]?.count ?? 0)).toBe(1);
+  });
+
+  it("PUT as zone_admin returns 403 (owner-only write)", async () => {
+    const zone = await seedZone(`zn-rp-403-${unique()}`);
+    cleanupSlugs.push(zone.slug);
+    const u = await seedUser(`zn-rp-403+${unique()}@example.com`);
+    cleanupUserIds.push(u);
+    await bindUser(u, zone.id, zone.zoneAdminRoleId, { scope: "zone" });
+    asUser(u, "zadm@example.com");
+    const res = await call(zone.slug, "/api/tenant/zones/retention-policy", {
+      method: "PUT",
+      body: { audit_events: { retainDays: 30 } },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("PUT validates: retainDays cannot be negative", async () => {
+    const zone = await seedZone(`zn-rp-bad-${unique()}`);
+    cleanupSlugs.push(zone.slug);
+    const owner = await seedUser(`zn-rp-bad+${unique()}@example.com`);
+    cleanupUserIds.push(owner);
+    await bindUser(owner, zone.id, zone.ownerRoleId, { scope: "zone" });
+    asUser(owner, "owner@example.com");
+    const res = await call(zone.slug, "/api/tenant/zones/retention-policy", {
+      method: "PUT",
+      body: { audit_events: { retainDays: -1 } },
     });
     expect(res.status).toBe(400);
   });
