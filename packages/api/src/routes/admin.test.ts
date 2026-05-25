@@ -483,3 +483,182 @@ describe("admin platform-role gating", () => {
   });
 });
 
+describe("PATCH /api/admin/zones/:slug/mfa-required-role-codes", () => {
+  // Self-contained: seeds its own admin + zone per test so the order-
+  // independence guarantee holds even when run in isolation.
+  const cleanupSlugs: string[] = [];
+  const cleanupUserIds: string[] = [];
+  const cleanupBindings: string[] = [];
+
+  beforeAll(() => {
+    if (!process.env.DATABASE_URL?.includes("_test")) {
+      throw new Error("admin.test.ts requires a *_test DATABASE_URL");
+    }
+  });
+
+  afterAll(async () => {
+    if (cleanupBindings.length > 0) {
+      await db
+        .delete(platformRoleBindings)
+        .where(inArray(platformRoleBindings.id, cleanupBindings));
+    }
+    for (const slug of cleanupSlugs) {
+      const zoneIdSubq = sql`(select id from zones where slug = ${slug})`;
+      await db.execute(
+        sql`delete from audit_events where entity_type = 'zone' and entity_id in (select id from zones where slug = ${slug})`,
+      );
+      await db.execute(sql`delete from user_role_bindings where zone_id = ${zoneIdSubq}`);
+      await db.execute(sql`delete from roles where zone_id = ${zoneIdSubq}`);
+      await db.execute(sql`delete from zones where slug = ${slug}`);
+    }
+    for (const id of cleanupUserIds) {
+      await db.execute(sql`delete from "user" where id = ${id}`);
+    }
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  async function seedSuperAdminUser(): Promise<{ id: string; email: string }> {
+    const id = `u-mfa-sup-${unique()}`;
+    const email = `mfa-sup-${unique()}@example.com`;
+    await db.insert(userTable).values({
+      id,
+      email,
+      emailVerified: true,
+      isSuperAdmin: true,
+    });
+    cleanupUserIds.push(id);
+    return { id, email };
+  }
+
+  async function seedSupportAdminUser(): Promise<{ id: string; email: string }> {
+    const id = `u-mfa-sup2-${unique()}`;
+    const email = `mfa-sup2-${unique()}@example.com`;
+    await db.insert(userTable).values({
+      id,
+      email,
+      emailVerified: true,
+      isSuperAdmin: false,
+    });
+    const [binding] = await db
+      .insert(platformRoleBindings)
+      .values({ userId: id, roleCode: "support_admin" })
+      .returning({ id: platformRoleBindings.id });
+    cleanupUserIds.push(id);
+    cleanupBindings.push(binding.id);
+    return { id, email };
+  }
+
+  async function seedMfaZone(): Promise<{ id: string; slug: string }> {
+    const slug = `mfa-route-${unique()}`;
+    cleanupSlugs.push(slug);
+    const [row] = await db
+      .insert(zones)
+      .values({
+        slug,
+        name: `MFA Route ${unique()}`,
+        countryCode: "GB",
+        defaultCurrencyCode: "GBP",
+        defaultTimeZone: "Europe/London",
+        regionNameUnverified: `Region ${unique()}`,
+        status: "active",
+      })
+      .returning({ id: zones.id, slug: zones.slug });
+    return row;
+  }
+
+  it("super_admin PATCH with valid codes returns 200 + normalised list", async () => {
+    const admin = await seedSuperAdminUser();
+    const zone = await seedMfaZone();
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(
+      fakeSession(admin.id, admin.email),
+    );
+    const res = await adminCall(
+      `/api/admin/zones/${zone.slug}/mfa-required-role-codes`,
+      {
+        method: "PATCH",
+        body: { codes: ["zone_owner", "ZONE_FINANCE_ADMIN"] },
+      },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { codes: string[] };
+    expect(body.codes).toEqual(["zone_finance_admin", "zone_owner"]);
+  });
+
+  it("support_admin PATCH returns 403", async () => {
+    const sup = await seedSupportAdminUser();
+    const zone = await seedMfaZone();
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(
+      fakeSession(sup.id, sup.email),
+    );
+    const res = await adminCall(
+      `/api/admin/zones/${zone.slug}/mfa-required-role-codes`,
+      {
+        method: "PATCH",
+        body: { codes: ["zone_owner"] },
+      },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("super_admin PATCH with an unknown role code returns 422 + invalid_role", async () => {
+    const admin = await seedSuperAdminUser();
+    const zone = await seedMfaZone();
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(
+      fakeSession(admin.id, admin.email),
+    );
+    const res = await adminCall(
+      `/api/admin/zones/${zone.slug}/mfa-required-role-codes`,
+      {
+        method: "PATCH",
+        body: { codes: ["zone_owner", "bogus_role"] },
+      },
+    );
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as {
+      error: { code: string; details?: { unknownCodes?: string[] } };
+    };
+    expect(body.error.code).toBe("invalid_role");
+    expect(body.error.details?.unknownCodes).toEqual(["bogus_role"]);
+  });
+
+  it("GET /zones/:slug includes the mfa bundle", async () => {
+    const admin = await seedSuperAdminUser();
+    const zone = await seedMfaZone();
+    // Seed an initial list so the GET reads a non-empty value.
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(
+      fakeSession(admin.id, admin.email),
+    );
+    await adminCall(
+      `/api/admin/zones/${zone.slug}/mfa-required-role-codes`,
+      {
+        method: "PATCH",
+        body: { codes: ["zone_owner"] },
+      },
+    );
+    const res = await adminCall(`/api/admin/zones/${zone.slug}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      mfa: { requiredRoleCodes: string[]; required: number; enrolled: number };
+    };
+    expect(body.mfa.requiredRoleCodes).toEqual(["zone_owner"]);
+    expect(body.mfa.required).toBe(0);
+    expect(body.mfa.enrolled).toBe(0);
+  });
+
+  it("returns 404 when the zone slug does not exist", async () => {
+    const admin = await seedSuperAdminUser();
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(
+      fakeSession(admin.id, admin.email),
+    );
+    const res = await adminCall(
+      "/api/admin/zones/zone-does-not-exist/mfa-required-role-codes",
+      {
+        method: "PATCH",
+        body: { codes: ["zone_owner"] },
+      },
+    );
+    expect(res.status).toBe(404);
+  });
+});
+

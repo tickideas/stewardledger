@@ -586,7 +586,7 @@ We deliberately mirror the echurcher stack so the operations playbook (build, de
 
 1. Specific price points for Founding / Standard / Premium tiers.
 2. Annual-prepay refund policy (recommend pro-rated refund within first 30 days, none thereafter).
-3. Whether MFA is mandatory or just default-on for Premium.
+3. Whether MFA is mandatory or just default-on for Premium. *(Resolved: opt-in per zone. New zones default to no enforced MFA; the platform-admin UI on `/admin/zones/[slug]` lets a super-admin flip `mfa_required_role_codes` per zone, with a blast-radius preview. Mandatory-by-default for Premium can return as a Phase 10 billing concern if Stripe-tier gating warrants it.)*
 
 ---
 
