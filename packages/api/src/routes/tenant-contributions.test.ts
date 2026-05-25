@@ -14,6 +14,8 @@ import {
   groups,
   givingTypes,
   members,
+  serviceEvents,
+  serviceTypes,
   user as userTable,
   userRoleBindings,
   zones,
@@ -45,6 +47,7 @@ interface SeededZone {
   chapterBookkeeperRoleId: string;
   chapterPastorRoleId: string;
   groupAdminRoleId: string;
+  serviceEventId: string;
 }
 
 async function seedZone(slug: string, currency: string): Promise<SeededZone> {
@@ -95,6 +98,20 @@ async function seedZone(slug: string, currency: string): Promise<SeededZone> {
     .from(accounts)
     .where(sql`${accounts.zoneId} = ${zone.id} and ${accounts.name} = 'General Fund'`)
     .limit(1);
+  const [serviceType] = await db
+    .select({ id: serviceTypes.id })
+    .from(serviceTypes)
+    .where(sql`${serviceTypes.zoneId} = ${zone.id}`)
+    .limit(1);
+  const [serviceEvent] = await db
+    .insert(serviceEvents)
+    .values({
+      zoneId: zone.id,
+      chapterId: chapter.id,
+      serviceTypeId: serviceType.id,
+      serviceDate: new Date().toISOString().slice(0, 10),
+    })
+    .returning({ id: serviceEvents.id });
   return {
     id: zone.id,
     slug: zone.slug,
@@ -109,6 +126,7 @@ async function seedZone(slug: string, currency: string): Promise<SeededZone> {
     chapterBookkeeperRoleId: roleIds.get(CHAPTER_ROLES.CHAPTER_BOOKKEEPER)!,
     chapterPastorRoleId: roleIds.get(CHAPTER_ROLES.CHAPTER_PASTOR_VIEWER)!,
     groupAdminRoleId: roleIds.get(GROUP_ROLES.GROUP_ADMIN)!,
+    serviceEventId: serviceEvent.id,
   };
 }
 
@@ -248,6 +266,7 @@ describe("tenant contribution routes", () => {
         await tx.execute(sql`delete from contribution_members where zone_id = ${z}`);
         await tx.execute(sql`delete from contributions where zone_id = ${z}`);
         await tx.execute(sql`delete from contribution_batches where zone_id = ${z}`);
+        await tx.execute(sql`delete from service_events where zone_id = ${z}`);
         await tx.execute(sql`delete from members where zone_id = ${z}`);
         await tx.execute(sql`update chapters set group_id = null where zone_id = ${z}`);
         await tx.execute(sql`delete from groups where zone_id = ${z}`);
@@ -544,6 +563,7 @@ describe("tenant contribution routes", () => {
       method: "POST",
       body: {
         chapterId: zoneA.chapterId,
+        serviceEventId: zoneA.serviceEventId,
         sourceType: "envelope",
       },
     });
@@ -589,6 +609,7 @@ describe("tenant contribution routes", () => {
       method: "POST",
       body: {
         chapterId: zoneA.chapterId,
+        serviceEventId: zoneA.serviceEventId,
         sourceType: "manual",
         currencyCode: "USD",
       },
@@ -696,7 +717,7 @@ describe("tenant contribution routes", () => {
     asUser(ownerA, "owner@example.com");
     const createBatch = await call(zoneA.slug, "/api/tenant/contribution-batches", {
       method: "POST",
-      body: { chapterId: zoneA.chapterId, sourceType: "envelope" },
+      body: { chapterId: zoneA.chapterId, serviceEventId: zoneA.serviceEventId, sourceType: "envelope" },
     });
     const { batch } = (await createBatch.json()) as { batch: { id: string } };
 
@@ -726,7 +747,7 @@ describe("tenant contribution routes", () => {
     asUser(ownerA, "owner@example.com");
     const createBatch = await call(zoneA.slug, "/api/tenant/contribution-batches", {
       method: "POST",
-      body: { chapterId: zoneA.chapterId, sourceType: "manual" },
+      body: { chapterId: zoneA.chapterId, serviceEventId: zoneA.serviceEventId, sourceType: "manual" },
     });
     const { batch } = (await createBatch.json()) as { batch: { id: string } };
 
@@ -747,7 +768,7 @@ describe("tenant contribution routes", () => {
     asUser(ownerA, "owner@example.com");
     const createBatch = await call(zoneA.slug, "/api/tenant/contribution-batches", {
       method: "POST",
-      body: { chapterId: zoneA.chapterId, sourceType: "manual" },
+      body: { chapterId: zoneA.chapterId, serviceEventId: zoneA.serviceEventId, sourceType: "manual" },
     });
     const { batch } = (await createBatch.json()) as { batch: { id: string } };
     const voided = await call(zoneA.slug, `/api/tenant/contribution-batches/${batch.id}/void`, {

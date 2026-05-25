@@ -699,7 +699,7 @@ export type ContributionReverseInput = z.infer<typeof contributionReverseSchema>
 
 export const contributionBatchCreateSchema = z.object({
   chapterId: uuidSchema,
-  serviceEventId: uuidSchema.nullish(),
+  serviceEventId: uuidSchema,
   paymentMethodId: uuidSchema.nullish(),
   sourceType: sourceTypeSchema,
   referenceCode: z.string().max(80).nullish(),
@@ -711,7 +711,7 @@ export const contributionBatchCreateSchema = z.object({
 export type ContributionBatchCreateInput = z.infer<typeof contributionBatchCreateSchema>;
 
 export const contributionBatchUpdateSchema = z.object({
-  serviceEventId: uuidSchema.nullish(),
+  serviceEventId: uuidSchema.optional(),
   paymentMethodId: uuidSchema.nullish(),
   referenceCode: z.string().max(80).nullish(),
   cashTotal: moneyAmountSchema.nullish(),
@@ -754,6 +754,7 @@ export const importCreateSchema = z.object({
   fileType: importFileTypeSchema.default("statement"),
   sourceType: importSourceTypeSchema.default("generic_csv"),
   chapterId: uuidSchema.nullish(),
+  serviceEventId: uuidSchema.nullish(),
 });
 export type ImportCreateInput = z.infer<typeof importCreateSchema>;
 

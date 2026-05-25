@@ -50,6 +50,7 @@ export const importFiles = pgTable(
       .notNull()
       .references(() => zones.id, { onDelete: "cascade" }),
     chapterId: text("chapter_id"),
+    serviceEventId: text("service_event_id"),
     uploadedByUserId: text("uploaded_by_user_id").references(() => user.id, {
       onDelete: "set null",
     }),
@@ -66,17 +67,18 @@ export const importFiles = pgTable(
   (table) => [
     unique("import_files_zone_id_unique").on(table.zoneId, table.id),
     // Same checksum + parser context cannot be uploaded twice within the
-    // same chapter scope; chapter_id changes matcher semantics for rows
-    // that omit a chapter, so zone-wide and per-chapter uploads must not
+    // same chapter/service scope; chapter_id and service_event_id change
+    // matcher semantics, so zone-wide and per-chapter uploads must not
     // reuse each other's jobs. Split partial indexes because Postgres
     // treats NULL values as distinct in regular unique constraints.
     uniqueIndex("import_files_zone_checksum_unique")
       .on(table.zoneId, table.checksumSha256, table.fileType, table.sourceType)
       .where(sql`${table.chapterId} is null`),
-    uniqueIndex("import_files_zone_chapter_checksum_unique")
+    uniqueIndex("import_files_zone_chapter_service_checksum_unique")
       .on(
         table.zoneId,
         table.chapterId,
+        table.serviceEventId,
         table.checksumSha256,
         table.fileType,
         table.sourceType,
@@ -88,9 +90,18 @@ export const importFiles = pgTable(
       columns: [table.zoneId, table.chapterId],
       foreignColumns: [chapters.zoneId, chapters.id],
     }).onDelete("restrict"),
+    foreignKey({
+      name: "import_files_service_event_zone_fk",
+      columns: [table.zoneId, table.serviceEventId],
+      foreignColumns: [serviceEvents.zoneId, serviceEvents.id],
+    }).onDelete("restrict"),
     check(
       "import_files_file_type_check",
       sql`${table.fileType} in ('statement', 'member', 'giving', 'target')`,
+    ),
+    check(
+      "import_files_chapter_service_event_check",
+      sql`${table.chapterId} is null or ${table.serviceEventId} is not null`,
     ),
   ],
 );

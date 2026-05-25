@@ -27,6 +27,8 @@ import {
   members,
   paymentMethods,
   processedTransactions,
+  serviceEvents,
+  serviceTypes,
   zones,
 } from "@stewardledger/db/schema";
 import type { Db } from "@stewardledger/db";
@@ -43,6 +45,7 @@ function chunksOf<T>(items: readonly T[], size = BULK_WRITE_CHUNK): T[][] {
 export interface MatchContext {
   zoneId: string;
   fileChapterId: string | null;
+  fileServiceEventId: string | null;
 }
 
 export interface MatchedRow {
@@ -56,6 +59,7 @@ export interface MatchedRow {
   givingPeriodId: string | null;
   accountId: string | null;
   paymentMethodId: string | null;
+  serviceEventId: string | null;
   currencyCode: string | null;
   externalTransactionId: string | null;
   // Outcome.
@@ -75,6 +79,8 @@ interface ZoneLookups {
   givingTypeByName: Map<string, { id: string; accountId: string | null }>;
   givingTypeByShortCode: Map<string, { id: string; accountId: string | null }>;
   paymentMethodByCode: Map<string, string>;
+  serviceEventById: Map<string, { id: string; chapterId: string | null }>;
+  serviceEventByKey: Map<string, { id: string; chapterId: string | null }[]>;
   /** Map<accountId, currencyCode>. The id is the key; storing it again in
    * the value was redundant. */
   accountById: Map<string, string>;
@@ -88,6 +94,7 @@ async function loadZoneLookups(database: Db, zoneId: string): Promise<ZoneLookup
     givingTypeRows,
     paymentMethodRows,
     accountRows,
+    serviceEventRows,
   ] = await Promise.all([
     database
       .select({ defaultCurrencyCode: zones.defaultCurrencyCode })
@@ -133,6 +140,23 @@ async function loadZoneLookups(database: Db, zoneId: string): Promise<ZoneLookup
       })
       .from(accounts)
       .where(eq(accounts.zoneId, zoneId)),
+    database
+      .select({
+        id: serviceEvents.id,
+        chapterId: serviceEvents.chapterId,
+        serviceDate: serviceEvents.serviceDate,
+        serviceTypeName: serviceTypes.name,
+        serviceTypeShortCode: serviceTypes.shortCode,
+      })
+      .from(serviceEvents)
+      .innerJoin(
+        serviceTypes,
+        and(
+          eq(serviceTypes.zoneId, serviceEvents.zoneId),
+          eq(serviceTypes.id, serviceEvents.serviceTypeId),
+        ),
+      )
+      .where(eq(serviceEvents.zoneId, zoneId)),
   ]);
 
   if (!zone) {
@@ -162,6 +186,29 @@ async function loadZoneLookups(database: Db, zoneId: string): Promise<ZoneLookup
     paymentMethodRows.map((r) => [r.code.toLowerCase(), r.id]),
   );
   const accountById = new Map(accountRows.map((r) => [r.id, r.currencyCode]));
+  const serviceEventById = new Map(
+    serviceEventRows.map((r) => [r.id.toLowerCase(), { id: r.id, chapterId: r.chapterId }]),
+  );
+  const serviceEventByKey = new Map<string, { id: string; chapterId: string | null }[]>();
+  for (const event of serviceEventRows) {
+    const date = String(event.serviceDate);
+    const typeKeys = [event.serviceTypeName, event.serviceTypeShortCode]
+      .filter((v): v is string => Boolean(v))
+      .map((v) => v.toLowerCase());
+    // Index under the event's own chapter (or "" for unscoped) so chapter-scoped
+    // lookups only match the right chapter. Only chapter-null events are also
+    // indexed under "*" so a chapter-scoped row never falls back to another
+    // chapter's event.
+    const chapterKeys = event.chapterId === null ? ["", "*"] : [event.chapterId];
+    for (const typeKey of typeKeys) {
+      for (const chapterKey of chapterKeys) {
+        const key = `${chapterKey}|${date}|${typeKey}`;
+        const list = serviceEventByKey.get(key) ?? [];
+        list.push({ id: event.id, chapterId: event.chapterId });
+        serviceEventByKey.set(key, list);
+      }
+    }
+  }
   return {
     defaultCurrencyCode: zone.defaultCurrencyCode,
     chapterByRef,
@@ -171,6 +218,8 @@ async function loadZoneLookups(database: Db, zoneId: string): Promise<ZoneLookup
     givingTypeByShortCode,
     paymentMethodByCode,
     accountById,
+    serviceEventById,
+    serviceEventByKey,
   };
 }
 
@@ -260,6 +309,43 @@ function resolveChapter(
   return { id: null, failure: "CHAPTER_REQUIRED" };
 }
 
+function resolveServiceEvent(
+  lookups: ZoneLookups,
+  parsed: ParsedRow["parsed"],
+  chapterId: string | null,
+  ctx: MatchContext,
+): { id: string | null; failure?: FailureCode; details?: unknown } {
+  const eventId = parsed.serviceEventId ?? ctx.fileServiceEventId;
+  if (eventId) {
+    const hit = lookups.serviceEventById.get(eventId.toLowerCase());
+    if (!hit) return { id: null, failure: "SERVICE_EVENT_NOT_FOUND", details: { serviceEventId: eventId } };
+    if (hit.chapterId !== null && hit.chapterId !== chapterId) {
+      return {
+        id: null,
+        failure: "SERVICE_EVENT_CHAPTER_MISMATCH",
+        details: { serviceEventId: hit.id, chapterId },
+      };
+    }
+    return { id: hit.id };
+  }
+
+  const serviceDate = parsed.serviceDate ?? parsed.contributionDate;
+  const typeKey = parsed.serviceTypeShortCode ?? parsed.serviceTypeName;
+  if (!serviceDate || !typeKey) {
+    return { id: null, failure: "SERVICE_EVENT_REQUIRED" };
+  }
+  const scopedKey = `${chapterId ?? ""}|${serviceDate}|${typeKey.toLowerCase()}`;
+  const zoneWideKey = `*|${serviceDate}|${typeKey.toLowerCase()}`;
+  const matches = lookups.serviceEventByKey.get(scopedKey) ?? lookups.serviceEventByKey.get(zoneWideKey) ?? [];
+  if (matches.length === 0) {
+    return { id: null, failure: "SERVICE_EVENT_NOT_FOUND", details: { serviceDate, type: typeKey } };
+  }
+  if (matches.length > 1) {
+    return { id: null, failure: "SERVICE_EVENT_AMBIGUOUS", details: { serviceDate, type: typeKey } };
+  }
+  return { id: matches[0].id };
+}
+
 export async function matchRows(
   database: Db,
   ctx: MatchContext,
@@ -279,6 +365,11 @@ export async function matchRows(
 
     const chapter = resolveChapter(lookups, row.parsed, ctx);
     if (chapter.failure) failures.push({ code: chapter.failure });
+
+    const serviceEvent = resolveServiceEvent(lookups, row.parsed, chapter.id, ctx);
+    if (serviceEvent.failure) {
+      failures.push({ code: serviceEvent.failure, details: serviceEvent.details });
+    }
 
     const member = resolveMember(lookups, row.parsed, chapter.id);
     if (member.failure) failures.push({ code: member.failure });
@@ -356,6 +447,7 @@ export async function matchRows(
       givingPeriodId,
       accountId,
       paymentMethodId,
+      serviceEventId: serviceEvent.id,
       currencyCode,
       externalTransactionId: row.parsed.externalTransactionId,
       matchStatus,
@@ -400,6 +492,7 @@ export async function persistMatchedRows(
           givingPeriodId: r.givingPeriodId,
           accountId: r.accountId,
           paymentMethodId: r.paymentMethodId,
+          serviceEventId: r.serviceEventId,
           currencyCode: r.currencyCode,
           externalTransactionId: r.externalTransactionId,
           isDuplicate: r.isDuplicate,
@@ -471,5 +564,4 @@ export function summariseMatch(rows: MatchedRow[]): {
     failedRows: failed,
   };
 }
-
 

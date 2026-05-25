@@ -15,6 +15,8 @@ import {
   type AuthorizedContext,
 } from "@stewardledger/shared";
 import { Hono } from "hono";
+import { and, eq } from "drizzle-orm";
+import { serviceEvents } from "@stewardledger/db/schema";
 import { hasAnyRole, requireChapterScope, visibleChapterIds } from "../middleware/auth";
 import { db } from "../db";
 import {
@@ -191,6 +193,7 @@ tenantImportsRouter.post("/imports", async (c) => {
   let fileType = "statement";
   let sourceType = "generic_csv";
   let chapterId: string | null = null;
+  let serviceEventId: string | null = null;
 
   if (contentType.startsWith("multipart/form-data")) {
     const form = await c.req.parseBody({ all: false });
@@ -212,6 +215,7 @@ tenantImportsRouter.post("/imports", async (c) => {
     if (typeof form.fileType === "string") fileType = form.fileType;
     if (typeof form.sourceType === "string") sourceType = form.sourceType;
     if (typeof form.chapterId === "string" && form.chapterId) chapterId = form.chapterId;
+    if (typeof form.serviceEventId === "string" && form.serviceEventId) serviceEventId = form.serviceEventId;
   } else {
     // Raw upload path. Metadata via query string + filename header.
     const raw = await c.req.arrayBuffer();
@@ -226,6 +230,7 @@ tenantImportsRouter.post("/imports", async (c) => {
     fileType = c.req.query("fileType") ?? fileType;
     sourceType = c.req.query("sourceType") ?? sourceType;
     chapterId = c.req.query("chapterId") ?? null;
+    serviceEventId = c.req.query("serviceEventId") ?? null;
   }
 
   if (body.byteLength === 0) {
@@ -251,6 +256,7 @@ tenantImportsRouter.post("/imports", async (c) => {
     fileType,
     sourceType,
     chapterId: chapterId ?? undefined,
+    serviceEventId: serviceEventId ?? undefined,
   });
   if (!parsed.success) {
     return c.json(
@@ -268,6 +274,58 @@ tenantImportsRouter.post("/imports", async (c) => {
   // their own chapters; they cannot upload a zone-wide import (chapterId = null).
   const targetChapterId = parsed.data.chapterId ?? null;
   if (!canWriteImport(ctx, targetChapterId)) return forbidden(c);
+  const targetServiceEventId = parsed.data.serviceEventId ?? null;
+  if (targetChapterId && !targetServiceEventId) {
+    return c.json(
+      {
+        error: {
+          code: "service_event_required",
+          message: "Choose the service event this chapter import belongs to.",
+        },
+      },
+      400,
+    );
+  }
+  if (!targetChapterId && targetServiceEventId) {
+    return c.json(
+      {
+        error: {
+          code: "chapter_required",
+          message: "Select a chapter before selecting one service event for the upload.",
+        },
+      },
+      400,
+    );
+  }
+  if (targetServiceEventId) {
+    const [event] = await db
+      .select({ chapterId: serviceEvents.chapterId })
+      .from(serviceEvents)
+      .where(
+        and(
+          eq(serviceEvents.zoneId, ctx.zoneId),
+          eq(serviceEvents.id, targetServiceEventId),
+        ),
+      )
+      .limit(1);
+    if (!event) {
+      return c.json(
+        { error: { code: "service_event_not_found", message: "Service event not in this zone." } },
+        404,
+      );
+    }
+    if (event.chapterId !== null && event.chapterId !== targetChapterId) {
+      return c.json(
+        {
+          error: {
+            code: "service_event_chapter_mismatch",
+            message: "Service event belongs to a different chapter.",
+          },
+        },
+        400,
+      );
+    }
+  }
 
   try {
     const result = await uploadImport(

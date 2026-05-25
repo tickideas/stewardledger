@@ -30,11 +30,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "../db";
 import {
   approveBatch,
-  createBatch,listBatches, 
+  createBatch as createBatchCore,
+  listBatches,
   postBatch,
   submitBatch,
   updateDraftBatch,
-  voidBatch
+  voidBatch,
 } from "./contribution-batches";
 import {
   ContributionError,
@@ -185,6 +186,17 @@ describe("contributions service", () => {
   let zoneB: SeededZone;
   const cleanupSlugs: string[] = [];
   const cleanupUserIds: string[] = [];
+
+  async function createBatch(
+    database: Parameters<typeof createBatchCore>[0],
+    ctx: Parameters<typeof createBatchCore>[1],
+    input: Omit<Parameters<typeof createBatchCore>[2], "serviceEventId"> &
+      Partial<Pick<Parameters<typeof createBatchCore>[2], "serviceEventId">>,
+  ) {
+    const defaultEvent =
+      ctx.zoneId === zoneB.id ? zoneB.zoneWideServiceEventId : zoneA.zoneWideServiceEventId;
+    return createBatchCore(database, ctx, { serviceEventId: defaultEvent, ...input });
+  }
 
   beforeAll(async () => {
     if (!/_test\b/.test(process.env.DATABASE_URL ?? "")) {
@@ -787,6 +799,15 @@ describe("contributions service", () => {
         totalAmount: "10.0000",
       }),
     ).rejects.toMatchObject({ code: "total_without_lines" });
+  });
+
+  it("rejects createBatch without a service event", async () => {
+    await expect(
+      createBatchCore(db, { zoneId: zoneA.id, userId: USER_ID }, {
+        chapterId: zoneA.chapterId,
+        sourceType: "manual",
+      } as Parameters<typeof createBatchCore>[2]),
+    ).rejects.toMatchObject({ code: "service_event_required" });
   });
 
   // ─── updateDraftBatch ──────────────────────────────────────────────

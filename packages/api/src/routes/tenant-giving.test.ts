@@ -32,6 +32,7 @@ interface SeededZone {
   id: string;
   slug: string;
   ownerRoleId: string;
+  chapterAdminRoleId: string;
   chapterTreasurerRoleId: string;
 }
 
@@ -58,6 +59,7 @@ async function seedZone(slug: string, currencyCode: string): Promise<SeededZone>
     id: zone.id,
     slug: zone.slug,
     ownerRoleId: seededRoles.get(ZONE_ROLES.ZONE_OWNER)!,
+    chapterAdminRoleId: seededRoles.get(CHAPTER_ROLES.CHAPTER_ADMIN)!,
     chapterTreasurerRoleId: seededRoles.get(CHAPTER_ROLES.CHAPTER_TREASURER)!,
   };
 }
@@ -115,6 +117,7 @@ describe("tenant giving setup routes", () => {
   let zoneA: SeededZone;
   let zoneB: SeededZone;
   let userA: string;
+  let chapterAdminA: string;
   let chapterUserA: string;
   let chapterA: string;
   let chapterB: string;
@@ -129,13 +132,21 @@ describe("tenant giving setup routes", () => {
     chapterB = await seedChapter(zoneB.id, "Chapter B");
 
     userA = await seedUser(`giving-a+${unique()}@example.com`);
+    chapterAdminA = await seedUser(`giving-chapter-admin-a+${unique()}@example.com`);
     chapterUserA = await seedUser(`giving-chapter-a+${unique()}@example.com`);
-    cleanupUserIds.push(userA, chapterUserA);
+    cleanupUserIds.push(userA, chapterAdminA, chapterUserA);
     await db.insert(userRoleBindings).values({
       userId: userA,
       zoneId: zoneA.id,
       roleId: zoneA.ownerRoleId,
       roleScope: "zone",
+    });
+    await db.insert(userRoleBindings).values({
+      userId: chapterAdminA,
+      zoneId: zoneA.id,
+      chapterId: chapterA,
+      roleId: zoneA.chapterAdminRoleId,
+      roleScope: "chapter",
     });
     await db.insert(userRoleBindings).values({
       userId: chapterUserA,
@@ -211,6 +222,40 @@ describe("tenant giving setup routes", () => {
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("category_not_found");
+  });
+
+  it("allows chapter admins to create zone-scoped giving types", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(
+      fakeSession(chapterAdminA, "giving-chapter-admin-a@example.com"),
+    );
+    const [category] = await db
+      .select({ id: givingCategories.id })
+      .from(givingCategories)
+      .where(sql`${givingCategories.zoneId} = ${zoneA.id}`)
+      .limit(1);
+    const res = await call(zoneA.slug, "/api/tenant/giving/types", {
+      method: "POST",
+      body: { name: `Chapter Seed ${unique()}`, shortCode: `CS_${unique().toUpperCase()}`, categoryId: category.id },
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { givingType: { zoneId: string; name: string } };
+    expect(body.givingType.zoneId).toBe(zoneA.id);
+  });
+
+  it("does not allow chapter treasurers to create giving types", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(
+      fakeSession(chapterUserA, "giving-chapter-a@example.com"),
+    );
+    const [category] = await db
+      .select({ id: givingCategories.id })
+      .from(givingCategories)
+      .where(sql`${givingCategories.zoneId} = ${zoneA.id}`)
+      .limit(1);
+    const res = await call(zoneA.slug, "/api/tenant/giving/types", {
+      method: "POST",
+      body: { name: `Treasurer Seed ${unique()}`, categoryId: category.id },
+    });
+    expect(res.status).toBe(403);
   });
 
   it("does not patch another zone's payment method", async () => {

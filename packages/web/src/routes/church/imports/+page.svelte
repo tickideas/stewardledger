@@ -33,6 +33,9 @@
 
   const chapter = useActiveChapter();
 
+  type ServiceEvent = { id: string; chapterId: string | null; serviceTypeId: string; serviceDate: string };
+  type ServiceType = { id: string; name: string };
+
   let jobs = $state<Job[]>([]);
   let total = $state<number | null>(null);
   let status = $state("");
@@ -43,11 +46,29 @@
   let file = $state<File | null>(null);
   let fileType = $state<"statement">("statement");
   let sourceType = $state<"generic_csv" | "bank_csv" | "online_giving">("generic_csv");
+  let serviceEvents = $state<ServiceEvent[]>([]);
+  let serviceTypes = $state<ServiceType[]>([]);
+  let selectedServiceEventId = $state("");
   let uploading = $state(false);
   let uploadError = $state<string | null>(null);
 
-  const canSubmitUpload = $derived(Boolean(file) && !uploading && Boolean(chapter()));
+  const canSubmitUpload = $derived(Boolean(file) && !uploading && Boolean(chapter()) && Boolean(selectedServiceEventId));
   const chapterTemplateHref = importTemplateHref("chapter");
+
+  async function loadServiceEvents(chapterId: string, signal: AbortSignal) {
+    try {
+      const params = new URLSearchParams({ chapterId, limit: "100" });
+      const [eventRes, serviceTypeRes] = await Promise.all([
+        api.get<{ items: ServiceEvent[] }>(`/api/tenant/giving/service-events?${params.toString()}`, signal),
+        api.get<{ items: ServiceType[] }>("/api/tenant/giving/service-types", signal),
+      ]);
+      serviceEvents = eventRes.items;
+      serviceTypes = serviceTypeRes.items;
+      selectedServiceEventId = "";
+    } catch (err) {
+      if (!isAbortError(err)) uploadError = err instanceof ApiError ? err.message : "Could not load service events.";
+    }
+  }
 
   async function refresh(signal: AbortSignal) {
     const my = ++refreshToken;
@@ -81,6 +102,18 @@
     return () => controller.abort();
   });
 
+  $effect(() => {
+    const here = chapter();
+    if (!here) {
+      serviceEvents = [];
+      selectedServiceEventId = "";
+      return;
+    }
+    const controller = new AbortController();
+    loadServiceEvents(here.id, controller.signal);
+    return () => controller.abort();
+  });
+
   function onFileChange(evt: Event) {
     const input = evt.target as HTMLInputElement;
     file = input.files?.[0] ?? null;
@@ -98,6 +131,7 @@
       form.set("fileType", fileType);
       form.set("sourceType", sourceType);
       form.set("chapterId", here.id);
+      form.set("serviceEventId", selectedServiceEventId);
       const headers = new Headers();
       const slug = localStorage.getItem("stewardledger.activeZoneSlug");
       if (slug) headers.set("x-stewardledger-zone-slug", slug);
@@ -118,6 +152,11 @@
       uploading = false;
     }
   }
+
+  function serviceEventLabel(event: ServiceEvent): string {
+    const serviceType = serviceTypes.find((type) => type.id === event.serviceTypeId)?.name ?? "Service";
+    return `${event.serviceDate} · ${serviceType}`;
+  }
 </script>
 
 <svelte:head><title>Imports · {chapter()?.name ?? "Chapter"} · StewardLedger</title></svelte:head>
@@ -137,7 +176,7 @@
   <!-- New upload. Same form-shaped wrapper as the zonal /zone/imports page
        (mirrors the "Filter bar" pattern on /zone/paying-in-books). -->
   <form onsubmit={submitUpload} class="sl-reveal sl-reveal-2 sl-card-warm mt-8 p-6">
-    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-end lg:grid-cols-4">
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-end lg:grid-cols-6">
       <label class="block">
         <span class="sl-eyebrow" style="font-size:10.5px">File</span>
         <input
@@ -162,6 +201,15 @@
           <option value="online_giving">Online giving export</option>
         </select>
       </label>
+      <label class="block lg:col-span-2">
+        <span class="sl-eyebrow" style="font-size:10.5px">Service event</span>
+        <select bind:value={selectedServiceEventId} required class="sl-select mt-1.5">
+          <option value="" disabled>Pick service event</option>
+          {#each serviceEvents as event (event.id)}
+            <option value={event.id}>{serviceEventLabel(event)}</option>
+          {/each}
+        </select>
+      </label>
       <div class="flex justify-end">
         <button type="submit" disabled={!canSubmitUpload} class="sl-btn sl-btn-primary">
           {uploading ? "Uploading…" : "Upload + parse"}
@@ -169,14 +217,14 @@
       </div>
     </div>
     <p class="mt-3 text-[11px] text-[var(--ink-mute)]">
-      Staged for {chapter()?.name ?? "this chapter"} only — files are reviewed before any rows commit.
+      Staged for {chapter()?.name ?? "this chapter"} only. Pick the service event before upload so posted rows report against the right service.
     </p>
     <div class="mt-4 border-t border-[var(--rule)] pt-4">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
           <span class="sl-eyebrow" style="font-size:10px">CSV template</span>
           <p class="mt-1 text-[12px] text-[var(--ink-mute)]">
-            Chapter uploads use <span class="sl-mono">date, member reference, giving type code, amount, reference, currency, description</span>.
+            Chapter uploads use <span class="sl-mono">date, member reference, giving type code, amount, reference, currency, description</span>. The selected service event applies to the whole file.
           </p>
         </div>
         <a href={chapterTemplateHref} download="stewardledger-chapter-import-template.csv" class="sl-btn sl-btn-ghost">

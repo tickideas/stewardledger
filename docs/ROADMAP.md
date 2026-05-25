@@ -140,6 +140,8 @@ Deliverables:
 Implementation notes:
 
 - Tenant API routes are in place for giving categories, giving types, payment methods, accounts, service types, and service events under `/api/tenant/giving/*`.
+- Zonal admins manage giving categories, giving types, and service types from `/zone/giving-settings`; chapter admins can add giving types from `/church/settings`, with the resulting rows remaining zone-scoped for reporting consistency.
+- Chapter settings now includes service-event creation and per-event attendance capture. Service attendance stays optional, but when recorded it is stored against `service_event_attendance`.
 
 Exit checklist:
 
@@ -171,6 +173,7 @@ Implementation notes:
 
 - DB layer (`contribution_batches`, `contributions`, `contribution_lines`, `contribution_members`) is in place with composite `(zone_id, id)` cross-tenant FKs and posted-immutability triggers (`packages/db/src/schema/contributions.ts`, `packages/db/src/bootstrap-triggers.ts`). Triggers are applied via `pnpm --filter @stewardledger/db db:bootstrap`, which `test:db:push` now runs automatically.
 - Service + tenant API layer for contributions and batches is in place (`packages/api/src/services/contributions.ts`, `packages/api/src/services/contribution-batches.ts`, `packages/api/src/routes/tenant-contributions.ts`). Endpoints: `GET/POST/PATCH/DELETE /api/tenant/contributions(/:id)`, `POST :id/{post,void,reverse}`, `GET/POST/PATCH /api/tenant/contribution-batches(/:id)`, `POST :id/{submit,approve,post,void}`.
+- Contribution batch creation now requires a service event for every role, including zone admins. Draft batch updates may change the event but cannot clear it.
 - Reversals follow the negative-amount sign convention (see `docs/DOMAIN-MODEL.md` §6 "Sign convention").
 - Treasurer SvelteKit UI is in place under `/contributions` (`packages/web/src/routes/contributions/`): batches list with chapter + status filters, new-batch form (chapter / service event / payment method / source), batch detail with inline add-row form (member typeahead, multi-line giving-type splits, cash + cheque totals) and submit / approve / post / void actions, contribution detail with post / void / reverse / delete-draft, and a member statement preview at `/members/[id]/statement` (per-currency totals; reuses `GET /api/tenant/contributions?memberId=…&dateFrom=…&dateTo=…`).
 
