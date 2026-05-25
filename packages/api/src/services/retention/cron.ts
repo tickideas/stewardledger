@@ -17,6 +17,7 @@
 // RELEVANT FILES: ./policy.ts, ./sweep.ts, packages/api/src/services/queue.ts
 
 import { isNull } from "drizzle-orm";
+import type { Db } from "@stewardledger/db";
 import { zones } from "@stewardledger/db/schema";
 
 import { db } from "../../db";
@@ -68,7 +69,7 @@ export async function startRetentionSweep(): Promise<void> {
  * cross-tenant run summary.
  */
 export async function runRetentionSweep(
-  database: typeof db,
+  database: Db,
 ): Promise<{ zonesScanned: number; totals: ZoneSweepSummary }> {
   const activeZones = await database
     .select({ id: zones.id })

@@ -14,7 +14,7 @@
 //
 // RELEVANT FILES: ./policy.ts, ./cron.ts, packages/api/src/services/storage.ts
 
-import type { Database } from "@stewardledger/db";
+import type { Db } from "@stewardledger/db";
 import {
   auditEvents,
   importFiles,
@@ -45,7 +45,7 @@ function cutoffFor(retainDays: number): Date {
  * affected because we filter on `zone_id = $1`.
  */
 export async function sweepAuditEvents(
-  database: Database,
+  database: Db,
   zoneId: string,
   retainDays: number,
 ): Promise<SweepResult> {
@@ -102,7 +102,7 @@ export async function sweepAuditEvents(
  * a single zone with many ancient files drains over multiple passes.
  */
 export async function sweepImportFiles(
-  database: Database,
+  database: Db,
   zoneId: string,
   retainDays: number,
 ): Promise<SweepResult> {
@@ -176,7 +176,7 @@ const NON_TERMINAL_JOB_STATUSES = [
 ] as const;
 
 export async function sweepImportRows(
-  database: Database,
+  database: Db,
   zoneId: string,
   retainDays: number,
 ): Promise<SweepResult> {
@@ -238,7 +238,7 @@ export async function sweepImportRows(
  * `completedAt` remains the right truth for "how old is this record".
  */
 export async function sweepReportJobs(
-  database: Database,
+  database: Db,
   zoneId: string,
   retainDays: number,
 ): Promise<SweepResult> {
@@ -286,12 +286,10 @@ export interface ZoneSweepSummary {
   report_jobs: number;
 }
 
-export type { Database };
-
 // Internal helper so the cron handler doesn't duplicate the
 // dimension-by-dimension orchestration; tests can import it too.
 export async function sweepZone(
-  database: Database,
+  database: Db,
   zoneId: string,
   policy: {
     audit_events: { retainDays: number };
