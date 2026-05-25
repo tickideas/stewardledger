@@ -222,13 +222,34 @@ export async function restoreZoneExportBundle(
       };
     }
 
-    // FK-safe restore: parents first per the registry.
+    // FK-safe restore: parents first per the registry. Cross-check
+    // every walked table against the manifest so a corrupted bundle
+    // (manifest declares the table but the JSONL is missing) fails
+    // loudly instead of silently restoring zero rows. The bundle
+    // generator writes a JSONL entry for every registry table even
+    // when empty, so a manifest table with `rowCount > 0` and no
+    // file on disk is always a torn bundle.
     const entries = restoreOrder();
     const userIdMap = opts.userIdMap ?? new Map<string, string>();
+    const manifestByName = new Map(
+      manifest.tables.map((t) => [t.name, t]),
+    );
     const tablesRestored: RestoreResult["tablesRestored"] = [];
     for (const entry of entries) {
       const dataPath = pathJoin(bundleRoot, "data", `${entry.name}.jsonl`);
+      const manifestEntry = manifestByName.get(entry.name);
       if (!existsSync(dataPath)) {
+        // A manifest entry that promises rows but has no file on
+        // disk means the bundle was cut short or tampered with.
+        if (manifestEntry && manifestEntry.rowCount > 0) {
+          throw new RestoreError(
+            "io_error",
+            `bundle is missing data/${entry.name}.jsonl but the manifest declares ${manifestEntry.rowCount} row(s); refusing to restore an incomplete bundle`,
+          );
+        }
+        // No manifest entry (table didn't exist when bundle was
+        // built; older format) or zero declared rows — record the
+        // empty restore and move on.
         tablesRestored.push({ name: entry.name, inserted: 0, skipped: 0 });
         continue;
       }

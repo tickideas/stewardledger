@@ -5,8 +5,7 @@
 <!-- RELEVANT FILES: packages/api/src/routes/tenant-zones.ts, packages/api/src/routes/tenant-exports.ts, packages/web/src/lib/retention/access.ts, packages/web/src/lib/exports/access.ts -->
 
 <script lang="ts">
-  import { api, ApiError, isAbortError } from "$lib/api";
-  import { PUBLIC_API_URL } from "$lib/env";
+  import { api, ApiError, currentZoneSlug, isAbortError } from "$lib/api";
   import { canRequestExport } from "$lib/exports/access";
   import {
     canEditRetention,
@@ -100,6 +99,10 @@
   let policySaveError = $state<string | null>(null);
   let policySavedFlash = $state<string | null>(null);
   let policySaving = $state(false);
+  // Tracked so the lifecycle teardown effect can clear it; otherwise a
+  // quick nav-away mid-flash would try to mutate state on an unmounted
+  // component when the timer fires.
+  let policyFlashTimer: ReturnType<typeof setTimeout> | null = null;
 
   async function loadPolicy(signal?: AbortSignal) {
     try {
@@ -167,7 +170,11 @@
       policy = res.policy;
       seedDraft(res.policy);
       policySavedFlash = "Retention policy saved.";
-      setTimeout(() => (policySavedFlash = null), 4000);
+      if (policyFlashTimer) clearTimeout(policyFlashTimer);
+      policyFlashTimer = setTimeout(() => {
+        policySavedFlash = null;
+        policyFlashTimer = null;
+      }, 4000);
     } catch (err) {
       policySaveError =
         err instanceof ApiError ? err.message : "Could not save retention policy.";
@@ -211,9 +218,14 @@
   // the in-flight request instead of resolving against an unmounted
   // page (which would briefly surface state on the wrong route).
   // The lifecycle teardown effect aborts + nulls the controller.
+  //
+  // Polling cadence is anchored in `finally` so a transient API
+  // error (network blip, 503) doesn't permanently strand the
+  // owner watching a `running` bundle — the next tick still fires.
   let pollHandle: ReturnType<typeof setTimeout> | null = null;
   let pollController: AbortController | null = null;
   const TERMINAL = new Set(["completed", "failed", "expired"]);
+  const POLL_INTERVAL_MS = 5000;
 
   function hasInFlight(rows: ExportSummary[]): boolean {
     return rows.some((r) => !TERMINAL.has(r.status));
@@ -225,9 +237,10 @@
       pollHandle = null;
     }
     if (!hasInFlight(exports)) return;
+    if (pollController === null || pollController.signal.aborted) return;
     pollHandle = setTimeout(() => {
       void loadExports(pollController?.signal);
-    }, 5000);
+    }, POLL_INTERVAL_MS);
   }
 
   async function loadExports(signal?: AbortSignal) {
@@ -239,11 +252,12 @@
       );
       exports = res.exports;
       exportsLoadError = null;
-      schedulePoll();
     } catch (err) {
       if (isAbortError(err)) return;
       exportsLoadError =
         err instanceof ApiError ? err.message : "Could not load export bundles.";
+    } finally {
+      if (!signal?.aborted) schedulePoll();
     }
   }
 
@@ -288,47 +302,56 @@
     }
   }
 
-  async function downloadExport(row: ExportSummary) {
+  /**
+   * Trigger a download via the same-origin SvelteKit proxy at
+   * `/zone/settings/exports/:id/download/+server.ts`. The proxy
+   * pipes the upstream `ReadableStream` straight to the browser
+   * with `Content-Disposition: attachment`, so the browser's
+   * native download path streams to disk — the page never
+   * materialises the (potentially multi-GB) `.tar.gz` in JS heap.
+   *
+   * Routing through the same origin also avoids the
+   * `x-stewardledger-zone-slug` resolution drift the Codex bot
+   * flagged: we pass the active slug as a query param, and the
+   * proxy reads its own `Host` header (production) or forwards the
+   * header for split-host dev. Both cases stay in sync with
+   * `currentZoneSlug()` from `$lib/api`.
+   *
+   * Use a hidden `<iframe>` rather than navigating the page so a
+   * 4xx upstream (expired / not_ready) doesn't replace the
+   * settings UI with a JSON error blob. Browsers treat
+   * `Content-Disposition: attachment` responses as downloads even
+   * when loaded into a frame, but error pages render inside the
+   * (hidden) frame, leaving the settings UI intact.
+   */
+  function downloadExport(row: ExportSummary) {
     if (row.status !== "completed") return;
     downloadingExportId = row.id;
     downloadError = null;
-    try {
-      const headers = new Headers();
-      const slug =
-        typeof localStorage !== "undefined"
-          ? localStorage.getItem("stewardledger.activeZoneSlug")
-          : null;
-      if (slug) headers.set("x-stewardledger-zone-slug", slug);
-      const res = await fetch(
-        `${PUBLIC_API_URL}/api/tenant/zones/exports/${row.id}/download`,
-        { method: "GET", credentials: "include", headers },
-      );
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.error?.message ?? `Download failed (${res.status})`);
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download =
-        parseFilename(res.headers.get("content-disposition")) ??
-        `zone-export-${row.id.slice(0, 8)}.tar.gz`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 5_000);
-    } catch (err) {
-      downloadError = err instanceof Error ? err.message : "Download failed.";
-    } finally {
-      downloadingExportId = null;
-    }
-  }
-
-  function parseFilename(disposition: string | null): string | null {
-    if (!disposition) return null;
-    const match = /(?:^|;\s*)filename="?([^";]+)"?/i.exec(disposition);
-    return match?.[1] ?? null;
+    const slug = currentZoneSlug();
+    const params = new URLSearchParams();
+    if (slug) params.set("zone", slug);
+    const href = `/zone/settings/exports/${encodeURIComponent(row.id)}/download${
+      params.toString() ? `?${params.toString()}` : ""
+    }`;
+    // A hidden link rather than `window.location.href` keeps the
+    // settings page mounted and lets the browser stream the file
+    // directly to disk via the attachment Content-Disposition.
+    const a = document.createElement("a");
+    a.href = href;
+    a.rel = "noopener";
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // We don't get a completion event for a native download, but
+    // clearing the spinner immediately is a worse UX than leaving
+    // it briefly active. Tuck the reset behind a short timeout so
+    // a slow connection still shows the spinner long enough to
+    // confirm the action took effect.
+    setTimeout(() => {
+      if (downloadingExportId === row.id) downloadingExportId = null;
+    }, 1500);
   }
 
   function formatBytes(n: number | null): string {
@@ -377,7 +400,9 @@
   // Re-fetch panels once auth resolves so each gated request fires with
   // a known role context instead of racing the /me response. The export
   // panel's initial load + every subsequent poll share `pollController`
-  // so unmount aborts both in flight and any future poll tick.
+  // so unmount aborts both in flight and any future poll tick. The
+  // retention flash timer is cleared in the same teardown so a
+  // mid-flash nav-away can't update state on an unmounted page.
   $effect(() => {
     if (!authLoaded || !auth) return;
     const controller = new AbortController();
@@ -391,6 +416,10 @@
       if (pollHandle) {
         clearTimeout(pollHandle);
         pollHandle = null;
+      }
+      if (policyFlashTimer) {
+        clearTimeout(policyFlashTimer);
+        policyFlashTimer = null;
       }
     };
   });

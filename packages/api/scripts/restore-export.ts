@@ -42,17 +42,56 @@ interface CliArgs {
   dryRun: boolean;
 }
 
+/**
+ * Pull a value flag off `argv[i+1]`. Fails with a usage error if
+ * the flag is last or followed by another flag — catching the
+ * mistake at parse time is cheaper than letting the script run
+ * with an `undefined` argument that surfaces as a confusing
+ * downstream error (e.g. "DATABASE_URL is required" when really
+ * the operator forgot the value after `--target-zone-id`).
+ */
+function valueArg(
+  argv: string[],
+  i: number,
+  flag: string,
+): { value: string; next: number } {
+  const value = argv[i + 1];
+  if (value === undefined || value.startsWith("--")) {
+    throw new Error(
+      `missing value for ${flag} — usage: ${flag} <value>`,
+    );
+  }
+  return { value, next: i + 1 };
+}
+
 function parseCliArgs(argv: string[]): CliArgs {
   const out: CliArgs = { bundlePath: "", dryRun: false };
   const positional: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--target-zone-id") out.targetZoneId = argv[++i];
-    else if (a === "--target-slug") out.targetSlug = argv[++i];
-    else if (a === "--map-users") out.userMapPath = argv[++i];
-    else if (a === "--storage-root") out.storageRoot = argv[++i];
-    else if (a === "--dry-run") out.dryRun = true;
-    else positional.push(a);
+    if (a === "--target-zone-id") {
+      const v = valueArg(argv, i, a);
+      out.targetZoneId = v.value;
+      i = v.next;
+    } else if (a === "--target-slug") {
+      const v = valueArg(argv, i, a);
+      out.targetSlug = v.value;
+      i = v.next;
+    } else if (a === "--map-users") {
+      const v = valueArg(argv, i, a);
+      out.userMapPath = v.value;
+      i = v.next;
+    } else if (a === "--storage-root") {
+      const v = valueArg(argv, i, a);
+      out.storageRoot = v.value;
+      i = v.next;
+    } else if (a === "--dry-run") {
+      out.dryRun = true;
+    } else if (a.startsWith("--")) {
+      throw new Error(`unknown flag: ${a}`);
+    } else {
+      positional.push(a);
+    }
   }
   if (positional.length !== 1) {
     throw new Error(
