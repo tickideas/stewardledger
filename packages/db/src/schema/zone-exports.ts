@@ -57,6 +57,12 @@ export const zoneExports = pgTable(
      * Bundle size in bytes (informational). `bigint` because a
      * mature zone with several years of imports can comfortably
      * push past 2 GB; `integer` would overflow.
+     *
+     * `mode: "number"` is safe because JS `Number` represents
+     * integers exactly up to 2^53 ≈ 9 PB — vastly beyond any
+     * plausible single-bundle size. Switch to `mode: "bigint"` if
+     * we ever need to sum byte counts across thousands of rows
+     * server-side without precision loss.
      */
     byteCount: bigint("byte_count", { mode: "number" }),
     /** Count of JSONL tables included in the bundle. */
@@ -113,6 +119,12 @@ export const zoneExports = pgTable(
     check(
       "zone_exports_status_check",
       sql`${table.status} in ('queued', 'running', 'completed', 'failed', 'expired')`,
+    ),
+    // A zero or negative TTL is always a logic bug — the publisher
+    // must compute `created_at + 7 days` (or similar) at enqueue.
+    check(
+      "zone_exports_expiry_after_created_check",
+      sql`${table.expiresAt} > ${table.createdAt}`,
     ),
   ],
 );

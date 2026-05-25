@@ -1,6 +1,6 @@
 {
-  "id": "dc6ec9c3-00ed-408c-9308-1a5babb7eae8",
-  "prevId": "05876901-d5eb-47f6-9673-7269eb6a37d8",
+  "id": "78508a79-6374-4a07-97e4-e4fcdd51c311",
+  "prevId": "dc6ec9c3-00ed-408c-9308-1a5babb7eae8",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -10030,6 +10030,10 @@
         "zone_exports_status_check": {
           "name": "zone_exports_status_check",
           "value": "\"zone_exports\".\"status\" in ('queued', 'running', 'completed', 'failed', 'expired')"
+        },
+        "zone_exports_expiry_after_created_check": {
+          "name": "zone_exports_expiry_after_created_check",
+          "value": "\"zone_exports\".\"expires_at\" > \"zone_exports\".\"created_at\""
         }
       },
       "isRLSEnabled": false

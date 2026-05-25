@@ -16,10 +16,24 @@
 // PR A scope: declaration + coverage. The actual streaming /
 // gzipping happens in PR B's `bundle.ts`.
 //
+// `import * as schema` (rather than the codebase-typical named
+// imports) is deliberate: this file references ~45 schema exports,
+// and a flat namespace keeps the declaration table readable.
+//
 // RELEVANT FILES: packages/db/src/schema/index.ts
 
 import * as schema from "@stewardledger/db/schema";
 import type { PgTable } from "drizzle-orm/pg-core";
+
+/**
+ * How the bundle writer selects rows for a target zone:
+ *
+ *   - `"zone_id"`  — `WHERE zone_id = $zoneId` (the common case).
+ *   - `"self"`     — `WHERE id = $zoneId` (only the `zones` row
+ *                    itself: it has no `zone_id` column because
+ *                    its PK *is* the zone identity).
+ */
+export type ZoneRowSelector = "zone_id" | "self";
 
 /**
  * A zone-scoped table participating in the export bundle. The
@@ -47,6 +61,8 @@ export interface ZoneScopedTable {
    * the restore helper trivially correct.
    */
   readonly restoreOrder: number;
+  /** How to pick rows for the target zone. Defaults to `zone_id`. */
+  readonly selector?: ZoneRowSelector;
   /** Short prose explaining why this table is in scope. */
   readonly note: string;
 }
@@ -64,8 +80,8 @@ export interface ExcludedZoneScopedTable {
 /**
  * Restore order rationale:
  *
- *   100s — the zone itself + immediate-parent lookups that every
- *          other table FK's into.
+ *   100s — the zone row itself + per-zone tables every other
+ *          table FK's into.
  *   200s — chapter / group taxonomy (chapters depend on regions /
  *          zones; groups depend on chapters via history).
  *   300s — member identity (depends on chapters + lookups).
@@ -78,10 +94,23 @@ export interface ExcludedZoneScopedTable {
  *   800s — imports (depend on every domain table they fan out to).
  *   900s — operational rows (audit, invitations, role bindings,
  *          targets, paying-in-books, saved filters, report jobs,
- *          zone_exports itself is NOT included \u2014 see exclusions).
+ *          zone_exports itself is NOT included — see exclusions).
+ *
+ * The `zones` row sits at the front (`restoreOrder: 100`) because
+ * every other entry FK's `zone_id → zones.id`. The restorer is
+ * responsible for ensuring `regions.id` referenced by the zone
+ * either pre-exists in the target schema or is nulled out (region
+ * is a platform-managed global lookup, not per-zone data).
  */
 export const ZONE_SCOPED_TABLES: readonly ZoneScopedTable[] = [
-  // 100s \u2014 zone + global-lookup overrides
+  // 100s — zone identity + per-zone overrides
+  {
+    name: "zones",
+    table: schema.zones,
+    restoreOrder: 100,
+    selector: "self",
+    note: "The zone row itself. Every other table FKs `zone_id` here, so it must restore first.",
+  },
   {
     name: "custom_domains",
     table: schema.customDomains,
@@ -95,7 +124,7 @@ export const ZONE_SCOPED_TABLES: readonly ZoneScopedTable[] = [
     note: "Per-zone role rows (system + custom). User bindings later FK these.",
   },
 
-  // 200s \u2014 chapter + group taxonomy
+  // 200s — chapter + group taxonomy
   {
     name: "chapters",
     table: schema.chapters,
@@ -118,10 +147,10 @@ export const ZONE_SCOPED_TABLES: readonly ZoneScopedTable[] = [
     name: "chapter_group_history",
     table: schema.chapterGroupHistory,
     restoreOrder: 240,
-    note: "Append-only chapter\u2194group reassignment log.",
+    note: "Append-only chapter↔group reassignment log.",
   },
 
-  // 300s \u2014 lookups + members
+  // 300s — lookups + members
   {
     name: "titles",
     table: schema.titles,
@@ -159,7 +188,7 @@ export const ZONE_SCOPED_TABLES: readonly ZoneScopedTable[] = [
     note: "Open + resolved merge-deduplication proposals.",
   },
 
-  // 400s \u2014 period dimension
+  // 400s — period dimension
   {
     name: "fiscal_years",
     table: schema.fiscalYears,
@@ -203,7 +232,7 @@ export const ZONE_SCOPED_TABLES: readonly ZoneScopedTable[] = [
     note: "Tithe-collection windows.",
   },
 
-  // 500s \u2014 financial taxonomy
+  // 500s — financial taxonomy
   {
     name: "accounts",
     table: schema.accounts,
@@ -235,7 +264,7 @@ export const ZONE_SCOPED_TABLES: readonly ZoneScopedTable[] = [
     note: "Junction: which account a giving type posts to.",
   },
 
-  // 600s \u2014 service events
+  // 600s — service events
   {
     name: "service_types",
     table: schema.serviceTypes,
@@ -261,7 +290,7 @@ export const ZONE_SCOPED_TABLES: readonly ZoneScopedTable[] = [
     note: "Per-chapter batch-entry templates (UI shortcut state).",
   },
 
-  // 700s \u2014 contributions
+  // 700s — contributions
   {
     name: "contribution_batches",
     table: schema.contributionBatches,
@@ -299,7 +328,7 @@ export const ZONE_SCOPED_TABLES: readonly ZoneScopedTable[] = [
     note: "Pre-numbered receipt book metadata.",
   },
 
-  // 800s \u2014 imports
+  // 800s — imports
   {
     name: "import_failure_types",
     table: schema.importFailureTypes,
@@ -343,7 +372,7 @@ export const ZONE_SCOPED_TABLES: readonly ZoneScopedTable[] = [
     note: "Idempotency ledger so a re-run of the same source row is a no-op.",
   },
 
-  // 900s \u2014 operational
+  // 900s — operational
   {
     name: "invitations",
     table: schema.invitations,
@@ -394,21 +423,26 @@ export const EXCLUDED_ZONE_SCOPED_TABLES: readonly ExcludedZoneScopedTable[] = [
   },
 ];
 
+// Pre-sorted at module load: the list is immutable and the writer
+// may walk it once per export, so eat the sort cost once.
+const RESTORE_SEQUENCE: readonly ZoneScopedTable[] = [
+  ...ZONE_SCOPED_TABLES,
+].sort((a, b) => a.restoreOrder - b.restoreOrder);
+const EXPORT_SEQUENCE: readonly ZoneScopedTable[] = [
+  ...RESTORE_SEQUENCE,
+].reverse();
+
 /**
  * Convenience: the export writer streams tables children-first so
  * a crash-during-write bundle is still internally consistent.
  */
 export function exportOrder(): readonly ZoneScopedTable[] {
-  return [...ZONE_SCOPED_TABLES].sort(
-    (a, b) => b.restoreOrder - a.restoreOrder,
-  );
+  return EXPORT_SEQUENCE;
 }
 
 /**
  * Convenience: the restore helper loads tables parents-first.
  */
 export function restoreOrder(): readonly ZoneScopedTable[] {
-  return [...ZONE_SCOPED_TABLES].sort(
-    (a, b) => a.restoreOrder - b.restoreOrder,
-  );
+  return RESTORE_SEQUENCE;
 }

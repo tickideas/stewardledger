@@ -18,18 +18,21 @@ import {
 
 /**
  * Reflect on the imported schema barrel and return the SQL name of
- * every table whose Drizzle definition carries a `zoneId` column.
- * `getTableColumns` reads the column map regardless of how the
- * column was declared (snake/camel; with/without an alias), so a
- * future schema change can't drift this list out of sync as long
- * as the JS property is named `zoneId` (the codebase convention).
+ * every table whose Drizzle definition carries a column named
+ * `zone_id` at the SQL layer. Inspecting the column's SQL name
+ * (rather than the JS property name) means a future schema author
+ * who names their property `tenantZoneId` while keeping the column
+ * `zone_id` still gets caught by this coverage test.
  */
 function discoverZoneScopedTableNames(): string[] {
   const names: string[] = [];
   for (const value of Object.values(schema)) {
     if (!is(value, PgTable)) continue;
     const cols = getTableColumns(value);
-    if ("zoneId" in cols) names.push(getTableName(value));
+    const hasZoneIdColumn = Object.values(cols).some(
+      (c) => (c as { name: string }).name === "zone_id",
+    );
+    if (hasZoneIdColumn) names.push(getTableName(value));
   }
   return names.sort();
 }
@@ -46,6 +49,15 @@ describe("zone export registry coverage", () => {
     expect(missing, "uncovered zone-scoped tables").toEqual([]);
   });
 
+  it("the `zones` row is declared with selector=self", () => {
+    // `zones` has no `zone_id` column — its PK *is* the zone
+    // identity — so the discovery test won't catch its omission.
+    // Pin it explicitly: the bundle is unrestorable without it.
+    const zonesEntry = ZONE_SCOPED_TABLES.find((t) => t.name === "zones");
+    expect(zonesEntry, "zones row must be in the registry").toBeDefined();
+    expect(zonesEntry?.selector).toBe("self");
+  });
+
   it("no declared table is also excluded", () => {
     const declared = new Set(ZONE_SCOPED_TABLES.map((t) => t.name));
     const collisions = EXCLUDED_ZONE_SCOPED_TABLES.filter((t) =>
@@ -56,7 +68,11 @@ describe("zone export registry coverage", () => {
 
   it("no declared table has a stale name (must exist in the schema)", () => {
     const discovered = new Set(discoverZoneScopedTableNames());
-    const stale = ZONE_SCOPED_TABLES.filter((t) => !discovered.has(t.name));
+    // The `zones` row is declared with `selector: "self"` and is
+    // legitimately absent from `discovered` (no `zone_id` column).
+    const stale = ZONE_SCOPED_TABLES.filter(
+      (t) => t.selector !== "self" && !discovered.has(t.name),
+    );
     expect(stale, "declared tables not present in the live schema").toEqual([]);
   });
 

@@ -16,7 +16,8 @@ CREATE TABLE "zone_exports" (
 	"started_at" timestamp with time zone,
 	"completed_at" timestamp with time zone,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "zone_exports_status_check" CHECK ("zone_exports"."status" in ('queued', 'running', 'completed', 'failed', 'expired'))
+	CONSTRAINT "zone_exports_status_check" CHECK ("zone_exports"."status" in ('queued', 'running', 'completed', 'failed', 'expired')),
+	CONSTRAINT "zone_exports_expiry_after_created_check" CHECK ("zone_exports"."expires_at" > "zone_exports"."created_at")
 );
 --> statement-breakpoint
 ALTER TABLE "zone_exports" ADD CONSTRAINT "zone_exports_zone_id_zones_id_fk" FOREIGN KEY ("zone_id") REFERENCES "public"."zones"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
