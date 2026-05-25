@@ -25,6 +25,12 @@ import {
 } from "@stewardledger/db/schema";
 import type { Db } from "@stewardledger/db";
 
+import {
+  ERASURE_DEFAULT_WINDOW_DAYS,
+  ERASURE_RECENT_EXPORT_WINDOW_DAYS,
+  ERASURE_ZONE_WINDOW_DAYS,
+} from "@stewardledger/shared";
+
 import { log } from "../../logger";
 import { writeAudit } from "../audit";
 import { loadRetentionPolicy } from "../retention/policy";
@@ -39,9 +45,10 @@ export type ErasureStatus = "pending" | "applied" | "cancelled" | "failed";
  * member-scope reads the per-zone retention policy and floors
  * to this value when the policy is 0 (= "never purge", the v1
  * default). Spec: `tasks/gdpr-erase-workflow.md` §"Reversibility
- * window".
+ * window". Sourced from `@stewardledger/shared` so the UI
+ * mirror in `/zone/settings` stays in lockstep.
  */
-const DEFAULT_WINDOW_DAYS = 14;
+const DEFAULT_WINDOW_DAYS = ERASURE_DEFAULT_WINDOW_DAYS;
 
 /**
  * For zone-scope requests, the most recent `completed`
@@ -49,7 +56,8 @@ const DEFAULT_WINDOW_DAYS = 14;
  * schedule a zone-erase without a recent take-with-them artefact
  * is a hard acceptance criterion.
  */
-const RECENT_EXPORT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const RECENT_EXPORT_WINDOW_MS =
+  ERASURE_RECENT_EXPORT_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 
 export class ErasureRequestError extends Error {
   constructor(
@@ -175,10 +183,14 @@ export async function createErasureRequest(
     );
   }
 
-  // Resolve the reversibility window.
+  // Resolve the reversibility window. Zone-scope is fixed at
+  // the shared `ERASURE_ZONE_WINDOW_DAYS`; member-scope reads
+  // the per-zone retention policy and floors to the shared
+  // default. Sourcing both from `@stewardledger/shared` keeps
+  // the UI mirrors in lockstep.
   let windowDays: number;
   if (input.scope === "zone") {
-    windowDays = DEFAULT_WINDOW_DAYS;
+    windowDays = ERASURE_ZONE_WINDOW_DAYS;
   } else {
     const policy = await loadRetentionPolicy(database, input.zoneId);
     const policyDays = policy.member_soft_deletes.retainDays;
@@ -668,6 +680,12 @@ export interface ListErasureRequestsInput {
   zoneId: string;
   status?: ErasureStatus;
   scope?: ErasureScope;
+  /**
+   * Narrow to a single member's requests. Used by the member-
+   * detail UI so a Privacy panel render is O(1) per member
+   * instead of fetching the zone's entire erasure history.
+   */
+  memberId?: string;
   limit?: number;
 }
 
@@ -678,6 +696,8 @@ export async function listErasureRequests(
   const conds = [eq(erasureRequests.zoneId, input.zoneId)];
   if (input.status) conds.push(eq(erasureRequests.status, input.status));
   if (input.scope) conds.push(eq(erasureRequests.scope, input.scope));
+  if (input.memberId)
+    conds.push(eq(erasureRequests.memberId, input.memberId));
   const rows = await database
     .select()
     .from(erasureRequests)

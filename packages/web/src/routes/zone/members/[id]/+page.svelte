@@ -1,7 +1,9 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
-  import { api, ApiError } from "$lib/api";
+  import { api, ApiError, isAbortError } from "$lib/api";
+  import { canManageMemberErasure } from "$lib/erasure/access";
+  import type { AuthorizedContext } from "@stewardledger/shared";
 
   type Member = {
     id: string;
@@ -25,6 +27,25 @@
     dateJoinedMinistry: string | null;
     foundationSchoolGraduationDate: string | null;
     createdAt: string;
+  };
+
+  type ErasureRequest = {
+    id: string;
+    zoneId: string;
+    scope: "member" | "zone";
+    memberId: string | null;
+    requestedByUserId: string | null;
+    reason: string | null;
+    status: "pending" | "applied" | "cancelled" | "failed";
+    reversibilityWindowDays: number;
+    appliesAt: string;
+    appliedAt: string | null;
+    cancelledAt: string | null;
+    cancelledByUserId: string | null;
+    errorCode: string | null;
+    errorMessage: string | null;
+    createdAt: string;
+    updatedAt: string;
   };
 
   type Chapter = { id: string; name: string };
@@ -52,6 +73,41 @@
   let maritalStatuses = $state<Lookup[]>([]);
   let memberTypes = $state<Lookup[]>([]);
   let loadError = $state<string | null>(null);
+  // True when GET /members/:id returned 404. Distinguished from
+  // the generic `loadError` so the page can render the GDPR
+  // "this member has been erased" shell when the 404 is caused
+  // by the soft-delete the erase pass writes, rather than a
+  // genuine "member doesn't exist". The discrimination is the
+  // presence of an `applied` member-scope erasure_request for
+  // this id (resolved by `loadErasure`).
+  let memberNotFound = $state(false);
+
+  // ─── Erasure (Phase 9 §6) ───────────────────────────────────────
+  // Auth context drives the Privacy panel: gate the Request /
+  // Cancel buttons off `canManageMemberErasure`, which mirrors
+  // the server-side role gate (owner / admin / finance_admin).
+  // A finance_admin can pull a member's data; a member-viewer
+  // role cannot see the panel at all.
+  let auth = $state<AuthorizedContext | null>(null);
+  let erasureRequest = $state<ErasureRequest | null>(null);
+  let erasureLoadError = $state<string | null>(null);
+  // Action errors render in the panel under the row, separate
+  // from `erasureLoadError` so a successful refresh doesn't blow
+  // away an unread "create failed" message.
+  let erasureActionError = $state<string | null>(null);
+  const canEraseMember = $derived(canManageMemberErasure(auth));
+
+  // Modal state.
+  let modalOpen = $state(false);
+  let modalReason = $state("");
+  let modalWindowDays = $state<number>(14);
+  let modalSubmitting = $state(false);
+  // Cancel-confirm uses a small inline confirmer rather than a
+  // separate modal: the panel already shows the schedule + the
+  // applies_at clearly, so a click on Cancel goes through a
+  // 2-step click-to-confirm in the same panel.
+  let cancelConfirming = $state(false);
+  let cancelSubmitting = $state(false);
 
   let saving = $state(false);
   let saveError = $state<string | null>(null);
@@ -69,15 +125,39 @@
 
   async function load() {
     try {
+      // Member fetch separately so a 404 (the case the GDPR
+      // scrub writes by setting `deletedAt`) can be distinguished
+      // from a network / permission error on the auxiliary calls.
+      // The lookup endpoints are zone-scoped reads we want even
+      // for the erased shell so the chapter dropdown stays
+      // populated (still relevant if we ever re-instate edit on
+      // a never-erased row in this same component instance).
       const [m, a, ch, t, ms, mt] = await Promise.all([
-        api.get<{ member: Member }>(`/api/tenant/members/${memberId}`),
-        api.get<{ items: Address[] }>(`/api/tenant/members/${memberId}/addresses`),
+        api
+          .get<{ member: Member }>(`/api/tenant/members/${memberId}`)
+          .catch((err: unknown) => {
+            if (err instanceof ApiError && err.status === 404) return null;
+            throw err;
+          }),
+        api
+          .get<{ items: Address[] }>(
+            `/api/tenant/members/${memberId}/addresses`,
+          )
+          .catch((err: unknown) => {
+            // The addresses endpoint also 404s on an erased member.
+            // Treat as empty so the erased-shell render doesn't
+            // surface a noisy error.
+            if (err instanceof ApiError && err.status === 404)
+              return { items: [] };
+            throw err;
+          }),
         api.get<{ items: Chapter[] }>("/api/tenant/chapters"),
         api.get<{ items: Lookup[] }>("/api/tenant/lookups/titles"),
         api.get<{ items: Lookup[] }>("/api/tenant/lookups/marital-statuses"),
         api.get<{ items: Lookup[] }>("/api/tenant/lookups/member-types"),
       ]);
-      member = m.member;
+      member = m?.member ?? null;
+      memberNotFound = m === null;
       addresses = a.items;
       chapters = ch.items;
       titles = t.items;
@@ -89,9 +169,166 @@
     }
   }
 
+  async function loadAuth(signal: AbortSignal) {
+    try {
+      const me = await api.get<{ auth: AuthorizedContext }>(
+        "/api/tenant/me",
+        signal,
+      );
+      auth = me.auth;
+    } catch (err) {
+      if (isAbortError(err)) return;
+      // Soft-fail: a missing auth context just hides the Privacy
+      // panel rather than blocking the rest of the page. The other
+      // panels render off `member` regardless.
+      auth = null;
+    }
+  }
+
+  async function loadErasure(signal?: AbortSignal) {
+    if (!canEraseMember || !memberId) return;
+    try {
+      // Server-side narrowing via `memberId` returns at most a
+      // handful of rows per member (one open + a thin history)
+      // instead of the zone's entire erasure log. The endpoint
+      // orders newest-first via `(zone_id, status, created_at
+      // DESC)`, so the head row is the freshest one.
+      const res = await api.get<{ requests: ErasureRequest[] }>(
+        `/api/tenant/erasure-requests?scope=member&memberId=${encodeURIComponent(memberId)}`,
+        signal,
+      );
+      erasureRequest = res.requests[0] ?? null;
+      erasureLoadError = null;
+    } catch (err) {
+      if (isAbortError(err)) return;
+      erasureLoadError =
+        err instanceof ApiError ? err.message : "Could not load erasure status.";
+    } finally {
+      if (!signal?.aborted) erasureLoaded = true;
+    }
+  }
+
   $effect(() => {
     if (memberId) load();
   });
+
+  $effect(() => {
+    const controller = new AbortController();
+    void loadAuth(controller.signal);
+    return () => controller.abort();
+  });
+
+  // Re-fetch the erasure row once both auth and the member id are
+  // known. `auth` resolution is independent of `memberId` so this
+  // effect waits for both to settle. `erasureLoaded` is reset on
+  // every fresh fetch so the not-found fallback re-arms its wait
+  // for the new id.
+  $effect(() => {
+    if (!auth || !memberId) return;
+    if (!canEraseMember) return;
+    erasureLoaded = false;
+    const controller = new AbortController();
+    void loadErasure(controller.signal);
+    return () => controller.abort();
+  });
+
+  function openErasureModal() {
+    modalReason = "";
+    modalWindowDays = 14;
+    erasureActionError = null;
+    modalOpen = true;
+  }
+
+  function closeErasureModal() {
+    if (modalSubmitting) return;
+    modalOpen = false;
+  }
+
+  async function submitErasure(e: SubmitEvent) {
+    e.preventDefault();
+    if (!memberId) return;
+    modalSubmitting = true;
+    erasureActionError = null;
+    try {
+      const body: { reason?: string; windowDays?: number } = {};
+      if (modalReason.trim()) body.reason = modalReason.trim();
+      // Only send windowDays when the operator changed it; the
+      // server picks its own default (14, floored by the retention
+      // policy) when omitted.
+      if (modalWindowDays !== 14) body.windowDays = modalWindowDays;
+      await api.post(
+        `/api/tenant/members/${memberId}/erasure-requests`,
+        body,
+      );
+      modalOpen = false;
+      await loadErasure();
+    } catch (err) {
+      if (err instanceof ApiError && err.code === "duplicate_pending") {
+        erasureActionError =
+          "This member already has a pending erasure request. Refresh the page to see it.";
+      } else {
+        erasureActionError =
+          err instanceof ApiError
+            ? err.message
+            : "Could not schedule erasure.";
+      }
+    } finally {
+      modalSubmitting = false;
+    }
+  }
+
+  async function cancelErasure() {
+    if (!erasureRequest) return;
+    cancelSubmitting = true;
+    erasureActionError = null;
+    try {
+      await api.delete(
+        `/api/tenant/erasure-requests/${erasureRequest.id}`,
+      );
+      cancelConfirming = false;
+      await loadErasure();
+    } catch (err) {
+      erasureActionError =
+        err instanceof ApiError ? err.message : "Could not cancel erasure.";
+    } finally {
+      cancelSubmitting = false;
+    }
+  }
+
+  function formatDateTime(iso: string | null): string {
+    if (!iso) return "—";
+    try {
+      return new Date(iso).toLocaleString();
+    } catch {
+      return iso;
+    }
+  }
+
+  // The erased shell is rendered when GET /members/:id 404'd AND
+  // we've found an `applied` member-scope erasure_request for the
+  // same id. The 404 alone could be a genuine missing row; the
+  // erasure-row confirms the soft-delete came from the GDPR
+  // scrub. `appliedErasure` mirrors the schema's terminal-status
+  // semantics — once `applied`, the row stays applied; that's
+  // our long-lived marker.
+  const appliedErasure = $derived(
+    erasureRequest && erasureRequest.status === "applied"
+      ? erasureRequest
+      : null,
+  );
+  const isErased = $derived(memberNotFound && appliedErasure !== null);
+  // Track whether the (gated) erasure call has resolved so the
+  // 404 → "not found" fallback doesn't flash before the
+  // "erased" determination has had a chance to land.
+  let erasureLoaded = $state(false);
+  // For non-PII-tier viewers, the erasure endpoint never fires;
+  // they should fall through to the plain "not found" view
+  // immediately rather than waiting on a request that never
+  // happens. `canEraseMember` is the same predicate that gates
+  // the erasure load itself.
+  const showNotFound = $derived(
+    memberNotFound && !isErased && (erasureLoaded || !canEraseMember),
+  );
 
   async function save(e: SubmitEvent) {
     e.preventDefault();
@@ -174,13 +411,58 @@
       saveError = err instanceof ApiError ? err.message : "Could not delete member.";
     }
   }
+
+  function onKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape" && modalOpen) closeErasureModal();
+  }
 </script>
+
+<svelte:window onkeydown={onKeydown} />
 
 <svelte:head><title>Member · StewardLedger</title></svelte:head>
 
 <div class="pt-2 pb-10 lg:pt-0">
   {#if loadError}
     <p class="mt-6 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{loadError}</p>
+  {:else if memberNotFound && isErased && appliedErasure}
+    <!-- Erased-member shell. The GET endpoint refuses the row
+         (soft-deleted), but the operator landed on the URL
+         (e.g. via an audit-log link), so we render a contextual
+         placeholder instead of "not found". The PII is gone
+         from the DB; only the reference code + the audit-trail
+         dates remain. -->
+    <div class="sl-reveal sl-reveal-1 mt-4">
+      <span class="sl-eyebrow">§ II · Erased member record</span>
+      <h1 class="mt-3 sl-display text-[40px] leading-[1] text-[var(--ink)]">
+        Erased member
+        <span class="sl-mono text-[16px] text-[var(--ink-mute)]">
+          #{memberId}
+        </span>
+      </h1>
+      <p class="mt-2 text-[14px] text-[var(--ink-mute)]">
+        <span class="sl-badge sl-badge-bad">erased</span>
+      </p>
+    </div>
+    <div class="sl-reveal sl-reveal-2 mt-6 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-4 py-3 text-[13px] text-[var(--bad)]">
+      <strong>This member's personal data has been erased</strong> in
+      response to a GDPR request applied on
+      {formatDateTime(appliedErasure.appliedAt ?? appliedErasure.updatedAt)}.
+      The contribution ledger entries are retained under the
+      legitimate-interest legal basis for financial record-keeping
+      and remain visible elsewhere in the app.
+      <a href="/zone/members" class="ml-2 sl-btn sl-btn-ghost">
+        ← Back to directory
+      </a>
+    </div>
+  {:else if showNotFound}
+    <div class="mt-6">
+      <p class="text-[13px] text-[var(--ink-mute)]">
+        Member not found.
+      </p>
+      <a href="/zone/members" class="sl-btn sl-btn-ghost mt-3">
+        ← Back to directory
+      </a>
+    </div>
   {:else if member}
     <div class="sl-reveal sl-reveal-1 flex flex-wrap items-end justify-between gap-6">
       <div>
@@ -204,6 +486,8 @@
         </button>
       </div>
     </div>
+
+
 
     <form class="sl-reveal sl-reveal-2 sl-card-warm mt-8 grid grid-cols-12 gap-3 p-6" onsubmit={save}>
       <label class="col-span-12 sm:col-span-2">
@@ -304,6 +588,133 @@
       </div>
     </form>
 
+    {#if canEraseMember && !isErased}
+      <!-- ── Privacy panel ────────────────────────────────────── -->
+      <!-- Phase 9 §6 — GDPR data-subject erasure surface. The panel
+           appears only for the PII-management roles (owner / admin /
+           finance_admin) and only on a member that hasn't already
+           been erased. -->
+      <section class="sl-reveal sl-reveal-3 mt-12">
+        <div class="mb-3 flex items-end justify-between gap-4">
+          <div>
+            <span class="sl-eyebrow">Privacy &amp; data rights</span>
+            <h2 class="sl-display mt-1 text-[20px] text-[var(--ink)]">
+              GDPR erasure
+            </h2>
+          </div>
+        </div>
+
+        {#if erasureLoadError}
+          <p class="mb-3 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">
+            {erasureLoadError}
+          </p>
+        {/if}
+
+        <div class="sl-card-warm p-5">
+          {#if erasureRequest && erasureRequest.status === "pending"}
+            <div class="flex flex-wrap items-start justify-between gap-4">
+              <div class="min-w-0">
+                <p class="text-[13px] text-[var(--ink)]">
+                  An erasure request is scheduled for this member.
+                </p>
+                <dl class="mt-3 grid grid-cols-1 gap-x-6 gap-y-1 text-[12.5px] sm:grid-cols-2">
+                  <div class="flex justify-between sm:block">
+                    <dt class="text-[var(--ink-mute)]">Will apply on</dt>
+                    <dd class="sl-mono mt-0.5 text-[var(--ink)]">
+                      {formatDateTime(erasureRequest.appliesAt)}
+                    </dd>
+                  </div>
+                  <div class="flex justify-between sm:block">
+                    <dt class="text-[var(--ink-mute)]">Window</dt>
+                    <dd class="sl-mono mt-0.5 text-[var(--ink)]">
+                      {erasureRequest.reversibilityWindowDays} day{erasureRequest.reversibilityWindowDays === 1 ? "" : "s"}
+                    </dd>
+                  </div>
+                  <div class="flex justify-between sm:block">
+                    <dt class="text-[var(--ink-mute)]">Scheduled</dt>
+                    <dd class="sl-mono mt-0.5 text-[var(--ink)]">
+                      {formatDateTime(erasureRequest.createdAt)}
+                    </dd>
+                  </div>
+                  {#if erasureRequest.reason}
+                    <div class="col-span-1 sm:col-span-2">
+                      <dt class="text-[var(--ink-mute)]">Reason</dt>
+                      <dd class="mt-0.5 text-[var(--ink)]">{erasureRequest.reason}</dd>
+                    </div>
+                  {/if}
+                </dl>
+              </div>
+              <div class="flex flex-col items-end gap-2">
+                {#if !cancelConfirming}
+                  <button
+                    type="button"
+                    class="sl-btn sl-btn-ghost"
+                    onclick={() => (cancelConfirming = true)}
+                  >
+                    Cancel request
+                  </button>
+                {:else}
+                  <p class="text-right text-[12px] text-[var(--ink-mute)]">
+                    Cancel and keep this member's data?
+                  </p>
+                  <div class="flex items-center gap-2">
+                    <button
+                      type="button"
+                      class="sl-btn sl-btn-ghost"
+                      disabled={cancelSubmitting}
+                      onclick={() => (cancelConfirming = false)}
+                    >
+                      Keep request
+                    </button>
+                    <button
+                      type="button"
+                      class="sl-btn sl-btn-primary"
+                      disabled={cancelSubmitting}
+                      onclick={cancelErasure}
+                    >
+                      {cancelSubmitting ? "Cancelling…" : "Cancel erasure"}
+                    </button>
+                  </div>
+                {/if}
+              </div>
+            </div>
+          {:else}
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <p class="max-w-2xl text-[13px] leading-relaxed text-[var(--ink-mute)]">
+                Schedule a permanent PII scrub for this member. The request
+                stays cancellable for a reversibility window (default 14 days,
+                adjustable below); after the window the cron sweep runs the
+                scrub and the contribution ledger entries remain under
+                &ldquo;Erased member #{member.referenceCode}&rdquo;.
+              </p>
+              <button
+                type="button"
+                class="sl-btn sl-btn-danger-ghost"
+                onclick={openErasureModal}
+              >
+                Request erasure
+              </button>
+            </div>
+            {#if erasureRequest && erasureRequest.status !== "pending"}
+              <p class="mt-3 text-[12px] text-[var(--ink-mute)]">
+                Most recent request: <span class="sl-badge sl-badge-mute">{erasureRequest.status}</span>
+                on {formatDateTime(erasureRequest.updatedAt)}.
+                {#if erasureRequest.errorMessage}
+                  <span class="text-[var(--bad)]">{erasureRequest.errorMessage}</span>
+                {/if}
+              </p>
+            {/if}
+          {/if}
+
+          {#if erasureActionError}
+            <p class="mt-3 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">
+              {erasureActionError}
+            </p>
+          {/if}
+        </div>
+      </section>
+    {/if}
+
     <section class="sl-reveal sl-reveal-3 mt-12">
       <div class="mb-3 flex items-center justify-between">
         <span class="sl-eyebrow">Addresses</span>
@@ -374,5 +785,90 @@
         {/if}
       </form>
     </section>
+  {/if}
+
+  {#if modalOpen}
+    <!-- ── Erasure modal ─────────────────────────────────────── -->
+    <!-- Inline rather than `confirm()` so embedded contexts (mobile
+         in-app browsers) get a consistent UX with the rest of the
+         page. Click-outside + Escape close; Cancel + Submit
+         disable while the request is in flight. -->
+    <div
+      class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8"
+      style="background: rgba(21, 22, 26, 0.42);"
+      role="presentation"
+      onclick={(e) => { if (e.target === e.currentTarget) closeErasureModal(); }}
+    >
+      <div
+        class="w-full max-w-lg border border-[var(--rule)] bg-[var(--card)] shadow-[var(--shadow-lift)]"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="erasure-title"
+      >
+        <div class="border-b border-[var(--rule)] px-6 py-5">
+          <span class="sl-eyebrow" style="color:var(--bad)">Destructive action</span>
+          <h2 id="erasure-title" class="mt-2 sl-display text-[22px] leading-tight text-[var(--ink)]">
+            Schedule erasure for this member
+          </h2>
+          <p class="mt-2 text-[13px] text-[var(--ink-mute)]">
+            After the reversibility window, the member's personal
+            details (name, email, phone, date of birth, address) will
+            be permanently scrubbed. The contribution ledger stays
+            intact for financial record-keeping and appears as
+            &ldquo;Erased member #{member?.referenceCode}&rdquo;.
+          </p>
+        </div>
+        <form class="space-y-4 px-6 py-5" onsubmit={submitErasure}>
+          <label class="block">
+            <span class="sl-eyebrow" style="font-size:10.5px">Reversibility window (days)</span>
+            <div class="mt-1.5 flex items-center gap-2">
+              <input
+                type="number"
+                min="1"
+                max="365"
+                step="1"
+                class="sl-input sl-mono w-32"
+                bind:value={modalWindowDays}
+                disabled={modalSubmitting}
+              />
+              <span class="text-[12px] text-[var(--ink-mute)]">
+                Until then, the request can be cancelled. Default 14.
+              </span>
+            </div>
+          </label>
+          <label class="block">
+            <span class="sl-eyebrow" style="font-size:10.5px">Reason (optional)</span>
+            <textarea
+              class="sl-input mt-1.5"
+              rows="3"
+              maxlength="500"
+              placeholder="Brief context for the audit log…"
+              bind:value={modalReason}
+              disabled={modalSubmitting}
+            ></textarea>
+          </label>
+
+          {#if erasureActionError}
+            <p class="border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">
+              {erasureActionError}
+            </p>
+          {/if}
+
+          <div class="flex items-center justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onclick={closeErasureModal}
+              disabled={modalSubmitting}
+              class="sl-btn sl-btn-ghost"
+            >
+              Cancel
+            </button>
+            <button type="submit" disabled={modalSubmitting} class="sl-btn sl-btn-danger">
+              {modalSubmitting ? "Scheduling…" : "Schedule erasure"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   {/if}
 </div>

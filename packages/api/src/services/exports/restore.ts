@@ -57,7 +57,11 @@ import * as tar from "tar-stream";
 
 import * as schema from "@stewardledger/db/schema";
 import type { Database } from "@stewardledger/db";
-import { restoreOrder, type ZoneScopedTable } from "./registry";
+import {
+  RESTORE_CONTRACT_TABLES,
+  restoreOrder,
+  type ZoneScopedTable,
+} from "./registry";
 
 /**
  * Restore rows in batches of this size. A drizzle multi-row insert
@@ -112,6 +116,12 @@ export interface RestoreOptions {
   targetZoneId?: string;
   /** New zone slug. Defaults to the source slug + "-restored". */
   targetSlug?: string;
+  /**
+   * Injected "now" for tests. Used as the timestamp on per-table
+   * restore contracts that need a marker (currently:
+   * `erasure_requests` auto-cancel). Defaults to `new Date()`.
+   */
+  now?: Date;
   /**
    * Optional source-user-id → target-user-id remap. Any
    * `*_by_user_id` column whose source value is in the map is
@@ -261,6 +271,7 @@ export async function restoreZoneExportBundle(
         targetZoneId,
         targetSlug,
         userIdMap,
+        now: opts.now ?? new Date(),
         log,
       });
       tablesRestored.push({ name: entry.name, inserted, skipped });
@@ -435,6 +446,8 @@ interface RestoreTableArgs {
   targetZoneId: string;
   targetSlug: string;
   userIdMap: Map<string, string>;
+  /** Timestamp used by per-table restore contracts. */
+  now: Date;
 }
 
 /**
@@ -565,6 +578,11 @@ async function restoreTable(args: RestoreTableArgs & { log: (m: string) => void 
         if (!Number.isNaN(d.getTime())) row[prop] = d;
       }
 
+      // Per-table restore contracts. Documented in each table's
+      // schema header + registry note. Single place to add new
+      // contracts so the streamer body stays generic.
+      applyTableRestoreContract(entry.name, row, args.now);
+
       batch.push(row);
     };
 
@@ -599,6 +617,57 @@ async function insertRows(
 ): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await (tx as any).insert(table).values(rows);
+}
+
+/**
+ * Per-table restore-contract hook. Each branch is documented in
+ * the corresponding schema header + the registry's `note` field;
+ * keeping the rewrite logic centralised here means a new contract
+ * only needs to add one branch (and a passing test) rather than
+ * forking the JSONL streamer.
+ *
+ * Current contracts:
+ *
+ * - `erasure_requests`: every `pending` row is rewritten to
+ *   `cancelled` on import. The schema header is explicit: a
+ *   pending erasure scheduled on the source environment must NOT
+ *   fire on the restore target's cron sweep, because the target
+ *   may be a different operator's environment + the underlying
+ *   member / zone may not be the same data. We rewrite to
+ *   `cancelled` (a terminal status the CHECK accepts on either a
+ *   present or absent `member_id`) and stamp a synthetic cancel
+ *   marker so an operator can grep for the auto-cancellations in
+ *   the audit trail.
+ */
+/** Restore-contract marker for the `erasure_requests` auto-cancel. */
+const ERASURE_RESTORE_CANCEL_MARKER = "auto-cancelled on bundle restore";
+
+function applyTableRestoreContract(
+  tableName: string,
+  row: Record<string, unknown>,
+  now: Date,
+): void {
+  if (tableName === RESTORE_CONTRACT_TABLES.erasureRequests) {
+    if (row.status === "pending") {
+      row.status = "cancelled";
+      row.cancelledAt = now;
+      // The cancelled-by-user FK is `ON DELETE SET NULL` already;
+      // the auto-cancel has no operator behind it on the restore
+      // target, so leave the FK null and surface the auto-cancel
+      // in the reason string. Idempotent: if a row already carries
+      // the marker (e.g. a re-restored bundle that was previously
+      // restored, then re-bundled, then re-restored), we don't
+      // double-append.
+      row.cancelledByUserId = null;
+      const prior = typeof row.reason === "string" ? row.reason : "";
+      if (!prior.endsWith(ERASURE_RESTORE_CANCEL_MARKER)) {
+        row.reason = prior
+          ? `${prior} — ${ERASURE_RESTORE_CANCEL_MARKER}`
+          : ERASURE_RESTORE_CANCEL_MARKER;
+      }
+      row.updatedAt = now;
+    }
+  }
 }
 
 /**

@@ -356,6 +356,77 @@ describe("tenant erasure router", () => {
       expect(listBody.requests[0].status).toBe("cancelled");
     });
 
+    it("GET ?memberId= narrows to a single member's rows", async () => {
+      const zone = await seedZoneWithMember(`er-mid-${unique()}`);
+      cleanupSlugs.push(zone.slug);
+      const u = await seedUser(`er-mid+${unique()}@example.com`);
+      cleanupUserIds.push(u);
+      await bindUser(u, zone.id, zone.ownerRoleId);
+      asUser(u, `er-mid+${unique()}@example.com`);
+
+      // Seed a second member in the same zone so the filter has
+      // something to discriminate against.
+      const [otherMember] = await db
+        .insert(members)
+        .values({
+          zoneId: zone.id,
+          referenceCode: `M-${unique()}`,
+          firstName: "Other",
+          lastName: "Member",
+        })
+        .returning({ id: members.id });
+
+      // One pending erasure on the seed member, one on the other.
+      await call(
+        zone.slug,
+        `/api/tenant/members/${zone.memberId}/erasure-requests`,
+        { method: "POST", body: {} },
+      );
+      await call(
+        zone.slug,
+        `/api/tenant/members/${otherMember.id}/erasure-requests`,
+        { method: "POST", body: {} },
+      );
+
+      const filtered = await call(
+        zone.slug,
+        `/api/tenant/erasure-requests?scope=member&memberId=${zone.memberId}`,
+      );
+      expect(filtered.status).toBe(200);
+      const filteredBody = (await filtered.json()) as {
+        requests: Array<{ memberId: string | null }>;
+      };
+      expect(filteredBody.requests.length).toBe(1);
+      expect(filteredBody.requests[0].memberId).toBe(zone.memberId);
+
+      // Unfiltered list still sees both rows (sanity check).
+      const all = await call(
+        zone.slug,
+        "/api/tenant/erasure-requests?scope=member",
+      );
+      const allBody = (await all.json()) as {
+        requests: Array<{ memberId: string | null }>;
+      };
+      expect(allBody.requests.length).toBe(2);
+    });
+
+    it("GET ?memberId= rejects an oversized value with 400 invalid_query", async () => {
+      const zone = await seedZoneWithMember(`er-mlen-${unique()}`);
+      cleanupSlugs.push(zone.slug);
+      const u = await seedUser(`er-mlen+${unique()}@example.com`);
+      cleanupUserIds.push(u);
+      await bindUser(u, zone.id, zone.ownerRoleId);
+      asUser(u, `er-mlen+${unique()}@example.com`);
+      const tooLong = "x".repeat(65);
+      const res = await call(
+        zone.slug,
+        `/api/tenant/erasure-requests?memberId=${tooLong}`,
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("invalid_query");
+    });
+
     it("GET ?scope=zone filters", async () => {
       const zone = await seedZoneWithMember(`er-flt-${unique()}`);
       cleanupSlugs.push(zone.slug);

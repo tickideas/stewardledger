@@ -269,6 +269,7 @@ tenantErasureRouter.get("/erasure-requests", async (c) => {
 
   const scope = c.req.query("scope");
   const status = c.req.query("status");
+  const memberId = c.req.query("memberId");
   if (scope !== undefined && scope !== "member" && scope !== "zone") {
     return c.json(
       {
@@ -294,11 +295,27 @@ tenantErasureRouter.get("/erasure-requests", async (c) => {
       400,
     );
   }
+  // Cheap shape gate. Member ids in this project are UUIDs;
+  // accepting anything past ~64 chars would also be fine
+  // (the equality lookup is unable to confuse the index), but
+  // refusing oversized garbage early is the cheaper path.
+  if (memberId !== undefined && (memberId.length === 0 || memberId.length > 64)) {
+    return c.json(
+      {
+        error: {
+          code: "invalid_query",
+          message: "memberId must be a non-empty string up to 64 chars",
+        },
+      },
+      400,
+    );
+  }
 
   const rows = await listErasureRequests(db, {
     zoneId: ctx.zoneId,
     scope: scope as ErasureScope | undefined,
     status: status as ErasureStatus | undefined,
+    memberId: memberId || undefined,
   });
   c.header("cache-control", NO_STORE);
   return c.json({ requests: rows });
