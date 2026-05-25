@@ -200,6 +200,7 @@ Operational implications:
 - **Memory**: the API process briefly buffers the gzipped artefact during download. Keep the API container's memory limit at least 2× the largest expected bundle. A streaming-multipart upload/download path is on the Phase 11 roadmap; until then the in-memory ceiling is the hard limit.
 - **Per-table guard**: the bundle generator refuses any table over 5,000,000 rows with `error_code = table_too_large`. Hitting this almost always means the zone has unbounded `audit_events` or runaway imports; tighten the zone's retention policy via `/zone/settings` and retry.
 - **Cooldown**: one bundle per zone per 24 h is enforced server-side. The 429 response includes `existingExportId` so the UI can deep-link.
+- **Restoring**: `pnpm --filter @stewardledger/api restore-export <bundle.tar.gz> [--target-zone-id <uuid>] [--target-slug <slug>] [--map-users <map.json>] [--storage-root <dir>] [--dry-run]` restores a bundle into a fresh zone identity in a target database (Drizzle-migrated to the bundle's `formatVersion` first). The helper rewrites `zone_id` + storage-key prefixes, nulls every `*_by_user_id` column by default (override with `--map-users`), and re-uploads import + report blobs at the new zone keys. The round-trip is exercised by `packages/api/src/services/exports/restore.test.ts`.
 
 ## Backups and rollback
 
