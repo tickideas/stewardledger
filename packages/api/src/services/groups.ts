@@ -64,9 +64,6 @@ export class GroupNotEmptyError extends Error {
 
 export class HistoryViolationError extends Error {
   readonly code = "history_violation";
-  constructor(msg: string) {
-    super(msg);
-  }
 }
 
 export async function assertGroupNameAvailable(

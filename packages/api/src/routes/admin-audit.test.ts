@@ -10,7 +10,6 @@ import { inArray, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
-  auditEvents,
   user as userTable,
   zones,
 } from "@stewardledger/db/schema";

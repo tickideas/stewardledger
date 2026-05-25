@@ -9,7 +9,7 @@
     "check": "turbo check",
     "test": "pnpm test:db:push && turbo test",
     "test:db:up": "docker compose up -d --wait test-db",
-    "test:db:down": "docker compose stop test-db && docker compose rm -f test-db && docker volume rm -f stewardledger_pgdata_test",
+    "test:db:down": "docker compose stop test-db && docker compose rm -f test-db && docker compose config --format json | node -e 'let s=\"\"; process.stdin.on(\"data\", (d) => s += d); process.stdin.on(\"end\", () => { const c = JSON.parse(s); const source = c.services[\"test-db\"].volumes.find((v) => v.target === \"/var/lib/postgresql/data\").source; const volume = c.volumes[source]; console.log(volume?.name || `${c.name}_${source}`); });' | xargs docker volume rm -f",
     "test:db:push": "ENV_FILE=../../.env.test pnpm --filter @stewardledger/db db:push && ENV_FILE=../../.env.test pnpm --filter @stewardledger/db db:bootstrap",
     "db:generate": "turbo db:generate",
     "db:migrate": "turbo db:migrate",
@@ -21,12 +21,12 @@
     "clean": "turbo clean"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.13",
+    "@biomejs/biome": "2.4.15",
     "turbo": "^2.9.14",
-    "typescript": "^5.8.3"
+    "typescript": "^6.0.3"
   },
   "packageManager": "pnpm@9.15.0",
   "engines": {
-    "node": ">=20 <25"
+    "node": ">=20.19.0 <25"
   }
 }
