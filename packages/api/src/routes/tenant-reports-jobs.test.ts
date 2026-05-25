@@ -384,6 +384,74 @@ describe("tenant reports \u2014 async jobs", () => {
     }
   });
 
+  it("sendReportJobEmail stamps email_sent_at after a finalized run (dev-log transport)", async () => {
+    asUser(userA, "a@test");
+    const queued = await call(zoneA.slug, `/api/tenant/reports/${reportId}/jobs`, {
+      method: "POST",
+      body: { format: "xlsx", filters: validFilters(zoneA.memberId) },
+    });
+    const jobId = ((await queued.json()) as { job: { id: string } }).job.id;
+
+    await runOnce(db);
+    // The pg-boss handler is what calls `sendReportJobEmail`. The
+    // service-layer `runOnce` shortcut used by tests doesn't — we
+    // call it explicitly here to mirror the production path. Without
+    // USESEND_* env, the email module falls into the dev-log branch
+    // and stamps `email_sent_at` so a redeliver doesn't loop.
+    const [row] = await db
+      .select()
+      .from(reportJobs)
+      .where(eq(reportJobs.id, jobId));
+    expect(row.status).toBe("completed");
+
+    const { sendReportJobEmail } = await import(
+      "../services/reports/email"
+    );
+    await sendReportJobEmail(db, { job: row });
+    const [stamped] = await db
+      .select()
+      .from(reportJobs)
+      .where(eq(reportJobs.id, jobId));
+    expect(stamped.emailSentAt).not.toBeNull();
+  });
+
+  it("cleanup pass flips expired completed rows to expired + 404s the download", async () => {
+    asUser(userA, "a@test");
+    const queued = await call(zoneA.slug, `/api/tenant/reports/${reportId}/jobs`, {
+      method: "POST",
+      body: { format: "xlsx", filters: validFilters(zoneA.memberId) },
+    });
+    const jobId = ((await queued.json()) as { job: { id: string } }).job.id;
+    await runOnce(db);
+
+    // Force-expire and run cleanup. The audit row lives in a
+    // platform scope (NULL zone_id) so we don't query it through
+    // the tenant API; we read the table directly.
+    await db
+      .update(reportJobs)
+      .set({ expiresAt: new Date(Date.now() - 60_000) })
+      .where(eq(reportJobs.id, jobId));
+    const { cleanupExpiredArtefacts } = await import(
+      "../services/reports/cleanup"
+    );
+    const summary = await cleanupExpiredArtefacts(db);
+    expect(summary.scanned).toBeGreaterThanOrEqual(1);
+    expect(summary.expiredRows).toBeGreaterThanOrEqual(1);
+
+    const [row] = await db
+      .select()
+      .from(reportJobs)
+      .where(eq(reportJobs.id, jobId));
+    expect(row.status).toBe("expired");
+    expect(row.storageKey).toBeNull();
+
+    const download = await call(
+      zoneA.slug,
+      `/api/tenant/reports/jobs/${jobId}/download`,
+    );
+    expect(download.status).toBe(404);
+  });
+
   // Quietly reference the desc helper so the import stays.
   void desc;
 });

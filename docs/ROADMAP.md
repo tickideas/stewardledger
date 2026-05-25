@@ -240,7 +240,7 @@ Deliverables (full list in [`REPORTS.md`](REPORTS.md)):
 - Statement import reconciliation report. *(Excel + PDF landed.)*
 - Member list (active, by chapter, by status). *(Excel + PDF landed.)*
 - Saved filters. *(Personal-per-user named filter bundles per report, persisted in `saved_report_filters` (migration 0009). CRUD under `/api/tenant/reports/:id/saved-filters[/:filterId]`; the per-report UI at `/zone/reports/[id]` surfaces a pill picker + inline "Save current filters as…" form. Payloads re-validate against each report's existing Zod filter schema on write. Per-row audit (create / update / delete). Cross-user + cross-tenant isolation tested.)*
-- Background `report.generate` jobs with email-when-ready. *(PR 1 landed: in-process polling worker drains a `report_jobs` table; new endpoints `POST /api/tenant/reports/:id/jobs`, `GET /api/tenant/reports/jobs[/:jobId][/download]`. Artefacts persist to object storage with a 7-day expiry. Worker auto-starts in `server.ts` and drains gracefully on SIGTERM. PR 2 swaps the polling loop for pg-boss + adds email-when-ready and an expiry-cleanup job; the route contract is unchanged.)*
+- Background `report.generate` jobs with email-when-ready. *(Landed. `report_jobs` table; endpoints `POST /api/tenant/reports/:id/jobs`, `GET /api/tenant/reports/jobs[/:jobId][/download]`. pg-boss-backed worker (`services/queue.ts` + `services/reports/jobs-pgboss.ts`) replaces the original in-process polling loop; the route contract is unchanged. `services/reports/email.ts` sends a branded success / failure mail through the existing `usesend` adapter and stamps `email_sent_at` for idempotency. `services/reports/cleanup.ts` runs as a daily pg-boss schedule (03:00 UTC), drops expired artefact blobs, and flips the row to `status='expired'` (kept for audit; download returns 404). A boot-time sweep recovers any `queued` rows orphaned by a crash between `INSERT` + `boss.send`. Single Drizzle migration `0017_report_jobs_pr2.sql` adds `email_sent_at` + the `expired` status check.)*
 
 Implementation notes:
 
@@ -269,7 +269,7 @@ Audited implementation status (2026-05-13):
 - [x] Weekly finance report data + Excel export are implemented and tested (`weekly-finance.ts`, `reports.test.ts`); attendance lives in `service_event_attendance` (migration `0002_hesitant_human_robot.sql`).
 - [x] PDF export infrastructure (`pdfkit`-based generic branded-table renderer at `services/reports/pdf/branded-table.ts`; `GET /api/tenant/reports/:id/export.pdf` route; UI "Download PDF" alongside "Download Excel"). Bespoke layouts (letter-style member statement, partnership receipts) deferred until Playwright lands.
 - [x] Saved filters.
-- [x] Background `report.generate` worker + object-storage retention for large exports. *(In-process worker; pg-boss / email follow-up in PR 2.)*
+- [x] Background `report.generate` worker + object-storage retention for large exports. *(pg-boss-backed worker + email-when-ready + daily expiry-cleanup job all landed.)*
 
 Exit checklist:
 

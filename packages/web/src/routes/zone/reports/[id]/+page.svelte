@@ -102,7 +102,7 @@
     id: string;
     reportId: string;
     format: "xlsx" | "pdf";
-    status: "queued" | "running" | "completed" | "failed";
+    status: "queued" | "running" | "completed" | "failed" | "expired";
     rowCount: number | null;
     byteCount: number | null;
     errorCode: string | null;
@@ -111,6 +111,7 @@
     createdAt: string;
     startedAt: string | null;
     completedAt: string | null;
+    emailSentAt: string | null;
   };
   let jobs = $state<JobSummary[]>([]);
   let jobsError = $state<string | null>(null);
@@ -1019,6 +1020,7 @@
                   job.status === "queued" ? "sl-badge-mute" :
                   job.status === "running" ? "sl-badge-warn" :
                   job.status === "completed" ? "sl-badge-ok" :
+                  job.status === "expired" ? "sl-badge-mute" :
                   "sl-badge-bad"
                 }`}>{job.status}</span>
                 <span class="text-[var(--ink-mute)]">{formatRelative(job.createdAt)}</span>

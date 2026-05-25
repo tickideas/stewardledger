@@ -18,11 +18,10 @@
 //          re-check spec.accessCheck, fetch + render, persist the
 //          artefact to object storage, mark the row.
 //
-// RELEVANT FILES: packages/db/src/schema/report-jobs.ts, packages/api/src/services/reports/jobs-worker.ts, packages/api/src/services/storage.ts
+// RELEVANT FILES: packages/db/src/schema/report-jobs.ts, packages/api/src/services/reports/jobs-pgboss.ts, packages/api/src/services/storage.ts
 
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import {
-  chapters,
   reportJobs,
   roles,
   user as userTable,
@@ -34,6 +33,7 @@ import type { Database } from "@stewardledger/db";
 import type { AuthorizedContext } from "@stewardledger/shared";
 import { writeAudit } from "../audit";
 import { storage } from "../storage";
+import { log } from "../../logger";
 import { canExportReports, canReadReports } from "./access";
 import { loadReportBranding } from "./branding";
 import { renderBrandedTablePdf } from "./pdf/branded-table";
@@ -47,7 +47,12 @@ import {
 } from "./types";
 
 export type ReportJobFormat = "xlsx" | "pdf";
-export type ReportJobStatus = "queued" | "running" | "completed" | "failed";
+export type ReportJobStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "expired";
 
 /** Default expiry for a completed artefact. PR 2 cleanup will prune. */
 const DEFAULT_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
@@ -81,6 +86,7 @@ export interface JobSummary {
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
+  emailSentAt: string | null;
 }
 
 function toSummary(r: ReportJob): JobSummary {
@@ -97,6 +103,7 @@ function toSummary(r: ReportJob): JobSummary {
     createdAt: r.createdAt.toISOString(),
     startedAt: r.startedAt?.toISOString() ?? null,
     completedAt: r.completedAt?.toISOString() ?? null,
+    emailSentAt: r.emailSentAt?.toISOString() ?? null,
   };
 }
 
@@ -154,7 +161,67 @@ export async function queueJob(
     });
     return row;
   });
+
+  // Publish to pg-boss *after* the row commits. A `send` failure
+  // does not roll back the row — the boot sweeper picks up
+  // orphaned `queued` rows on next start.
+  //
+  // The dynamic import is deliberate, for two reasons:
+  //   1. `jobs-pgboss.ts` imports back from this module
+  //      (`claimJobById`, `finalizeJob`, etc.), so a static import
+  //      here would create a load-order cycle.
+  //   2. Tests that don't exercise queueing don't have to pull
+  //      pg-boss into the module graph. Node caches the resolved
+  //      module, so the round-trip is one-off, not per-call.
+  try {
+    const { enqueueReportJob } = await import("./jobs-pgboss");
+    await enqueueReportJob(result.id);
+  } catch (err) {
+    log.warn(
+      { err, jobId: result.id },
+      "queueJob: pg-boss enqueue failed; row will be recovered by boot sweep",
+    );
+  }
+
   return toSummary(result);
+}
+
+/**
+ * Worker-side typed read by id. Does NOT enforce caller identity —
+ * the pg-boss subscriber receives only the jobId and re-resolves
+ * the requester's role bindings via `resolveAuthAtRunTime` inside
+ * `runClaimedJob`.
+ */
+export async function getJobById(
+  database: Database,
+  jobId: string,
+): Promise<ReportJob | null> {
+  const [row] = await database
+    .select()
+    .from(reportJobs)
+    .where(eq(reportJobs.id, jobId))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Atomically flip `queued` → `running` for a known id. Returns the
+ * claimed row or `null` when the row is already non-queued (another
+ * worker beat us, manual flip, terminal already). This is the
+ * single-id sibling of `claimNextJob`; the pg-boss handler uses it
+ * because it already knows the id from the message payload.
+ */
+export async function claimJobById(
+  database: Database,
+  jobId: string,
+): Promise<ReportJob | null> {
+  const now = new Date();
+  const [row] = await database
+    .update(reportJobs)
+    .set({ status: "running", startedAt: now, updatedAt: now })
+    .where(and(eq(reportJobs.id, jobId), eq(reportJobs.status, "queued")))
+    .returning();
+  return row ?? null;
 }
 
 /** Caller's recent jobs in this zone, newest first. */
@@ -253,6 +320,7 @@ function hydrate(r: Record<string, unknown>): ReportJob {
     errorMessage: (r.error_message as string | null) ?? null,
     rowCount: (r.row_count as number | null) ?? null,
     byteCount: (r.byte_count as number | null) ?? null,
+    emailSentAt: (r.email_sent_at as Date | null) ?? null,
     expiresAt: r.expires_at as Date,
     createdAt: r.created_at as Date,
     startedAt: (r.started_at as Date | null) ?? null,
@@ -336,15 +404,12 @@ interface RunOutcome {
 /**
  * Run one claimed job to completion. Catches every error so the
  * worker loop never crashes; failures land on the row as
- * `errorCode` + `errorMessage`. The chapters import is unused but
- * kept so the unused-import lint stays quiet when the function
- * grows.
+ * `errorCode` + `errorMessage`.
  */
 export async function runClaimedJob(
   database: Database,
   job: ReportJob,
 ): Promise<RunOutcome> {
-  void chapters;
   try {
     const ctx = await resolveAuthAtRunTime(database, job.zoneId, job.userId);
     if (!ctx) {
@@ -462,7 +527,7 @@ export async function finalizeJob(
   database: Database,
   job: ReportJob,
   outcome: RunOutcome,
-): Promise<JobSummary> {
+): Promise<ReportJob> {
   // Anchor the retention window to *completion* time, not queue
   // time. Jobs that sit in the queue for hours would otherwise burn
   // through most of their 7-day window before the artefact even
@@ -473,7 +538,7 @@ export async function finalizeJob(
     outcome.status === "completed"
       ? new Date(completedAt.getTime() + DEFAULT_EXPIRY_MS)
       : job.expiresAt;
-  const result = await database.transaction(async (tx) => {
+  return await database.transaction(async (tx) => {
     const [row] = await tx
       .update(reportJobs)
       .set({
@@ -509,7 +574,6 @@ export async function finalizeJob(
     });
     return row;
   });
-  return toSummary(result);
 }
 
 /**
@@ -520,7 +584,8 @@ export async function runOnce(database: Database): Promise<JobSummary | null> {
   const job = await claimNextJob(database);
   if (!job) return null;
   const outcome = await runClaimedJob(database, job);
-  return finalizeJob(database, job, outcome);
+  const finalized = await finalizeJob(database, job, outcome);
+  return toSummary(finalized);
 }
 
 /**

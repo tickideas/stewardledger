@@ -3,7 +3,7 @@
 // queued / running / completed / failed export. The worker picks up
 // `queued` rows in `created_at` order via `for update skip locked` so
 // multiple processes can co-exist safely.
-// RELEVANT FILES: packages/api/src/services/reports/jobs.ts, packages/api/src/services/reports/jobs-worker.ts
+// RELEVANT FILES: packages/api/src/services/reports/jobs.ts, packages/api/src/services/reports/jobs-pgboss.ts
 
 import { sql } from "drizzle-orm";
 import {
@@ -23,7 +23,7 @@ import { zones } from "./zones";
  *   queued    -> running   (worker claim)
  *   running   -> completed (artefact persisted, storage_key set)
  *   running   -> failed    (error captured; row kept for audit)
- *   completed -> expired   (lazy: serving 404 after expires_at)
+ *   completed -> expired   (cleanup job: blob deleted, row retained)
  */
 export const reportJobs = pgTable(
   "report_jobs",
@@ -59,6 +59,13 @@ export const reportJobs = pgTable(
     /** Rendered artefact size in bytes (informational). */
     byteCount: integer("byte_count"),
     /**
+     * Set on a successful "export ready" / "export failed" email
+     * send. Treated as the idempotency guard so a pg-boss redeliver
+     * cannot double-send. Stays null when no email could be sent
+     * (e.g. dev environment without `USESEND_*`).
+     */
+    emailSentAt: timestamp("email_sent_at", { withTimezone: true }),
+    /**
      * Hard expiry. The download endpoint serves 404 past this point
      * so a stale signed URL can't be replayed indefinitely. PR 2's
      * cleanup job deletes the blob; the row stays for audit.
@@ -93,7 +100,7 @@ export const reportJobs = pgTable(
     ),
     check(
       "report_jobs_status_check",
-      sql`${table.status} in ('queued', 'running', 'completed', 'failed')`,
+      sql`${table.status} in ('queued', 'running', 'completed', 'failed', 'expired')`,
     ),
   ],
 );
