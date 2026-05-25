@@ -420,6 +420,12 @@ export const ZONE_SCOPED_TABLES: readonly ZoneScopedTable[] = [
     note: "Report-job metadata. Retained artefacts are streamed into `reports/` alongside.",
   },
   {
+    name: "erasure_requests",
+    table: schema.erasureRequests,
+    restoreOrder: 930,
+    note: "GDPR erasure history for the zone. FK to `members` is `set null` so restoring an erased-member request into a fresh schema is safe (the member_id may already be null when the apply pass scrubbed it). RESTORE CONTRACT: every `pending` row must be rewritten to `cancelled` on import \u2014 otherwise the restore target's cron sweep would apply an erase scheduled on the source environment against different data. See `packages/db/src/schema/erasure-requests.ts` header.",
+  },
+  {
     name: "audit_events",
     table: schema.auditEvents,
     restoreOrder: 990,
