@@ -3,6 +3,7 @@
   import { api, ApiError } from "$lib/api";
   import { fmtMoney } from "$lib/format";
   import { ALL_TENANT_ROLE_OPTIONS_BY_SCOPE } from "$lib/role-options";
+  import { session } from "$lib/session.svelte";
 
   type ChapterRow = {
     id: string;
@@ -212,6 +213,7 @@
     if (e.key !== "Escape") return;
     if (resendOpen) closeResend();
     else if (confirmingRevoke) closeRevokeConfirm();
+    else if (decomModalOpen) closeDecomModal();
   }
 
   // ─── Two-factor enforcement ───────────────────────────────────────
@@ -268,6 +270,173 @@
     if (checked) next.add(code);
     else next.delete(code);
     mfaSelection = next;
+  }
+
+  // ─── Decommission panel (Phase 9 §6) ──────────────────────────────
+  // Super-admin parallel of the owner-driven flow on /zone/settings.
+  // Same body shape, same recent-export gate (the server enforces),
+  // same reversibility window. Mounted on the admin tenant-detail
+  // page so an admin acting on behalf of an owner who has lost
+  // access (abandoned tenant, disputed handover) has the same handle
+  // the owner would have had.
+  //
+  // Visible to super-admins only — the admin layout admits
+  // `support_admin` too, but support cannot decommission. The
+  // server enforces this separately via `requireSuperAdmin`; the
+  // UI predicate stops support admins seeing a button they can't use.
+  type AdminErasureRequest = {
+    id: string;
+    scope: "member" | "zone";
+    status: "pending" | "applied" | "cancelled" | "failed";
+    reason: string | null;
+    reversibilityWindowDays: number;
+    appliesAt: string;
+    createdAt: string;
+    updatedAt: string;
+    errorCode: string | null;
+    errorMessage: string | null;
+  };
+
+  const isSuperAdmin = $derived(
+    session.current.status === "authenticated" &&
+      session.current.isSuperAdmin,
+  );
+
+  let zoneErasure = $state<AdminErasureRequest | null>(null);
+  let zoneErasureLoadError = $state<string | null>(null);
+  let zoneErasureActionError = $state<string | null>(null);
+
+  let decomModalOpen = $state(false);
+  let decomSlugInput = $state("");
+  let decomReason = $state("");
+  let decomConfirmExportId = $state("");
+  let decomSubmitting = $state(false);
+  let decomCancelConfirming = $state(false);
+  let decomCancelSubmitting = $state(false);
+
+  const decomSlugMatches = $derived.by(() => {
+    if (!data) return false;
+    return (
+      decomSlugInput.trim().toLowerCase() ===
+        data.zone.slug.toLowerCase() && data.zone.slug.length > 0
+    );
+  });
+
+  async function loadZoneErasure() {
+    if (!isSuperAdmin || !data) return;
+    try {
+      const res = await api.get<{ requests: AdminErasureRequest[] }>(
+        `/api/admin/zones/${data.zone.slug}/erasure-requests`,
+      );
+      zoneErasure = res.requests[0] ?? null;
+      zoneErasureLoadError = null;
+    } catch (err) {
+      zoneErasureLoadError =
+        err instanceof ApiError
+          ? err.message
+          : "Could not load decommission status.";
+    }
+  }
+
+  // Re-load when `data` becomes available (after `refresh()` lands)
+  // OR when the slug changes (admin nav between tenants).
+  $effect(() => {
+    if (data?.zone.slug && isSuperAdmin) {
+      void loadZoneErasure();
+    } else {
+      zoneErasure = null;
+      zoneErasureLoadError = null;
+    }
+  });
+
+  function openDecomModal() {
+    decomSlugInput = "";
+    decomReason = "";
+    decomConfirmExportId = "";
+    zoneErasureActionError = null;
+    decomModalOpen = true;
+  }
+
+  function closeDecomModal() {
+    if (decomSubmitting) return;
+    decomModalOpen = false;
+  }
+
+  async function submitDecom(e: SubmitEvent) {
+    e.preventDefault();
+    if (!data || !decomSlugMatches) return;
+    if (!decomConfirmExportId.trim()) {
+      zoneErasureActionError = "Export bundle ID is required.";
+      return;
+    }
+    decomSubmitting = true;
+    zoneErasureActionError = null;
+    try {
+      const body: { confirmExportId: string; reason?: string } = {
+        confirmExportId: decomConfirmExportId.trim(),
+      };
+      if (decomReason.trim()) body.reason = decomReason.trim();
+      await api.post(
+        `/api/admin/zones/${data.zone.slug}/erasure-requests`,
+        body,
+      );
+      decomModalOpen = false;
+      setStatus(
+        "success",
+        `Decommission scheduled for ${data.zone.slug}.`,
+        6000,
+      );
+      await loadZoneErasure();
+    } catch (err) {
+      if (err instanceof ApiError && err.code === "recent_export_required") {
+        zoneErasureActionError =
+          "That export bundle ID is either invalid or older than 7 days. The owner must generate a fresh export first.";
+      } else if (err instanceof ApiError && err.code === "duplicate_pending") {
+        zoneErasureActionError =
+          "A decommission is already pending for this zone. Refresh to see it.";
+      } else {
+        zoneErasureActionError =
+          err instanceof ApiError
+            ? err.message
+            : "Could not schedule decommission.";
+      }
+    } finally {
+      decomSubmitting = false;
+    }
+  }
+
+  async function cancelDecom() {
+    if (!data || !zoneErasure) return;
+    decomCancelSubmitting = true;
+    zoneErasureActionError = null;
+    try {
+      await api.delete(
+        `/api/admin/zones/${data.zone.slug}/erasure-requests/${zoneErasure.id}`,
+      );
+      decomCancelConfirming = false;
+      setStatus(
+        "success",
+        `Decommission cancelled for ${data.zone.slug}.`,
+        6000,
+      );
+      await loadZoneErasure();
+    } catch (err) {
+      zoneErasureActionError =
+        err instanceof ApiError
+          ? err.message
+          : "Could not cancel decommission.";
+    } finally {
+      decomCancelSubmitting = false;
+    }
+  }
+
+  function formatDateTimeDecom(iso: string | null): string {
+    if (!iso) return "—";
+    try {
+      return new Date(iso).toLocaleString();
+    } catch {
+      return iso;
+    }
   }
 
   async function saveMfa(): Promise<void> {
@@ -624,6 +793,242 @@
         </div>
       </div>
     </div>
+
+    {#if isSuperAdmin}
+      <!-- ── Decommission panel (super-admin parallel) ────────────────── -->
+      <!-- Mirrors `/zone/settings`'s owner-driven flow. Visible only
+           to super-admins; support admins land here through the
+           admin layout but the section stays hidden. The server
+           enforces super-admin separately. -->
+      <section class="sl-reveal sl-reveal-5 mt-10">
+        <div class="flex items-end justify-between gap-4">
+          <div>
+            <span class="sl-eyebrow" style="color:var(--bad)">Danger zone</span>
+            <h2 class="sl-display mt-1 text-[22px] text-[var(--ink)]">
+              Decommission this zone
+            </h2>
+            <p class="mt-2 max-w-2xl text-[13px] leading-relaxed text-[var(--ink-mute)]">
+              Schedule a permanent purge of every record, file, and report
+              owned by this zone. Use when the owner has lost access and
+              has explicitly requested closure. Requires the ID of a
+              completed export bundle the owner generated in the last
+              7 days.
+            </p>
+          </div>
+        </div>
+
+        {#if zoneErasureLoadError}
+          <p class="mt-4 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">
+            {zoneErasureLoadError}
+          </p>
+        {/if}
+
+        <div class="mt-4 border-2 border-[var(--bad)] bg-[var(--bad-soft)] p-5">
+          {#if zoneErasure && zoneErasure.status === "pending"}
+            <div class="flex flex-wrap items-start justify-between gap-4">
+              <div class="min-w-0">
+                <p class="text-[13px] text-[var(--bad)]">
+                  <strong>Decommission is scheduled.</strong>
+                  Every record in this zone will be permanently deleted
+                  unless cancelled before the window closes.
+                </p>
+                <dl class="mt-3 grid grid-cols-1 gap-x-6 gap-y-1 text-[12.5px] sm:grid-cols-2">
+                  <div class="flex justify-between sm:block">
+                    <dt class="text-[var(--ink-mute)]">Applies on</dt>
+                    <dd class="sl-mono mt-0.5 text-[var(--ink)]">
+                      {formatDateTimeDecom(zoneErasure.appliesAt)}
+                    </dd>
+                  </div>
+                  <div class="flex justify-between sm:block">
+                    <dt class="text-[var(--ink-mute)]">Window</dt>
+                    <dd class="sl-mono mt-0.5 text-[var(--ink)]">
+                      {zoneErasure.reversibilityWindowDays} days
+                    </dd>
+                  </div>
+                  <div class="flex justify-between sm:block">
+                    <dt class="text-[var(--ink-mute)]">Scheduled</dt>
+                    <dd class="sl-mono mt-0.5 text-[var(--ink)]">
+                      {formatDateTimeDecom(zoneErasure.createdAt)}
+                    </dd>
+                  </div>
+                  {#if zoneErasure.reason}
+                    <div class="col-span-1 sm:col-span-2">
+                      <dt class="text-[var(--ink-mute)]">Reason</dt>
+                      <dd class="mt-0.5 text-[var(--ink)]">{zoneErasure.reason}</dd>
+                    </div>
+                  {/if}
+                </dl>
+              </div>
+              <div class="flex flex-col items-end gap-2">
+                {#if !decomCancelConfirming}
+                  <button
+                    type="button"
+                    class="sl-btn sl-btn-primary"
+                    onclick={() => (decomCancelConfirming = true)}
+                  >
+                    Cancel decommission
+                  </button>
+                {:else}
+                  <p class="text-right text-[12px] text-[var(--ink-mute)]">
+                    Cancel decommission and keep this zone?
+                  </p>
+                  <div class="flex items-center gap-2">
+                    <button
+                      type="button"
+                      class="sl-btn sl-btn-ghost"
+                      disabled={decomCancelSubmitting}
+                      onclick={() => (decomCancelConfirming = false)}
+                    >
+                      Keep scheduled
+                    </button>
+                    <button
+                      type="button"
+                      class="sl-btn sl-btn-primary"
+                      disabled={decomCancelSubmitting}
+                      onclick={cancelDecom}
+                    >
+                      {decomCancelSubmitting ? "Cancelling…" : "Cancel decommission"}
+                    </button>
+                  </div>
+                {/if}
+              </div>
+            </div>
+          {:else}
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div class="min-w-0">
+                {#if zoneErasure && zoneErasure.status !== "pending"}
+                  <p class="text-[12px] text-[var(--ink-mute)]">
+                    Last decommission attempt:
+                    <span class="sl-badge sl-badge-mute">{zoneErasure.status}</span>
+                    on {formatDateTimeDecom(zoneErasure.updatedAt)}.
+                    {#if zoneErasure.errorMessage}
+                      <span class="text-[var(--bad)]">{zoneErasure.errorMessage}</span>
+                    {/if}
+                  </p>
+                {:else}
+                  <p class="text-[13px] text-[var(--ink-soft)]">
+                    No decommission scheduled.
+                  </p>
+                {/if}
+              </div>
+              <button
+                type="button"
+                class="sl-btn sl-btn-danger"
+                onclick={openDecomModal}
+              >
+                Decommission zone…
+              </button>
+            </div>
+          {/if}
+
+          {#if zoneErasureActionError}
+            <p class="mt-3 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">
+              {zoneErasureActionError}
+            </p>
+          {/if}
+        </div>
+      </section>
+
+      {#if decomModalOpen}
+        <!-- ── Admin decommission confirm modal ───────────────────── -->
+        <!-- Differs from the owner-side modal in that the admin must
+             paste the export bundle ID by hand (the admin doesn't see
+             the tenant's bundle list on this surface), in addition to
+             typing the zone slug. -->
+        <div
+          class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8"
+          style="background: rgba(21, 22, 26, 0.42);"
+          role="presentation"
+          onclick={(e) => { if (e.target === e.currentTarget) closeDecomModal(); }}
+        >
+          <div
+            class="w-full max-w-lg border-2 border-[var(--bad)] bg-[var(--card)] shadow-[var(--shadow-lift)]"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="admin-decom-title"
+          >
+            <div class="border-b border-[var(--rule)] px-6 py-5">
+              <span class="sl-eyebrow" style="color:var(--bad)">Irreversible after the window</span>
+              <h2 id="admin-decom-title" class="mt-2 sl-display text-[22px] leading-tight text-[var(--ink)]">
+                Decommission this zone
+              </h2>
+              <p class="mt-2 text-[13px] text-[var(--ink-mute)]">
+                Confirms a permanent purge for this zone after the
+                reversibility window (14 days). The owner's export
+                bundle ID is required — paste it from the owner's
+                request or from the tenant's `zone_exports` row.
+              </p>
+            </div>
+            <form class="space-y-4 px-6 py-5" onsubmit={submitDecom}>
+              <label class="block">
+                <span class="sl-eyebrow" style="font-size:10.5px">Recent export bundle ID</span>
+                <input
+                  type="text"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder="e.g. 9f3a1c2b-…"
+                  class="sl-input sl-mono mt-1.5"
+                  bind:value={decomConfirmExportId}
+                  disabled={decomSubmitting}
+                />
+                <p class="mt-1 text-[11.5px] text-[var(--ink-mute)]">
+                  Must reference a completed `zone_exports` row created in
+                  the last 7 days, owned by this zone.
+                </p>
+              </label>
+              <label class="block">
+                <span class="sl-eyebrow" style="font-size:10.5px">
+                  Type <code class="sl-mono text-[12px] text-[var(--ink)]">{data.zone.slug}</code> to confirm
+                </span>
+                <input
+                  type="text"
+                  autocomplete="off"
+                  spellcheck="false"
+                  class="sl-input sl-mono mt-1.5"
+                  bind:value={decomSlugInput}
+                  disabled={decomSubmitting}
+                />
+              </label>
+              <label class="block">
+                <span class="sl-eyebrow" style="font-size:10.5px">Reason (optional)</span>
+                <textarea
+                  class="sl-input mt-1.5"
+                  rows="3"
+                  maxlength="500"
+                  placeholder="For the platform-scope audit log…"
+                  bind:value={decomReason}
+                  disabled={decomSubmitting}
+                ></textarea>
+              </label>
+
+              {#if zoneErasureActionError}
+                <p class="border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">
+                  {zoneErasureActionError}
+                </p>
+              {/if}
+
+              <div class="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onclick={closeDecomModal}
+                  disabled={decomSubmitting}
+                  class="sl-btn sl-btn-ghost"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!decomSlugMatches || !decomConfirmExportId.trim() || decomSubmitting}
+                  class="sl-btn sl-btn-danger"
+                >
+                  {decomSubmitting ? "Scheduling…" : "Schedule decommission"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      {/if}
+    {/if}
 
     <div class="sl-reveal sl-reveal-5 mt-10">
       <span class="sl-eyebrow">Metadata</span>

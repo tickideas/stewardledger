@@ -30,6 +30,7 @@ import { eq, sql } from "drizzle-orm";
 
 import {
   chapters,
+  erasureRequests,
   importFiles,
   members,
   reportJobs,
@@ -162,6 +163,11 @@ async function cleanupZone(zoneId: string): Promise<void> {
   // edges, but `import_files` is restrict, so wipe explicitly.
   await db.delete(reportJobs).where(eq(reportJobs.zoneId, zoneId));
   await db.delete(importFiles).where(eq(importFiles.zoneId, zoneId));
+  // erasure_requests has `member_id ON DELETE SET NULL` so the
+  // member delete below would leave it dangling against
+  // `erasure_requests.zone_id` (CASCADE handles that, but we wipe
+  // explicitly to keep ordering obvious + the test deterministic).
+  await db.delete(erasureRequests).where(eq(erasureRequests.zoneId, zoneId));
   await db.delete(members).where(eq(members.zoneId, zoneId));
   await db.delete(chapters).where(eq(chapters.zoneId, zoneId));
   await db.delete(zoneExports).where(eq(zoneExports.zoneId, zoneId));
@@ -330,6 +336,179 @@ describe("zone export bundle — restoreZoneExportBundle (round-trip)", () => {
 
     expect(restore.filesRestored).toBe(1);
     expect(restore.reportsRestored).toBe(1);
+  });
+
+  it("rewrites pending erasure_requests → cancelled on import (restore contract)", async () => {
+    // Per the schema header on `erasure-requests.ts` + the
+    // registry note, every `pending` erasure_requests row must be
+    // auto-cancelled on bundle import so the restore target's
+    // cron sweep doesn't fire a scrub scheduled on the source
+    // environment against different data. This test seeds one
+    // pending row + one already-cancelled row + one applied row,
+    // round-trips the bundle, and asserts that only the pending
+    // one was rewritten.
+    const sourceSlug = `restore-erasure-${unique()}`;
+    const seed = await seedZone(sourceSlug, storage);
+    userIds.push(seed.userId);
+
+    // Look up the seeded member id (the round-trip test asserts
+    // by reference code; we need the id for FK + the
+    // erasure_requests.member_id FK).
+    const [seededMember] = await db
+      .select({ id: members.id })
+      .from(members)
+      .where(eq(members.zoneId, seed.zoneId))
+      .limit(1);
+
+    // Pending member-scope row. The CHECK requires `applies_at >
+    // created_at`; pick a 14-day future window so it survives the
+    // round-trip.
+    const pendingCreated = new Date(Date.now() - 60_000);
+    const pendingApplies = new Date(
+      pendingCreated.getTime() + 14 * 24 * 60 * 60 * 1000,
+    );
+    const [pendingRow] = await db
+      .insert(erasureRequests)
+      .values({
+        id: crypto.randomUUID(),
+        zoneId: seed.zoneId,
+        scope: "member",
+        memberId: seededMember.id,
+        requestedByUserId: seed.userId,
+        reason: "original-reason",
+        status: "pending",
+        reversibilityWindowDays: 14,
+        appliesAt: pendingApplies,
+        createdAt: pendingCreated,
+        updatedAt: pendingCreated,
+      })
+      .returning({ id: erasureRequests.id });
+
+    // Already-cancelled row: same window shape but terminal
+    // status. The restore must leave the status alone.
+    const [cancelledRow] = await db
+      .insert(erasureRequests)
+      .values({
+        id: crypto.randomUUID(),
+        zoneId: seed.zoneId,
+        scope: "member",
+        memberId: seededMember.id,
+        requestedByUserId: seed.userId,
+        reason: "cancelled-by-owner",
+        status: "cancelled",
+        reversibilityWindowDays: 14,
+        appliesAt: pendingApplies,
+        createdAt: pendingCreated,
+        updatedAt: pendingCreated,
+        cancelledAt: new Date(),
+        cancelledByUserId: seed.userId,
+      })
+      .returning({ id: erasureRequests.id });
+
+    // Applied row with `member_id IS NULL` (the FK ON DELETE SET
+    // NULL relaxation the CHECK allows on terminal status). The
+    // restore must NOT rewrite this either.
+    const [appliedRow] = await db
+      .insert(erasureRequests)
+      .values({
+        id: crypto.randomUUID(),
+        zoneId: seed.zoneId,
+        scope: "member",
+        memberId: null,
+        requestedByUserId: seed.userId,
+        reason: "applied-then-member-gone",
+        status: "applied",
+        reversibilityWindowDays: 14,
+        appliesAt: pendingApplies,
+        createdAt: pendingCreated,
+        updatedAt: pendingCreated,
+        appliedAt: new Date(),
+      })
+      .returning({ id: erasureRequests.id });
+
+    // Build the bundle.
+    const exportId = crypto.randomUUID();
+    const bundleKey = bundleStorageKey(seed.zoneId, exportId);
+    await buildZoneExportBundle(db, {
+      zoneId: seed.zoneId,
+      exportId,
+      storageKey: bundleKey,
+    });
+    const tmp = await mkdtemp(join(tmpdir(), "sl-restore-erasure-"));
+    tempDirs.push(tmp);
+    const bundlePath = join(tmp, "bundle.tar.gz");
+    await writeFile(bundlePath, Buffer.from(await storage.get(bundleKey)));
+
+    // Tear down the source so the restore lands into a clean
+    // identity (same contract as the canonical round-trip test).
+    await cleanupZone(seed.zoneId);
+
+    // Restore. Inject a deterministic `now` so the auto-cancel
+    // timestamp is predictable.
+    const restoreNow = new Date("2026-06-15T12:00:00.000Z");
+    const targetZoneId = crypto.randomUUID();
+    const targetSlug = `restore-erasure-dst-${unique()}`;
+    targetZoneIds.push(targetZoneId);
+    await restoreZoneExportBundle({
+      bundlePath,
+      database: db,
+      storage,
+      targetZoneId,
+      targetSlug,
+      userIdMap: new Map([[seed.userId, seed.userId]]),
+      now: restoreNow,
+      log: () => {},
+    });
+
+    // The pending row is now `cancelled` with the marker reason
+    // and the injected `cancelledAt`.
+    const [restoredPending] = await db
+      .select({
+        status: erasureRequests.status,
+        reason: erasureRequests.reason,
+        cancelledAt: erasureRequests.cancelledAt,
+        cancelledByUserId: erasureRequests.cancelledByUserId,
+        updatedAt: erasureRequests.updatedAt,
+      })
+      .from(erasureRequests)
+      .where(eq(erasureRequests.id, pendingRow.id))
+      .limit(1);
+    expect(restoredPending.status).toBe("cancelled");
+    expect(restoredPending.reason).toBe(
+      "original-reason — auto-cancelled on bundle restore",
+    );
+    expect(restoredPending.cancelledAt?.toISOString()).toBe(
+      restoreNow.toISOString(),
+    );
+    expect(restoredPending.cancelledByUserId).toBeNull();
+    expect(restoredPending.updatedAt.toISOString()).toBe(
+      restoreNow.toISOString(),
+    );
+
+    // The already-cancelled row is untouched.
+    const [restoredCancelled] = await db
+      .select({
+        status: erasureRequests.status,
+        reason: erasureRequests.reason,
+      })
+      .from(erasureRequests)
+      .where(eq(erasureRequests.id, cancelledRow.id))
+      .limit(1);
+    expect(restoredCancelled.status).toBe("cancelled");
+    expect(restoredCancelled.reason).toBe("cancelled-by-owner");
+
+    // The applied row is untouched (status still 'applied',
+    // member_id still null).
+    const [restoredApplied] = await db
+      .select({
+        status: erasureRequests.status,
+        memberId: erasureRequests.memberId,
+      })
+      .from(erasureRequests)
+      .where(eq(erasureRequests.id, appliedRow.id))
+      .limit(1);
+    expect(restoredApplied.status).toBe("applied");
+    expect(restoredApplied.memberId).toBeNull();
   });
 
   it("dry-run reports planned inserts without writing", async () => {
