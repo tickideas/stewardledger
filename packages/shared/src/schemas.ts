@@ -138,6 +138,109 @@ export const zoneEnableGroupsSchema = z
   .strict();
 export type ZoneEnableGroupsInput = z.infer<typeof zoneEnableGroupsSchema>;
 
+// ---------------------------------------------------------------------------
+// Zone retention policy (Phase 9)
+// ---------------------------------------------------------------------------
+//
+// `zones.retention_policy` is a jsonb column. The shape is owned here so
+// the API and the web layer share one source of truth. Each dimension is
+// `{ retainDays }` and `retainDays: 0` means "never purge" (used for
+// member soft-deletes until GDPR-erase ships).
+//
+// Caps: 0 disables, 36500 (100 years) is the ceiling — keeps the workers'
+// `now() - interval` math safe and the form's number-input bounded.
+
+const retainDaysSchema = z.coerce.number().int().min(0).max(36500);
+
+/** One dimension of the retention policy. Always `{ retainDays }`. */
+const retentionDimensionSchema = z
+  .object({ retainDays: retainDaysSchema })
+  .strict();
+
+/**
+ * Stored shape on `zones.retention_policy`. Every dimension is optional
+ * on the wire; the service-layer `loadRetentionPolicy` helper hydrates
+ * defaults from {@link DEFAULT_RETENTION_POLICY} for missing keys, so a
+ * brand-new zone's `{}` reads as the v1 defaults.
+ */
+export const zoneRetentionPolicySchema = z
+  .object({
+    audit_events: retentionDimensionSchema.optional(),
+    import_files: retentionDimensionSchema.optional(),
+    import_rows: retentionDimensionSchema.optional(),
+    report_jobs: retentionDimensionSchema.optional(),
+    member_soft_deletes: retentionDimensionSchema.optional(),
+  })
+  .strict();
+export type ZoneRetentionPolicyInput = z.infer<typeof zoneRetentionPolicySchema>;
+
+/**
+ * Canonical defaults. Used both at read time (hydrating partial blobs)
+ * and at UI time ("Restore defaults" button).
+ *
+ * - `audit_events`: 5 years — long enough to cover most charity / GDPR
+ *   investigation windows; configurable per zone if a tenant is bound
+ *   by a stricter local rule.
+ * - `import_files`: 1 year — raw bank statements bulk up object storage
+ *   faster than anything else; the parsed `import_rows` keep enough of
+ *   a paper trail for reconciliation.
+ * - `import_rows`: 90 days — enough to investigate a recent reconciliation
+ *   without keeping millions of parse-output rows forever.
+ * - `report_jobs`: 7 days — matches the existing artefact-cleanup window
+ *   shipped in Phase 7 PR 2.
+ * - `member_soft_deletes`: 0 (never purge) — the GDPR-erase workflow
+ *   takes over here. The default is conservative on purpose.
+ */
+export const DEFAULT_RETENTION_POLICY = {
+  audit_events: { retainDays: 1825 },
+  import_files: { retainDays: 365 },
+  import_rows: { retainDays: 90 },
+  report_jobs: { retainDays: 7 },
+  member_soft_deletes: { retainDays: 0 },
+} as const;
+
+/** Strongly-typed hydrated shape returned by `loadRetentionPolicy`. */
+export type ZoneRetentionPolicy = {
+  audit_events: { retainDays: number };
+  import_files: { retainDays: number };
+  import_rows: { retainDays: number };
+  report_jobs: { retainDays: number };
+  member_soft_deletes: { retainDays: number };
+};
+
+/** Keys of every retention dimension. Useful for iteration. */
+export const RETENTION_DIMENSIONS = [
+  "audit_events",
+  "import_files",
+  "import_rows",
+  "report_jobs",
+  "member_soft_deletes",
+] as const satisfies readonly (keyof ZoneRetentionPolicy)[];
+export type RetentionDimension = (typeof RETENTION_DIMENSIONS)[number];
+
+/**
+ * Hydrate a partial payload with defaults. Lives in `shared` because
+ * the UI also needs to render the effective values; the API wraps it
+ * in `loadRetentionPolicy(db, zoneId)`.
+ */
+export function hydrateRetentionPolicy(
+  partial: ZoneRetentionPolicyInput | null | undefined,
+): ZoneRetentionPolicy {
+  const next: ZoneRetentionPolicy = {
+    audit_events: { ...DEFAULT_RETENTION_POLICY.audit_events },
+    import_files: { ...DEFAULT_RETENTION_POLICY.import_files },
+    import_rows: { ...DEFAULT_RETENTION_POLICY.import_rows },
+    report_jobs: { ...DEFAULT_RETENTION_POLICY.report_jobs },
+    member_soft_deletes: { ...DEFAULT_RETENTION_POLICY.member_soft_deletes },
+  };
+  if (!partial) return next;
+  for (const dim of RETENTION_DIMENSIONS) {
+    const v = partial[dim];
+    if (v) next[dim] = { retainDays: v.retainDays };
+  }
+  return next;
+}
+
 /** Chapter creation. */
 export const chapterCreateSchema = z.object({
   name: z.string().min(2).max(120),
