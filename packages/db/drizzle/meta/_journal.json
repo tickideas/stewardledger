@@ -155,6 +155,13 @@
       "when": 1779727143811,
       "tag": "0021_wild_guardian",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1779731459207,
+      "tag": "0021_zone_exports_sha256",
+      "breakpoints": true
     }
   ]
 }

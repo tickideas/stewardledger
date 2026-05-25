@@ -61,6 +61,14 @@ export interface ZoneExportSummary {
   tableCount: number | null;
   fileCount: number | null;
   artefactCount: number | null;
+  /**
+   * sha256 hex of the gzipped bundle. The owner uses this to
+   * verify the downloaded artefact out-of-band; the manifest
+   * *inside* the bundle records per-table / per-blob shas but
+   * NOT the bundle-level sha (it would be self-referential).
+   * Null until the row is `completed`.
+   */
+  sha256: string | null;
   errorCode: string | null;
   errorMessage: string | null;
   expiresAt: string;
@@ -79,6 +87,7 @@ export function toSummary(r: ZoneExport): ZoneExportSummary {
     tableCount: r.tableCount,
     fileCount: r.fileCount,
     artefactCount: r.artefactCount,
+    sha256: r.sha256,
     errorCode: r.errorCode,
     errorMessage: r.errorMessage,
     expiresAt: r.expiresAt.toISOString(),
@@ -255,6 +264,7 @@ export interface ExportOutcome {
   tableCount?: number;
   fileCount?: number;
   artefactCount?: number;
+  sha256?: string;
   errorCode?: string;
   errorMessage?: string;
 }
@@ -285,6 +295,7 @@ export async function finalizeExport(
         tableCount: outcome.tableCount ?? null,
         fileCount: outcome.fileCount ?? null,
         artefactCount: outcome.artefactCount ?? null,
+        sha256: outcome.sha256 ?? null,
         errorCode: outcome.errorCode ?? null,
         errorMessage: outcome.errorMessage ?? null,
         completedAt,
@@ -308,6 +319,7 @@ export async function finalizeExport(
         tableCount: outcome.tableCount ?? null,
         fileCount: outcome.fileCount ?? null,
         artefactCount: outcome.artefactCount ?? null,
+        sha256: outcome.sha256 ?? null,
         errorCode: outcome.errorCode ?? null,
       },
     });

@@ -22,7 +22,7 @@ import {
 import { db } from "../db";
 import { log } from "../logger";
 import { hasAnyRole } from "../middleware/auth";
-import { storage } from "../services/storage";
+import { storage, StorageNotFoundError } from "../services/storage";
 import {
   ExportJobError,
   getExportForZone,
@@ -158,28 +158,40 @@ tenantExportsRouter.get("/zones/exports/:exportId/download", async (c) => {
   try {
     bytes = await storage().get(row.storageKey);
   } catch (err) {
-    // Blob is gone even though the row says `completed`. Most
-    // likely an out-of-band cleanup ran ahead of the row's expiry.
-    // Surface as 410 rather than 500 so the UI can render
-    // "expired".
-    log.warn(
+    if (err instanceof StorageNotFoundError) {
+      // Blob is gone even though the row says `completed`. Most
+      // likely an out-of-band cleanup ran ahead of the row's
+      // expiry. Surface as 410 so the UI can render "expired".
+      log.warn(
+        {
+          exportId: row.id,
+          storageKey: row.storageKey,
+          zoneId: ctx.zoneId,
+        },
+        "zone export download: artefact missing from storage",
+      );
+      return c.json(
+        {
+          error: {
+            code: "artefact_missing",
+            message: "Bundle is no longer available",
+          },
+        },
+        410,
+      );
+    }
+    // Transient outage — don't mask as 410. Let the error bubble
+    // so Hono's default handler emits 500 + we get a real alert.
+    log.error(
       {
         err,
         exportId: row.id,
         storageKey: row.storageKey,
         zoneId: ctx.zoneId,
       },
-      "zone export download: artefact missing from storage",
+      "zone export download: storage read failed",
     );
-    return c.json(
-      {
-        error: {
-          code: "artefact_missing",
-          message: "Bundle is no longer available",
-        },
-      },
-      410,
-    );
+    throw err;
   }
   // Defensive: `zones.id` and `zone_exports.id` are `text` columns,
   // not `uuid`. Today they're defaulted to `crypto.randomUUID()`,

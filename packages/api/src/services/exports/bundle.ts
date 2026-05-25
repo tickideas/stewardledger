@@ -53,7 +53,7 @@ import {
 import type { Database } from "@stewardledger/db";
 import * as tar from "tar-stream";
 import { log } from "../../logger";
-import { storage } from "../storage";
+import { storage, StorageNotFoundError } from "../storage";
 import {
   exportOrder,
   ZONE_SCOPED_TABLES,
@@ -121,7 +121,12 @@ export interface BundleResult {
   fileCount: number;
   /** Count of retained report artefacts copied into `reports/`. */
   artefactCount: number;
-  /** sha256 of the gzipped tar. Persisted in the manifest + audit. */
+  /**
+   * sha256 hex digest of the gzipped tar. Persisted on the
+   * `zone_exports` row (`sha256` column) + the `zone.export.
+   * completed` audit `after` payload. NOT in the manifest — the
+   * bundle-level digest would be self-referential.
+   */
   sha256: string;
 }
 
@@ -551,20 +556,31 @@ interface CopyArgs {
 
 /**
  * Copy a blob from object storage into the tar. Returns null when
- * the source blob is missing (e.g. the retention sweep purged it);
- * the JSONL still records the metadata so a partial restore is
- * possible. Other errors propagate so the export fails loudly.
+ * the source blob is genuinely missing (e.g. the retention sweep
+ * already tombstoned it) so the JSONL still records the metadata
+ * for a partial restore.
+ *
+ * Transient failures (I/O, permission, network) propagate so the
+ * export fails loudly with `build_failed` rather than silently
+ * producing an incomplete bundle. The distinction lives in
+ * `StorageNotFoundError`, which both backends raise only for
+ * "object does not exist".
  */
 async function copyBlobIntoTar(args: CopyArgs): Promise<FileManifestEntry | null> {
   let body: Uint8Array;
   try {
     body = await storage().get(args.sourceKey);
   } catch (err) {
-    log.warn(
-      { err, label: args.label, sourceKey: args.sourceKey },
-      "zone export: blob missing; manifest will reference the metadata only",
-    );
-    return null;
+    if (err instanceof StorageNotFoundError) {
+      log.warn(
+        { label: args.label, sourceKey: args.sourceKey },
+        "zone export: blob missing; manifest will reference the metadata only",
+      );
+      return null;
+    }
+    // Anything else (EACCES, EIO, S3 5xx) is a real outage — the
+    // bundle would silently lose data if we swallowed it.
+    throw err;
   }
   const buf = Buffer.from(body);
   await addBufferToTar(args.pack, args.tarPath, buf);
@@ -605,7 +621,7 @@ function readme(manifest: BundleManifest): string {
     `- ${manifest.tables.length} JSONL tables under \`data/\``,
     `- ${manifest.files.length} uploaded import files under \`files/imports/\``,
     `- ${manifest.reports.length} retained report artefacts under \`reports/\``,
-    `- This README + a \`manifest.json\` with every row count and sha256`,
+    `- This README + a \`manifest.json\` with the per-table + per-blob sha256 digests`,
     "",
     "## Restoring",
     "",
@@ -634,11 +650,23 @@ function readme(manifest: BundleManifest): string {
     "",
     "## Verifying integrity",
     "",
-    "Every JSONL file, every blob, and the gzipped bundle itself have",
-    "a sha256 recorded in `manifest.json`. After download:",
+    "`manifest.json` records a sha256 for every JSONL file under",
+    "`data/`, every blob under `files/`, and every report artefact",
+    "under `reports/`. The **bundle-level** sha256 is NOT in the",
+    "manifest (it would be self-referential); look it up on the",
+    "`zone_exports` row your export request created (the",
+    "`/zone/settings` panel shows it next to the completed bundle).",
+    "",
+    "Verify per-entry integrity after download:",
     "",
     "```sh",
     "sha256sum -c <(jq -r '.tables[] | \"\\(.sha256)  data/\\(.name).jsonl\"' manifest.json)",
+    "```",
+    "",
+    "Verify the bundle digest matches the row:",
+    "",
+    "```sh",
+    "sha256sum zone-export-*.tar.gz   # compare to zone_exports.sha256",
     "```",
     "",
   ].join("\n");

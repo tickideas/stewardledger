@@ -65,6 +65,15 @@ export const zoneExports = pgTable(
      * server-side without precision loss.
      */
     byteCount: bigint("byte_count", { mode: "number" }),
+    /**
+     * sha256 hex digest of the gzipped bundle. The owner can copy
+     * this from the `/zone/settings` panel and verify the
+     * downloaded artefact out-of-band. The manifest *inside* the
+     * bundle records per-table + per-blob shas but not the
+     * bundle-level sha (it would be self-referential); this column
+     * is the source of truth for the bundle digest.
+     */
+    sha256: text("sha256"),
     /** Count of JSONL tables included in the bundle. */
     tableCount: integer("table_count"),
     /** Count of uploaded import files copied into `files/`. */

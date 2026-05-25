@@ -316,6 +316,24 @@ describe("tenant exports router", () => {
     expect(body.error.code).toBe("expired");
   });
 
+  it("GET /zones/exports/:id/download returns 404 for a malformed id (no 500)", async () => {
+    // `zone_exports.id` is a `text` column, so a non-UUID lookup
+    // is a legal query that returns 0 rows. Pinning this so a
+    // future migration to `uuid` is forced to retain the 404
+    // (rather than letting Postgres raise a DB error / 500).
+    const zone = await seedZone(`exp-malf-${unique()}`);
+    cleanupSlugs.push(zone.slug);
+    const owner = await seedUser(`exp-malf+${unique()}@example.com`);
+    cleanupUserIds.push(owner);
+    await bindUser(owner, zone.id, zone.ownerRoleId);
+    asUser(owner, `exp-malf+${unique()}@example.com`);
+    const res = await call(
+      zone.slug,
+      "/api/tenant/zones/exports/not-a-uuid-at-all/download",
+    );
+    expect(res.status).toBe(404);
+  });
+
   it("GET /zones/exports/:id/download returns 404 for a cross-zone id", async () => {
     const owner = await seedUser(`exp-x-${unique()}@example.com`);
     cleanupUserIds.push(owner);

@@ -21,6 +21,19 @@ export interface ObjectStorage {
   delete(key: string): Promise<void>;
 }
 
+/**
+ * Thrown by `get(key)` when the requested object does not exist.
+ * Distinct from transient I/O / permission failures so callers can
+ * decide whether "missing" is a recoverable state (e.g. retention
+ * already purged) or whether to fail loudly.
+ */
+export class StorageNotFoundError extends Error {
+  constructor(readonly key: string) {
+    super(`storage object not found: ${key}`);
+    this.name = "StorageNotFoundError";
+  }
+}
+
 class FsStorage implements ObjectStorage {
   constructor(private readonly root: string) {}
 
@@ -46,7 +59,23 @@ class FsStorage implements ObjectStorage {
 
   async get(key: string): Promise<Uint8Array> {
     const src = this.resolveKey(key);
-    return await readFile(src);
+    try {
+      return await readFile(src);
+    } catch (err) {
+      // ENOENT is the canonical "object missing" signal on the FS
+      // backend. Everything else (EACCES, EIO, etc.) propagates so
+      // the caller can distinguish a normal-purged object from a
+      // storage outage.
+      if (
+        err &&
+        typeof err === "object" &&
+        "code" in err &&
+        (err as { code: string }).code === "ENOENT"
+      ) {
+        throw new StorageNotFoundError(key);
+      }
+      throw err;
+    }
   }
 
   async delete(key: string): Promise<void> {
@@ -83,7 +112,7 @@ export class InMemoryStorage implements ObjectStorage {
   }
   async get(key: string): Promise<Uint8Array> {
     const v = this.store.get(key);
-    if (!v) throw new Error(`missing ${key}`);
+    if (!v) throw new StorageNotFoundError(key);
     return v;
   }
   async delete(key: string): Promise<void> {

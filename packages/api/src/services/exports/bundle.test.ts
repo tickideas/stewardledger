@@ -343,6 +343,40 @@ describe("zone export bundle — buildZoneExportBundle", () => {
     expect(blob.equals(otherSeed.importBlobBody)).toBe(false);
   });
 
+  it("propagates transient storage errors (not silently treated as missing)", async () => {
+    const slug = `bundle-outage-${unique()}`;
+    const seed = await seedZone(slug, storage);
+    slugs.push(slug);
+    userIds.push(seed.userId);
+
+    // Swap in a backend whose `get` throws a NON-NotFound error
+    // for the import-file key. Build must FAIL loudly instead of
+    // silently producing a bundle with the file omitted.
+    const flaky: typeof storage = {
+      put: storage.put.bind(storage),
+      get: async (key: string) => {
+        if (key === seed.importBlobKey) {
+          throw new Error("EIO: simulated transient outage");
+        }
+        return storage.get(key);
+      },
+      delete: storage.delete.bind(storage),
+    } as unknown as typeof storage;
+    setStorageForTesting(flaky);
+    try {
+      const exportId = crypto.randomUUID();
+      await expect(
+        buildZoneExportBundle(db, {
+          zoneId: seed.zoneId,
+          exportId,
+          storageKey: bundleStorageKey(seed.zoneId, exportId),
+        }),
+      ).rejects.toThrow(/EIO/);
+    } finally {
+      setStorageForTesting(storage);
+    }
+  });
+
   it("survives a missing import blob without failing the export", async () => {
     const slug = `bundle-missing-${unique()}`;
     const seed = await seedZone(slug, storage);

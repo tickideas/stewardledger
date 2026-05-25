@@ -141,6 +141,7 @@ async function handleGenerate(exportId: string): Promise<void> {
         tableCount: result.tableCount,
         fileCount: result.fileCount,
         artefactCount: result.artefactCount,
+        sha256: result.sha256,
       };
     } catch (err) {
       outcome = {
