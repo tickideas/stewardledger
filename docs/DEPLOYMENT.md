@@ -190,6 +190,17 @@ The production Compose stack uses these persistent volumes:
 
 Do not delete these volumes during redeploys unless you intentionally want to remove the environment's data.
 
+### Zone export bundle sizing
+
+The Phase 9 §3 owner-only zone export writes a `.tar.gz` for the entire zone (every JSONL table + every uploaded import file + every retained report artefact) into `app_storage` under `{zoneId}/exports/{yyyy}/{mm}/{exportId}.tar.gz`. The download endpoint streams the bundle by reading the artefact fully into the API process before responding.
+
+Operational implications:
+
+- **Disk**: a busy zone can produce a multi-GB bundle; keep `app_storage` provisioned for 7 days × per-zone bundle size × active-zones (the daily cleanup sweep at `0 5 * * *` UTC purges bundles past their 7-day expiry).
+- **Memory**: the API process briefly buffers the gzipped artefact during download. Keep the API container's memory limit at least 2× the largest expected bundle. A streaming-multipart upload/download path is on the Phase 11 roadmap; until then the in-memory ceiling is the hard limit.
+- **Per-table guard**: the bundle generator refuses any table over 5,000,000 rows with `error_code = table_too_large`. Hitting this almost always means the zone has unbounded `audit_events` or runaway imports; tighten the zone's retention policy via `/zone/settings` and retry.
+- **Cooldown**: one bundle per zone per 24 h is enforced server-side. The 429 response includes `existingExportId` so the UI can deep-link.
+
 ## Backups and rollback
 
 Back up `pgdata` before deploying schema changes and on a regular production schedule. At minimum, use `pg_dump` against the `stewardledger-postgres` service and store the dump outside the Dokploy host.

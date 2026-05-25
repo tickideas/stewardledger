@@ -221,6 +221,22 @@ describe("tenant exports router", () => {
     expect(body.error.details.existingExportId).toBeDefined();
   });
 
+  it("GET /zones/exports rejects a non-integer limit with 400", async () => {
+    const zone = await seedZone(`exp-lim-${unique()}`);
+    cleanupSlugs.push(zone.slug);
+    const owner = await seedUser(`exp-lim+${unique()}@example.com`);
+    cleanupUserIds.push(owner);
+    await bindUser(owner, zone.id, zone.ownerRoleId);
+    asUser(owner, `exp-lim+${unique()}@example.com`);
+    const res = await call(
+      zone.slug,
+      "/api/tenant/zones/exports?limit=banana",
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("invalid_query");
+  });
+
   it("GET /zones/exports lists the caller's recent bundles", async () => {
     const zone = await seedZone(`exp-list-${unique()}`);
     cleanupSlugs.push(zone.slug);

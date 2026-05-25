@@ -18,7 +18,6 @@
 // RELEVANT FILES: ../email.ts, ./jobs.ts
 
 import { and, eq, isNull } from "drizzle-orm";
-import { BRAND_WORDMARK } from "@stewardledger/shared";
 import {
   user as userTable,
   zoneExports,
@@ -100,31 +99,36 @@ export async function sendZoneExportEmail(
     .limit(1);
   if (!recipient) return { sent: false, reason: "user-missing" };
 
-  let zoneSlug = job.zoneId;
-  let zoneName: string | undefined;
+  // Zone lookup is mandatory: without a real slug the deep link
+  // would be a UUID subdomain that 404s. Skip the email entirely
+  // in that case — the row stays NULL on `email_sent_at` so a
+  // manual replay (once the operator fixes whatever caused the
+  // zone row to vanish) can re-send.
+  let zoneRow: { slug: string; name: string } | undefined;
   try {
-    const [zoneRow] = await database
+    [zoneRow] = await database
       .select({ slug: zones.slug, name: zones.name })
       .from(zones)
       .where(eq(zones.id, job.zoneId))
       .limit(1);
-    if (zoneRow) {
-      zoneSlug = zoneRow.slug;
-      zoneName = zoneRow.name;
-    }
   } catch (err) {
     log.warn(
       { err, exportId: job.id },
-      "zone export email: zone lookup failed; using zone id as slug",
+      "zone export email: zone lookup failed",
     );
   }
+  if (!zoneRow) {
+    return { sent: false, reason: "zone-missing" };
+  }
+  const zoneSlug = zoneRow.slug;
+  const zoneName = zoneRow.name;
 
   const link = exportSettingsUrl(zoneSlug);
   const greeting = recipient.name ? `Hi ${recipient.name},` : "Hi,";
   const greetingHtml = recipient.name
     ? `<p>Hi ${escapeHtml(recipient.name)},</p>`
     : "<p>Hi,</p>";
-  const zoneLabel = zoneName ?? zoneSlug;
+  const zoneLabel = zoneName;
 
   let subject: string;
   let text: string;
@@ -137,7 +141,7 @@ export async function sendZoneExportEmail(
       `Open it from your zone settings:\n${link}\n\n` +
       `If you didn't request this, please contact your zone administrator.`;
     html = brandedEmailHtml({
-      zoneName: zoneName ?? BRAND_WORDMARK,
+      zoneName,
       body: `
         ${greetingHtml}
         <p>Your full data export for <strong>${escapeHtml(zoneLabel)}</strong> is ready. It will remain available for 7 days.</p>
@@ -162,7 +166,7 @@ export async function sendZoneExportEmail(
       `Reason: ${reason}\n\n` +
       `You can retry from your zone settings:\n${link}`;
     html = brandedEmailHtml({
-      zoneName: zoneName ?? BRAND_WORDMARK,
+      zoneName,
       body: `
         ${greetingHtml}
         <p>Your data export for <strong>${escapeHtml(zoneLabel)}</strong> couldn't be generated.</p>

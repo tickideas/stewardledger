@@ -22,7 +22,7 @@
 //
 // RELEVANT FILES: packages/db/src/schema/zone-exports.ts, ./bundle.ts, ./jobs-pgboss.ts
 
-import { and, desc, eq, gte } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 import {
   zoneExports,
   type ZoneExport,
@@ -104,6 +104,13 @@ interface QueueInput {
  * row does not count, so the owner can immediately retry after a
  * crash.
  *
+ * Concurrency: the check + insert run inside a single transaction
+ * guarded by `pg_advisory_xact_lock(hashtext('zone_export:' ||
+ * zoneId))`. The advisory lock serialises concurrent POSTs from
+ * the same owner so a network double-tap can't bypass the 24h
+ * cooldown. The lock auto-releases at transaction end (commit OR
+ * rollback) so there's nothing to clean up.
+ *
  * Audited as `zone.export.request`. The pg-boss publish is the
  * caller's responsibility (see `queueExportJob` in jobs-pgboss.ts).
  */
@@ -111,38 +118,49 @@ export async function queueExport(
   database: Database,
   input: QueueInput,
 ): Promise<ZoneExportSummary> {
-  const since = new Date(Date.now() - REQUEST_COOLDOWN_MS);
-  const [recent] = await database
-    .select({
-      id: zoneExports.id,
-      status: zoneExports.status,
-      createdAt: zoneExports.createdAt,
-    })
-    .from(zoneExports)
-    .where(
-      and(
-        eq(zoneExports.zoneId, input.zoneId),
-        gte(zoneExports.createdAt, since),
-      ),
-    )
-    .orderBy(desc(zoneExports.createdAt))
-    .limit(1);
-  // `failed` rows don't lock out a retry: a worker crash should
-  // never strand the owner for 24h. Every other status is treated
-  // as "an export exists in the window".
-  if (recent && recent.status !== "failed") {
-    const cooldownUntil = new Date(
-      recent.createdAt.getTime() + REQUEST_COOLDOWN_MS,
-    );
-    throw new ExportJobError(
-      "rate_limited",
-      "An export was requested in the last 24 hours; only one bundle per zone per day.",
-      { cooldownUntil: cooldownUntil.toISOString(), existingExportId: recent.id },
-    );
-  }
-
-  const expiresAt = new Date(Date.now() + DEFAULT_EXPIRY_MS);
   return await database.transaction(async (tx) => {
+    // Per-zone advisory lock. `hashtext` collapses the variable-
+    // length zone id into a stable bigint; the
+    // `zone_export:` prefix keeps the keyspace from colliding
+    // with future advisory-lock users.
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext('zone_export:' || ${input.zoneId}))`,
+    );
+
+    const since = new Date(Date.now() - REQUEST_COOLDOWN_MS);
+    const [recent] = await tx
+      .select({
+        id: zoneExports.id,
+        status: zoneExports.status,
+        createdAt: zoneExports.createdAt,
+      })
+      .from(zoneExports)
+      .where(
+        and(
+          eq(zoneExports.zoneId, input.zoneId),
+          gte(zoneExports.createdAt, since),
+        ),
+      )
+      .orderBy(desc(zoneExports.createdAt))
+      .limit(1);
+    // `failed` rows don't lock out a retry: a worker crash should
+    // never strand the owner for 24h. Every other status is
+    // treated as "an export exists in the window".
+    if (recent && recent.status !== "failed") {
+      const cooldownUntil = new Date(
+        recent.createdAt.getTime() + REQUEST_COOLDOWN_MS,
+      );
+      throw new ExportJobError(
+        "rate_limited",
+        "An export was requested in the last 24 hours; only one bundle per zone per day.",
+        {
+          cooldownUntil: cooldownUntil.toISOString(),
+          existingExportId: recent.id,
+        },
+      );
+    }
+
+    const expiresAt = new Date(Date.now() + DEFAULT_EXPIRY_MS);
     const [row] = await tx
       .insert(zoneExports)
       .values({

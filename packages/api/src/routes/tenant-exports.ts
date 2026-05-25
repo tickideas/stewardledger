@@ -79,12 +79,42 @@ tenantExportsRouter.post("/zones/exports", async (c) => {
 tenantExportsRouter.get("/zones/exports", async (c) => {
   const ctx = c.get("auth") as AuthorizedContext;
   if (!hasAnyRole(ctx, ZONE_ROLES.ZONE_OWNER)) return forbidden(c);
-  const limitParam = c.req.query("limit");
-  const limit = limitParam ? Number(limitParam) : undefined;
-  const exports = await listExports(db, ctx.zoneId, { limit });
+  // `?limit=banana` would silently become `NaN` and propagate to
+  // Drizzle as an undefined .limit() argument. Validate up-front.
+  const limit = parseLimit(c.req.query("limit"));
+  if (limit === "invalid") {
+    return c.json(
+      {
+        error: {
+          code: "invalid_query",
+          message: "limit must be a positive integer between 1 and 100",
+        },
+      },
+      400,
+    );
+  }
+  const exports = await listExports(db, ctx.zoneId, {
+    limit: limit ?? undefined,
+  });
   c.header("cache-control", NO_STORE);
   return c.json({ exports });
 });
+
+/**
+ * Parse the `?limit` query param.
+ *
+ *   - missing                  → undefined (service uses its default)
+ *   - integer in [1, 100]      → the integer
+ *   - anything else            → the literal string "invalid"
+ *     (sentinel so the route can 400 without conflating with the
+ *     legitimate undefined case)
+ */
+function parseLimit(raw: string | undefined): number | undefined | "invalid" {
+  if (raw === undefined || raw === "") return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1 || n > 100) return "invalid";
+  return n;
+}
 
 /**
  * Stream the gzipped bundle. 404 when the row doesn't belong to
@@ -151,8 +181,12 @@ tenantExportsRouter.get("/zones/exports/:exportId/download", async (c) => {
       410,
     );
   }
-  const shortId = row.id.slice(0, 8);
-  const filename = `zone-export-${ctx.zoneId.slice(0, 8)}-${shortId}.tar.gz`;
+  // Defensive: `zones.id` and `zone_exports.id` are `text` columns,
+  // not `uuid`. Today they're defaulted to `crypto.randomUUID()`,
+  // but a SQL-edited zone id with a `"` could otherwise inject a
+  // header value. Filter to the UUID alphabet at the rendering site
+  // so the header stays well-formed regardless of upstream drift.
+  const filename = safeBundleFilename(ctx.zoneId, row.id);
   return new Response(bytes, {
     status: 200,
     headers: {
@@ -162,6 +196,13 @@ tenantExportsRouter.get("/zones/exports/:exportId/download", async (c) => {
     },
   });
 });
+
+function safeBundleFilename(zoneId: string, exportId: string): string {
+  const safeZone = zoneId.replace(/[^a-f0-9-]/gi, "").slice(0, 8) || "zone";
+  const safeExport =
+    exportId.replace(/[^a-f0-9-]/gi, "").slice(0, 8) || "export";
+  return `zone-export-${safeZone}-${safeExport}.tar.gz`;
+}
 
 // Re-export `toSummary` so the test layer can build expectation
 // objects from a directly-inserted row without round-tripping

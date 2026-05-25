@@ -251,6 +251,10 @@ describe("zone export bundle — buildZoneExportBundle", () => {
     expect(manifest.zoneId).toBe(seed.zoneId);
     expect(manifest.exportId).toBe(exportId);
     expect(manifest.tables.length).toBe(result.tableCount);
+    // formatVersion pins the bundle shape. The restore-helper (PR 3)
+    // refuses to load unrecognised versions; bumping this constant
+    // requires a coordinated upgrade.
+    expect(manifest.formatVersion).toBe(1);
     expect(untarred.files.has(`${root}/README.md`)).toBe(true);
 
     // The zone row itself is the first restore entry (selector="self").

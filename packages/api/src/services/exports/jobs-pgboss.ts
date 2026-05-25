@@ -105,6 +105,24 @@ export async function startZoneExportQueue(): Promise<void> {
  * Run one claimed export to completion. Catches every error so the
  * worker loop never crashes; failures land on the row as
  * `errorCode` + `errorMessage`.
+ *
+ * **Non-retryable contract**: when `buildZoneExportBundle` throws,
+ * we convert the error into a `failed` row + return normally. We
+ * deliberately do NOT rethrow because:
+ *
+ *   1. pg-boss's retry would re-enter the handler against an
+ *      already-`failed` row, where `claimExportById` no-ops and
+ *      the idempotent email-send re-runs — wasted work without
+ *      a path to recovery.
+ *   2. Bundle failures (table_too_large, zone deleted mid-export,
+ *      storage outage) are deterministically reproducible against
+ *      the same row; retrying will hit the same wall.
+ *   3. The owner sees the failure two ways: the failed email goes
+ *      out via the email-send call below, and the row appears in
+ *      `GET /zone/exports` with status=failed + errorMessage.
+ *
+ * Manual replay is the recovery path: an operator can delete the
+ * `failed` row and the owner can POST a new export request.
  */
 async function handleGenerate(exportId: string): Promise<void> {
   const claimed = await claimExportById(db, exportId);

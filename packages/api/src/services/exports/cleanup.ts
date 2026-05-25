@@ -56,6 +56,16 @@ export async function cleanupExpiredZoneExports(
     return { scanned: 0, deletedArtefacts: 0, expiredRows: 0 };
   }
 
+  // Ordering: delete the blob FIRST, flip the row second.
+  // Why this order:
+  //   - A crash between the two leaves a `completed` row whose
+  //     blob is gone. The next sweep re-scans the row, attempts
+  //     a delete (idempotent for FS via `force: true` and for
+  //     S3 `DeleteObject` against a missing key), then flips.
+  //     Eventually consistent.
+  //   - The reverse order (flip first, delete second) would let
+  //     a crash strand a blob in storage with no DB row pointing
+  //     at it — unrecoverable without a manual storage audit.
   let deletedArtefacts = 0;
   for (const row of candidates) {
     if (!row.storageKey) continue;
