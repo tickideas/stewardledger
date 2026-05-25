@@ -46,7 +46,7 @@ export const reportJobs = pgTable(
     reportId: text("report_id").notNull(),
     /** Validated Zod output for the spec's filter schema. */
     filters: jsonb("filters").notNull().default({}),
-    /** `xlsx` or `pdf` \u2014 chosen at queue time. */
+    /** `xlsx` or `pdf` — chosen at queue time. */
     format: text("format").notNull(),
     /** `queued` | `running` | `completed` | `failed`. */
     status: text("status").notNull().default("queued"),
