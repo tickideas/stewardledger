@@ -36,17 +36,38 @@
 //
 // RELEVANT FILES: ./registry.ts, ./bundle.ts, ../../scripts/restore-export.ts
 
-import { createReadStream, existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  createReadStream,
+  createWriteStream,
+  existsSync,
+} from "node:fs";
+import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join as pathJoin } from "node:path";
+import {
+  dirname,
+  join as pathJoin,
+  resolve as pathResolve,
+  sep,
+} from "node:path";
+import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
-import { eq, getTableColumns } from "drizzle-orm";
+import { eq, getTableColumns, inArray } from "drizzle-orm";
+import type { PgTable } from "drizzle-orm/pg-core";
 import * as tar from "tar-stream";
 
 import * as schema from "@stewardledger/db/schema";
 import type { Database } from "@stewardledger/db";
 import { restoreOrder, type ZoneScopedTable } from "./registry";
+
+/**
+ * Restore rows in batches of this size. A drizzle multi-row insert
+ * is dramatically cheaper than N single-row inserts (one round-trip
+ * per batch vs. one per row) and keeps each table's restore as a
+ * single transaction so a mid-table failure rolls back cleanly.
+ * 500 keeps the parameter count comfortably under PG's 65k limit
+ * even for the widest tables (`contributions` has ~30 columns).
+ */
+const BATCH_SIZE = 500;
 
 /**
  * Bundle format version supported by this restore-helper. Bumping
@@ -123,7 +144,7 @@ export class RestoreError extends Error {
     readonly code:
       | "missing_manifest"
       | "format_mismatch"
-      | "unknown_table"
+      | "target_not_empty"
       | "io_error",
     message: string,
   ) {
@@ -167,6 +188,25 @@ export async function restoreZoneExportBundle(
       `manifest OK: source zone ${manifest.zoneSlug} (${manifest.zoneId}) → target ${targetSlug} (${targetZoneId})`,
     );
 
+    // Empty-target precondition. `tasks/zone-export-bundle.md` is
+    // explicit: the restore helper requires an empty target.
+    // Detecting the collision up front gives the operator a clean
+    // error instead of a partial restore + 23505 mid-table. The
+    // check is skipped in dry-run because dry-run doesn't insert.
+    if (!opts.dryRun) {
+      const [existing] = await opts.database
+        .select({ id: schema.zones.id })
+        .from(schema.zones)
+        .where(eq(schema.zones.id, targetZoneId))
+        .limit(1);
+      if (existing) {
+        throw new RestoreError(
+          "target_not_empty",
+          `zone ${targetZoneId} already exists in the target database; restore requires an empty target (pass a fresh --target-zone-id or drop the existing zone first)`,
+        );
+      }
+    }
+
     if (opts.dryRun) {
       log("dry-run: skipping inserts");
       return {
@@ -200,6 +240,7 @@ export async function restoreZoneExportBundle(
         targetZoneId,
         targetSlug,
         userIdMap,
+        log,
       });
       tablesRestored.push({ name: entry.name, inserted, skipped });
       log(
@@ -246,53 +287,121 @@ export async function restoreZoneExportBundle(
  * Extract a gzipped tar bundle into `workDir`. Returns the root
  * directory name (`zone-export-{slug}-{exportId}`) so the caller
  * can build paths into it.
+ *
+ * Two security + memory invariants:
+ *
+ *   1. Every entry's destination is resolved against `workDir` and
+ *      rejected if it escapes — a malicious bundle with
+ *      `header.name = "../../etc/cron.d/payload"` or an absolute
+ *      path cannot write outside the temp directory.
+ *   2. Each entry is piped directly to disk via
+ *      `pipeline(stream, createWriteStream(dest))` so the JS heap
+ *      never holds more than one stream buffer. A bundle whose
+ *      largest entry is multi-GB (audit_events.jsonl can approach
+ *      the 5M-row per-table cap) restores without OOM.
+ *
+ * Errors on either the gunzip or the per-entry pipeline reject the
+ * outer promise so callers see a single rejected await rather than
+ * an `uncaughtException`.
  */
 async function extractBundle(
   bundlePath: string,
   workDir: string,
 ): Promise<string> {
+  // Pre-compute the canonical root + the `<root>/` boundary so
+  // every entry can be checked with one cheap `startsWith` call.
+  const safeRoot = pathResolve(workDir);
+  const rootBoundary = safeRoot.endsWith(sep) ? safeRoot : safeRoot + sep;
+
   const extract = tar.extract();
   const roots = new Set<string>();
-  const pendingWrites: Promise<void>[] = [];
-  extract.on("entry", (header, stream, next) => {
-    const chunks: Buffer[] = [];
-    stream.on("data", (c: Buffer) => chunks.push(c));
-    stream.on("end", () => {
-      const buf = Buffer.concat(chunks);
-      const dest = pathJoin(workDir, header.name);
+
+  return await new Promise<string>((resolve, reject) => {
+    let pendingEntries = 0;
+    let inputFinished = false;
+    let settled = false;
+    const settle = (err: Error | null, value?: string) => {
+      if (settled) return;
+      settled = true;
+      if (err) reject(err);
+      else resolve(value as string);
+    };
+    const finalize = () => {
+      if (settled || !inputFinished || pendingEntries > 0) return;
+      if (roots.size !== 1) {
+        settle(
+          new RestoreError(
+            "io_error",
+            `expected exactly one root directory in the bundle; found ${roots.size}: ${[...roots].join(", ")}`,
+          ),
+        );
+        return;
+      }
+      settle(null, [...roots][0]);
+    };
+
+    extract.on("entry", (header, stream, next) => {
+      // Path-traversal guard: resolve the requested destination,
+      // reject anything that escapes the temp work directory or
+      // uses absolute paths.
+      const dest = pathResolve(workDir, header.name);
+      if (dest !== safeRoot && !dest.startsWith(rootBoundary)) {
+        stream.resume();
+        next();
+        settle(
+          new RestoreError(
+            "io_error",
+            `bundle entry "${header.name}" resolves outside the extraction directory; refusing to write`,
+          ),
+        );
+        return;
+      }
+
       const firstSlash = header.name.indexOf("/");
-      if (firstSlash > 0) roots.add(header.name.slice(0, firstSlash));
-      else roots.add(header.name);
-      pendingWrites.push(
-        (async () => {
-          await mkdir(dirname(dest), { recursive: true });
-          await writeFile(dest, buf);
-        })(),
+      roots.add(
+        firstSlash > 0 ? header.name.slice(0, firstSlash) : header.name,
       );
-      next();
+
+      // Directory entries carry no data; ensure the dir exists and
+      // move on without a pipeline.
+      if (header.type === "directory") {
+        stream.resume();
+        mkdir(dest, { recursive: true })
+          .then(() => next())
+          .catch((err: Error) => {
+            next();
+            settle(err);
+          });
+        return;
+      }
+
+      pendingEntries++;
+      mkdir(dirname(dest), { recursive: true })
+        .then(() => pipeline(stream, createWriteStream(dest)))
+        .then(() => {
+          pendingEntries--;
+          next();
+          finalize();
+        })
+        .catch((err: Error) => {
+          pendingEntries--;
+          stream.resume();
+          next();
+          settle(err);
+        });
     });
-    stream.on("error", (err) => {
-      throw err;
+    extract.on("finish", () => {
+      inputFinished = true;
+      finalize();
     });
-    stream.resume();
+    extract.on("error", (err) => settle(err));
+
+    const src = createReadStream(bundlePath);
+    src.on("error", (err) => settle(err));
+    const gunzip = createGunzip();
+    gunzip.on("error", (err) => settle(err));
+    src.pipe(gunzip).pipe(extract);
   });
-  await new Promise<void>((res, rej) => {
-    createReadStream(bundlePath)
-      .on("error", rej)
-      .pipe(createGunzip())
-      .on("error", rej)
-      .pipe(extract)
-      .on("finish", () => res())
-      .on("error", rej);
-  });
-  await Promise.all(pendingWrites);
-  if (roots.size !== 1) {
-    throw new RestoreError(
-      "io_error",
-      `expected exactly one root directory in the bundle; found ${roots.size}: ${[...roots].join(", ")}`,
-    );
-  }
-  return [...roots][0];
 }
 
 // ─── per-table restore ───────────────────────────────────────────────
@@ -308,7 +417,10 @@ interface RestoreTableArgs {
 }
 
 /**
- * Stream a JSONL table into the database, one row at a time.
+ * Stream a JSONL table into the database in `BATCH_SIZE`-row
+ * batches inside a single transaction. A mid-table failure rolls
+ * the whole table back rather than leaving a half-populated
+ * target.
  *
  * Per-row translation:
  *   - `zoneId`         → `targetZoneId`
@@ -323,11 +435,11 @@ interface RestoreTableArgs {
  * generator wrote `stringifyJsonlRow(row)` directly on the Drizzle
  * row object.
  */
-async function restoreTable(args: RestoreTableArgs): Promise<{
+async function restoreTable(args: RestoreTableArgs & { log: (m: string) => void }): Promise<{
   inserted: number;
   skipped: number;
 }> {
-  const { entry, dataPath, database } = args;
+  const { entry, dataPath, database, log } = args;
   const cols = getTableColumns(entry.table);
 
   // Pre-walk the column metadata so each row pays the cheapest
@@ -363,107 +475,132 @@ async function restoreTable(args: RestoreTableArgs): Promise<{
     }
   }
 
-  let inserted = 0;
-  let skipped = 0;
-  let buffer = "";
+  return await database.transaction(async (tx) => {
+    let inserted = 0;
+    let skipped = 0;
+    let buffer = "";
+    let batch: Array<Record<string, unknown>> = [];
 
-  const flushLine = async (line: string): Promise<void> => {
-    if (!line.trim()) return;
-    const row = JSON.parse(line) as Record<string, unknown>;
+    const flushBatch = async (): Promise<void> => {
+      if (batch.length === 0) return;
+      await insertRows(tx, entry.table, batch);
+      inserted += batch.length;
+      batch = [];
+    };
 
-    // User-id remap. Skip the row if a NOT NULL user FK has no
-    // map entry — restoring it would violate the FK.
-    let skip = false;
-    for (const { prop, notNull } of userIdProps) {
-      const original = row[prop] as string | null | undefined;
-      if (original == null) continue;
-      const mapped = args.userIdMap.get(original) ?? null;
-      if (mapped === null && notNull) {
-        skip = true;
-        break;
+    const consumeLine = (line: string): void => {
+      if (!line.trim()) return;
+      const row = JSON.parse(line) as Record<string, unknown>;
+
+      // User-id remap. Skip the row if a NOT NULL user FK has no
+      // map entry — restoring it would violate the FK.
+      for (const { prop, notNull } of userIdProps) {
+        const original = row[prop] as string | null | undefined;
+        if (original == null) continue;
+        const mapped = args.userIdMap.get(original) ?? null;
+        if (mapped === null && notNull) {
+          skipped++;
+          return;
+        }
+        row[prop] = mapped;
       }
-      row[prop] = mapped;
-    }
-    if (skip) {
-      skipped++;
-      return;
-    }
 
-    // Zone identity rewrite. `zones.name` carries a unique
-    // `lower(name)` index — a same-DB restore of a previously-
-    // exported zone would collide on the original name, so we
-    // append a short suffix derived from the target slug to keep
-    // the row insertable. Restoring into a clean target database
-    // (the production flow) wouldn't strictly need this, but the
-    // suffix is a no-op there and helps human operators eyeball
-    // which row came from the restore.
-    if (entry.selector === "self") {
-      if (zoneSelfPkProp) row[zoneSelfPkProp] = args.targetZoneId;
-      if (slugProp) row[slugProp] = args.targetSlug;
-      if (nameProp && typeof row[nameProp] === "string") {
-        row[nameProp] = `${row[nameProp]} (restored ${args.targetZoneId.slice(0, 8)})`;
+      // Zone identity rewrite. `zones.name` carries a unique
+      // `lower(name)` index — a same-DB restore of a previously-
+      // exported zone would collide on the original name, so we
+      // append a short suffix derived from the target zone id to
+      // keep the row insertable. Restoring into a clean target
+      // database (the production flow) wouldn't strictly need this,
+      // but the suffix is a no-op there and helps human operators
+      // eyeball which row came from the restore.
+      if (entry.selector === "self") {
+        if (zoneSelfPkProp) row[zoneSelfPkProp] = args.targetZoneId;
+        if (slugProp) row[slugProp] = args.targetSlug;
+        if (nameProp && typeof row[nameProp] === "string") {
+          row[nameProp] = `${row[nameProp]} (restored ${args.targetZoneId.slice(0, 8)})`;
+        }
+      } else if (zoneIdProp) {
+        row[zoneIdProp] = args.targetZoneId;
       }
-    } else if (zoneIdProp) {
-      row[zoneIdProp] = args.targetZoneId;
-    }
 
-    // Storage-key prefix rewrite (import_files + report_jobs).
-    for (const prop of storageKeyProps) {
-      const original = row[prop] as string | null | undefined;
-      if (typeof original === "string" && original.length > 0) {
-        row[prop] = rewriteStorageKey(
-          original,
-          args.sourceZoneId,
-          args.targetZoneId,
-        );
+      // Storage-key prefix rewrite (import_files + report_jobs).
+      for (const prop of storageKeyProps) {
+        const original = row[prop] as string | null | undefined;
+        if (typeof original === "string" && original.length > 0) {
+          row[prop] = rewriteStorageKey(
+            original,
+            args.sourceZoneId,
+            args.targetZoneId,
+            (m) => log(`  ${entry.name}: ${m}`),
+          );
+        }
       }
+
+      // ISO string → Date for PgTimestamp columns.
+      for (const prop of dateProps) {
+        const v = row[prop];
+        if (typeof v !== "string") continue;
+        const d = new Date(v);
+        if (!Number.isNaN(d.getTime())) row[prop] = d;
+      }
+
+      batch.push(row);
+    };
+
+    const stream = createReadStream(dataPath, { encoding: "utf-8" });
+    for await (const chunk of stream) {
+      buffer += chunk;
+      let idx = buffer.indexOf("\n");
+      while (idx !== -1) {
+        const line = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 1);
+        consumeLine(line);
+        idx = buffer.indexOf("\n");
+      }
+      if (batch.length >= BATCH_SIZE) await flushBatch();
     }
+    if (buffer.length > 0) consumeLine(buffer);
+    await flushBatch();
 
-    // ISO string → Date for PgTimestamp columns.
-    for (const prop of dateProps) {
-      const v = row[prop];
-      if (typeof v !== "string") continue;
-      const d = new Date(v);
-      if (!Number.isNaN(d.getTime())) row[prop] = d;
-    }
+    return { inserted, skipped };
+  });
+}
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (database as any).insert(entry.table).values(row);
-    inserted++;
-  };
-
-  const stream = createReadStream(dataPath, { encoding: "utf-8" });
-  for await (const chunk of stream) {
-    buffer += chunk;
-    let idx = buffer.indexOf("\n");
-    while (idx !== -1) {
-      const line = buffer.slice(0, idx);
-      buffer = buffer.slice(idx + 1);
-      await flushLine(line);
-      idx = buffer.indexOf("\n");
-    }
-  }
-  if (buffer.length > 0) await flushLine(buffer);
-
-  return { inserted, skipped };
+/**
+ * Single point of contact between the restore loop and Drizzle's
+ * generic insert. Centralises the `as any` cast (the table
+ * reference is dynamic) so the rest of the file stays type-safe.
+ */
+async function insertRows(
+  tx: Parameters<Parameters<Database["transaction"]>[0]>[0],
+  table: PgTable,
+  rows: Array<Record<string, unknown>>,
+): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (tx as any).insert(table).values(rows);
 }
 
 /**
  * Rewrite an object-storage key from the source zone's prefix to
  * the target's. Both backends shape keys as `{zoneId}/...`. A key
- * that doesn't start with the source prefix is left untouched —
- * better to round-trip an unrecognised key than silently corrupt
- * it.
+ * that doesn't start with the source prefix is logged + returned
+ * unchanged — better to round-trip an unrecognised key (the row
+ * is still useful for audit) than silently corrupt it, but the
+ * warning surfaces any future drift in the storage-key contract.
  */
 function rewriteStorageKey(
   original: string,
   sourceZoneId: string,
   targetZoneId: string,
+  warn?: (m: string) => void,
 ): string {
   const prefix = `${sourceZoneId}/`;
   if (original.startsWith(prefix)) {
     return `${targetZoneId}/${original.slice(prefix.length)}`;
   }
+  warn?.(
+    `storage_key "${original}" does not start with the source zone prefix; leaving unchanged (blob may not resolve in the target deployment)`,
+  );
   return original;
 }
 
@@ -478,65 +615,94 @@ interface CopyArgs {
 
 /**
  * Copy `files/imports/{importFileId}-*` from the bundle into
- * storage at the just-restored `import_files.storage_key`.
+ * storage at the just-restored `import_files.storage_key`. Looks
+ * up every storage_key in a single `IN (...)` query so a zone
+ * with thousands of import files doesn't pay N DB round-trips.
  */
 async function copyImportBlobs(args: CopyArgs): Promise<number> {
-  const filesDir = pathJoin(args.bundleRoot, "files", "imports");
-  if (!existsSync(filesDir)) return 0;
-  let copied = 0;
-  const entries = await readdir(filesDir, { withFileTypes: true });
-  for (const ent of entries) {
-    if (!ent.isFile()) continue;
-    const idMatch = /^([0-9a-f-]{36})/i.exec(ent.name);
-    if (!idMatch) {
-      args.log(`skip blob (no id in filename): ${ent.name}`);
-      continue;
-    }
-    const importFileId = idMatch[1];
-    const [row] = await args.database
-      .select({ storageKey: schema.importFiles.storageKey })
-      .from(schema.importFiles)
-      .where(eq(schema.importFiles.id, importFileId))
-      .limit(1);
-    if (!row?.storageKey) {
-      args.log(`skip blob (no row): ${ent.name}`);
-      continue;
-    }
-    const body = await readFile(pathJoin(filesDir, ent.name));
-    await args.storage.put(row.storageKey, body);
-    copied++;
-  }
-  return copied;
+  return await copyBlobsByPkLookup({
+    dir: pathJoin(args.bundleRoot, "files", "imports"),
+    filenamePattern: /^([0-9a-f-]{36})/i,
+    fetchKeys: async (ids) =>
+      await args.database
+        .select({
+          id: schema.importFiles.id,
+          storageKey: schema.importFiles.storageKey,
+        })
+        .from(schema.importFiles)
+        .where(inArray(schema.importFiles.id, ids)),
+    storage: args.storage,
+    log: args.log,
+    kind: "blob",
+  });
 }
 
 /**
  * Copy `reports/{reportJobId}.{ext}` from the bundle into storage
- * at the just-restored `report_jobs.storage_key`.
+ * at the just-restored `report_jobs.storage_key`. Batched lookup
+ * as above.
  */
 async function copyReportBlobs(args: CopyArgs): Promise<number> {
-  const reportsDir = pathJoin(args.bundleRoot, "reports");
-  if (!existsSync(reportsDir)) return 0;
-  let copied = 0;
-  const entries = await readdir(reportsDir, { withFileTypes: true });
+  return await copyBlobsByPkLookup({
+    dir: pathJoin(args.bundleRoot, "reports"),
+    filenamePattern: /^([0-9a-f-]{36})\./i,
+    fetchKeys: async (ids) =>
+      await args.database
+        .select({
+          id: schema.reportJobs.id,
+          storageKey: schema.reportJobs.storageKey,
+        })
+        .from(schema.reportJobs)
+        .where(inArray(schema.reportJobs.id, ids)),
+    storage: args.storage,
+    log: args.log,
+    kind: "report",
+  });
+}
+
+/**
+ * Shared body for the two blob copy passes. Reads the bundle
+ * directory, pulls every PK from the filenames, fetches their
+ * storage_keys in a single batched query, and copies each blob
+ * to the storage backend at the new key.
+ */
+async function copyBlobsByPkLookup(args: {
+  dir: string;
+  filenamePattern: RegExp;
+  fetchKeys: (
+    ids: string[],
+  ) => Promise<Array<{ id: string; storageKey: string | null }>>;
+  storage: ObjectStorageLike;
+  log: (m: string) => void;
+  kind: "blob" | "report";
+}): Promise<number> {
+  if (!existsSync(args.dir)) return 0;
+  const entries = await readdir(args.dir, { withFileTypes: true });
+  const files: Array<{ name: string; id: string }> = [];
   for (const ent of entries) {
     if (!ent.isFile()) continue;
-    const idMatch = /^([0-9a-f-]{36})\./i.exec(ent.name);
-    if (!idMatch) {
-      args.log(`skip report (no id): ${ent.name}`);
+    const match = args.filenamePattern.exec(ent.name);
+    if (!match) {
+      args.log(`skip ${args.kind} (no id in filename): ${ent.name}`);
       continue;
     }
-    const reportJobId = idMatch[1];
-    const [row] = await args.database
-      .select({ storageKey: schema.reportJobs.storageKey })
-      .from(schema.reportJobs)
-      .where(eq(schema.reportJobs.id, reportJobId))
-      .limit(1);
-    if (!row?.storageKey) {
-      args.log(`skip report (no row): ${ent.name}`);
+    files.push({ name: ent.name, id: match[1] });
+  }
+  if (files.length === 0) return 0;
+
+  const ids = files.map((f) => f.id);
+  const rows = await args.fetchKeys(ids);
+  const keyById = new Map(rows.map((r) => [r.id, r.storageKey]));
+
+  let copied = 0;
+  for (const file of files) {
+    const storageKey = keyById.get(file.id);
+    if (!storageKey) {
+      args.log(`skip ${args.kind} (no row): ${file.name}`);
       continue;
     }
-    const body = await readFile(pathJoin(reportsDir, ent.name));
-    await args.storage.put(row.storageKey, body);
+    const body = await readFile(pathJoin(args.dir, file.name));
+    await args.storage.put(storageKey, body);
     copied++;
   }
   return copied;

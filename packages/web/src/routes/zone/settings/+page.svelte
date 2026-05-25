@@ -204,9 +204,15 @@
   let downloadError = $state<string | null>(null);
 
   // Auto-refresh while any export is non-terminal so the badge / size
-  // catches up without the owner reloading. Cleared in the teardown
-  // effect on the page; bumped on each refresh tick.
+  // catches up without the owner reloading.
+  //
+  // `pollController` owns the lifetime of every polled fetch: each
+  // `loadExports` call passes its signal so a quick nav-away aborts
+  // the in-flight request instead of resolving against an unmounted
+  // page (which would briefly surface state on the wrong route).
+  // The lifecycle teardown effect aborts + nulls the controller.
   let pollHandle: ReturnType<typeof setTimeout> | null = null;
+  let pollController: AbortController | null = null;
   const TERMINAL = new Set(["completed", "failed", "expired"]);
 
   function hasInFlight(rows: ExportSummary[]): boolean {
@@ -220,7 +226,7 @@
     }
     if (!hasInFlight(exports)) return;
     pollHandle = setTimeout(() => {
-      void loadExports();
+      void loadExports(pollController?.signal);
     }, 5000);
   }
 
@@ -369,18 +375,23 @@
   });
 
   // Re-fetch panels once auth resolves so each gated request fires with
-  // a known role context instead of racing the /me response.
+  // a known role context instead of racing the /me response. The export
+  // panel's initial load + every subsequent poll share `pollController`
+  // so unmount aborts both in flight and any future poll tick.
   $effect(() => {
     if (!authLoaded || !auth) return;
     const controller = new AbortController();
+    pollController = new AbortController();
     if (canRead) void loadPolicy(controller.signal);
-    if (canExport) void loadExports(controller.signal);
-    return () => controller.abort();
-  });
-
-  $effect(() => {
+    if (canExport) void loadExports(pollController.signal);
     return () => {
-      if (pollHandle) clearTimeout(pollHandle);
+      controller.abort();
+      pollController?.abort();
+      pollController = null;
+      if (pollHandle) {
+        clearTimeout(pollHandle);
+        pollHandle = null;
+      }
     };
   });
 </script>

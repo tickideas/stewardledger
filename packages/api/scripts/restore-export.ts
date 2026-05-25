@@ -21,7 +21,7 @@
 // RELEVANT FILES: ../src/services/exports/restore.ts
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join as pathJoin, resolve } from "node:path";
+import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "dotenv";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -73,11 +73,23 @@ async function loadUserMap(path: string): Promise<Map<string, string>> {
  * Minimal FS-backed storage adapter. The restore-helper only needs
  * `put`; reads (and the `StorageNotFoundError` discrimination from
  * the API-side adapter) are not on the restore path.
+ *
+ * Mirrors the path-traversal guard in `services/storage.ts:FsStorage`
+ * so a malformed key (e.g. one bundled with a hostile slug encoded
+ * in the source `storage_key`) can't escape the configured root.
+ * Keys at restore-time are derived from DB rows we just INSERTed,
+ * so the immediate risk is low, but matching the production
+ * adapter keeps the two paths from drifting.
  */
-function makeFsStorage(root: string): ObjectStorageLike {
+function makeFsStorage(rootArg: string): ObjectStorageLike {
+  const root = resolve(rootArg);
+  const rootBoundary = root.endsWith(sep) ? root : root + sep;
   return {
     async put(key: string, body: Uint8Array): Promise<void> {
-      const dest = pathJoin(root, key);
+      const dest = resolve(root, key);
+      if (dest !== root && !dest.startsWith(rootBoundary)) {
+        throw new Error(`invalid storage key: ${key}`);
+      }
       await mkdir(dirname(dest), { recursive: true });
       await writeFile(dest, body);
     },
