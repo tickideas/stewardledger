@@ -1,0 +1,1 @@
+ALTER TABLE "zone_exports" ADD COLUMN "sha256" text;

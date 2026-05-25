@@ -9,6 +9,7 @@ import { log } from "./logger";
 import { stopBoss } from "./services/queue";
 import { startReportQueue } from "./services/reports/jobs-pgboss";
 import { startRetentionSweep } from "./services/retention/cron";
+import { startZoneExportQueue } from "./services/exports/jobs-pgboss";
 
 const app = createApp();
 
@@ -34,6 +35,13 @@ void startReportQueue().catch((err) =>
 // same pg-boss singleton.
 void startRetentionSweep().catch((err) =>
   log.error({ err }, "retention sweep: failed to start"),
+);
+
+// Phase 9 §3: per-zone export bundle queue + daily cleanup sweep.
+// Same posture as the others; the boot sweep inside
+// `startZoneExportQueue` recovers orphaned rows.
+void startZoneExportQueue().catch((err) =>
+  log.error({ err }, "zone export queue: failed to start"),
 );
 
 const shutdown = async (signal: string): Promise<void> => {
