@@ -117,13 +117,17 @@ Capabilities that StewardLedger should ship before GA (Phase 10). Each one is so
 
 - **Church Plus**: `Family` + `Family Member` DocTypes, `Top Family Report`.
 - **Why it matters**: pastors and treasurers regularly look at a household total (a family's combined partnership, a family's tithe), not just individual members. Used for pastoral visits, gift acknowledgement, and Top Family report.
-- **StewardLedger today**: nothing. Members are individuals only.
-- **Verdict**: **Port v1.**
-- **Suggested target**:
-  - Schema: `packages/db/src/schema/families.ts` (`families`, `family_members`), zone-scoped, soft-delete allowed.
-  - Reports: `packages/api/src/services/reports/top-family.ts`.
-  - UI: `/zone/families`, `/church/families`.
-  - Model rule: a member may belong to one family at a time; family is chapter-scoped; transferring members between families is an auditable event.
+- **StewardLedger today**: **Landed** on `feat/families-households` (Phase 10 GA exit-checklist item; see `docs/ROADMAP.md`).
+- **Verdict**: **Port v1 — done.**
+- **Implementation**:
+  - Schema: `packages/db/src/schema/families.ts` (`families`, `family_members`), zone-scoped, soft-delete on `families`, archive-via-`left_at` on `family_members`. Composite cross-tenant FKs `(zone_id, chapter_id) → chapters(zone_id, id)`, `(zone_id, family_id) → families(zone_id, id)`, `(zone_id, member_id) → members(zone_id, id)`. Partial unique indexes enforce one open family per member and one primary contact per family. Drizzle migration `0024_families_and_family_members.sql` (+ paired `.down.sql`).
+  - Service: `packages/api/src/services/families.ts` (create / update / soft-delete / member add / member archive / primary toggle / bulk transfer) + `services/family-codes.ts` for the `F{padded7}` reference code.
+  - Tenant API: `/api/tenant/families` (list / detail / patch / delete) + `/api/tenant/families/:id/members` + `/api/tenant/families/:id/transfer` + `/api/tenant/members/:id/family` convenience.
+  - Reports: `services/reports/top-family.ts` registered in `services/reports/registry.ts`; `services/reports/member-statement.ts` now carries `meta.household` and stamps a household band onto the Excel artefact.
+  - UI: `/zone/families`, `/zone/families/[id]`, `/church/families`; household panel on `/zone/members/[id]`; household band on `/zone/members/[id]/statement`.
+  - Audit events: `family.create`, `family.update`, `family.delete`, `family.member.add`, `family.member.update`, `family.primary_contact.set`, `family.member.remove`, `family.transfer`.
+  - Tests: `packages/api/src/routes/tenant-families.test.ts` (16 cases incl. cross-tenant fuzz + composite FK guard), `packages/api/src/services/families.test.ts` (11 unit cases), `packages/api/src/services/families.schema.test.ts` (3 DB-level FK assertions), Top Family + member-statement-household-band tests added to `services/reports/reports.test.ts`.
+  - Open question §5.3 (family granularity) answered: **household for v1** (one chapter, one address singleton, one open family per member). Kinship clusters remain a v2 concern.
 
 #### 2.2.2 Bulk template download centre
 
@@ -288,5 +292,5 @@ These edits keep ROADMAP.md's existing structure intact and slot in concrete wor
 
 1. **Do any current Church Plus tenants want to migrate?** If yes, ETL needs to land before §2.3 work (and DOMAIN-REFERENCE §1 ETL plan needs to be promoted).
 2. **Online giving regulatory posture.** Each region has its own rules (UK Gift Aid, US 501(c)(3) acknowledgements, Nigerian VAT). The §2.3.1 schema should leave room for region-specific receipts.
-3. **Family model granularity.** Is "family" a household (one address) or a kinship cluster (can span addresses)? Recommend household for v1, kinship in v2.
+3. ~~**Family model granularity.** Is "family" a household (one address) or a kinship cluster (can span addresses)? Recommend household for v1, kinship in v2.~~ **Resolved**: shipped as a chapter-scoped household in `feat/families-households`. Kinship clusters remain a v2 concern.
 4. **Comms throttling defaults.** What per-zone send rate caps do we want by default? Recommend 100/hour for v1.1, configurable per zone, MFA-required to raise.

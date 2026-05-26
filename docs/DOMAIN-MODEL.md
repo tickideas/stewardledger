@@ -298,6 +298,55 @@ member_types            -- Member, Cell Leader, Pastor, ...
 
 (All three lookup tables are zone-scoped with sensible seed data per zone.)
 
+### 3.5 Families / households
+
+Family / household grouping (per [`CHURCHPLUS-PORT-NOTES.md` §2.2.1](CHURCHPLUS-PORT-NOTES.md#221-family--household-grouping)) is a thin overlay on top of `members`: a household lives in one chapter, has a single primary contact, and is the unit the Top Family report and the member-statement household band group on. Membership tracks `joined_at` / `left_at` so a member can leave and re-join a household over time, and partial-unique indexes enforce the two invariants treasurers expect.
+
+```sql
+families
+  id uuid pk
+  zone_id uuid not null references zones(id)
+  region_id uuid null                       -- denormalized
+  chapter_id uuid not null references chapters(id)
+  reference_code text not null              -- e.g. "F0000001"
+  name text not null                        -- treasurer-curated household label
+  primary_address_id uuid null references member_addresses(id) on delete set null
+  notes text null
+  metadata jsonb not null default '{}'
+  created_at, created_by_user_id, updated_at, updated_by_user_id, deleted_at
+  unique (zone_id, id)                              -- composite FK target
+  unique (zone_id, reference_code)
+  -- partial unique (zone_id, chapter_id, lower(name)) where deleted_at is null
+  foreign key (zone_id, chapter_id) references chapters(zone_id, id) on delete restrict
+
+family_members
+  id uuid pk
+  zone_id uuid not null
+  family_id uuid not null references families(id) on delete cascade
+  member_id uuid not null references members(id) on delete restrict
+  relationship text null                    -- free-text (household v1; kinship v2)
+  is_primary_contact boolean not null default false
+  joined_at date not null default now()
+  left_at date null                         -- null = currently in this family
+  created_at, updated_at
+  unique (zone_id, id)
+  foreign key (zone_id, family_id) references families(zone_id, id) on delete cascade
+  foreign key (zone_id, member_id) references members(zone_id, id) on delete restrict
+  -- partial unique (member_id)            where left_at is null  → one open family per member
+  -- partial unique (family_id)            where is_primary_contact = true and left_at is null
+  check  family_members_window_check       (left_at is null or left_at >= joined_at)
+```
+
+Service-layer invariants in `packages/api/src/services/families.ts`:
+
+- A family lives in one chapter; members must be in that chapter when they join.
+- A family member cannot belong to a second open family until the first is archived (`left_at` set).
+- Exactly one open primary contact per family; promoting a new one demotes the previous primary in the same transaction.
+- A family with open members cannot be soft-deleted; archive every member first.
+- Bulk transfer between families requires the same chapter (cross-chapter moves go through member-level edits so each move is its own audit event).
+
+Audit events: `family.create`, `family.update`, `family.delete`, `family.member.add`, `family.member.update`, `family.primary_contact.set`, `family.member.remove`, `family.transfer`.
+
 ### Member dedup
 
 ```sql
@@ -850,6 +899,7 @@ This is **not a migration map** — StewardLedger does not import legacy data. I
 |---|---|
 | Single-DB per zone deployment | Multi-tenant `zones` rows in shared DB |
 | `ChurchGroup` (sub-grouping inside a zone) | Reintroduced as first-class `groups` table (see §2.5). Per-zone opt-in via `zones.groups_enabled`. |
+| `Family`, `Family Member` | `families`, `family_members` (§3.5). Household = one chapter, one primary contact, free-text relationship; the legacy `Top Family Report` maps to the StewardLedger `top-family` report. |
 | `Chapter` | `chapters` |
 | `Member`, `MemberAddress` | `members`, `member_addresses` |
 | `GivingCategory`, `GivingType` | same names, multi-tenant |
