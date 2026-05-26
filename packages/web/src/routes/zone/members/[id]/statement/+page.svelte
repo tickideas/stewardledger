@@ -47,6 +47,12 @@
   let dateTo = $state(new Date().toISOString().slice(0, 10));
   let includeVoidedReversed = $state(false);
 
+  // ─── Household band (CHURCHPLUS-PORT-NOTES §2.2.1) ───────────
+  type Household = { id: string; name: string; referenceCode: string };
+  type CurrencyTotal = { currencyCode: string; total: string };
+  let household = $state<Household | null>(null);
+  let householdTotals = $state<CurrencyTotal[]>([]);
+
   // Last-request-wins token: rapid date changes through the pickers must
   // not let an older response overwrite a newer one. The pickers also
   // fire `change` per arrow click, so we debounce 250ms to avoid a
@@ -71,7 +77,7 @@
       params.set("dateFrom", dateFrom);
       params.set("dateTo", dateTo);
       params.set("limit", "200");
-      const [m, c] = await Promise.all([
+      const [m, c, fam] = await Promise.all([
         api.get<{ member: Member }>(
           `/api/tenant/members/${memberId}`,
           controller.signal,
@@ -80,10 +86,31 @@
           `/api/tenant/contributions?${params.toString()}`,
           controller.signal,
         ),
+        api
+          .get<{ family: { id: string; name: string; referenceCode: string } | null }>(
+            `/api/tenant/members/${memberId}/family`,
+            controller.signal,
+          )
+          .catch(() => ({ family: null as null | { id: string; name: string; referenceCode: string } })),
       ]);
       if (my !== loadToken) return;
       member = m.member;
       items = c.items;
+      household = fam.family ?? null;
+      if (household) {
+        try {
+          const params2 = new URLSearchParams({ dateFrom, dateTo });
+          const detail = await api.get<{ givingTotals: CurrencyTotal[] }>(
+            `/api/tenant/families/${household.id}?${params2.toString()}`,
+            controller.signal,
+          );
+          if (my === loadToken) householdTotals = detail.givingTotals;
+        } catch {
+          householdTotals = [];
+        }
+      } else {
+        householdTotals = [];
+      }
       loadError = null;
     } catch (err) {
       if (isAbortError(err)) return;
@@ -183,6 +210,28 @@
         Show voided / reversed
       </label>
     </div>
+
+    {#if household}
+      <div class="sl-reveal sl-reveal-3 mt-6 sl-card-warm p-5">
+        <span class="sl-eyebrow">Household</span>
+        <p class="mt-2 sl-display text-[20px] text-[var(--ink)]">
+          <a href={`/zone/families/${household.id}`} class="hover:text-[var(--brass-deep)]">{household.name}</a>
+          <span class="sl-mono ml-2 text-[11px] text-[var(--ink-mute)]" style="letter-spacing:0.06em">{household.referenceCode}</span>
+        </p>
+        {#if householdTotals.length > 0}
+          <ul class="mt-3 flex flex-wrap gap-x-6 gap-y-1">
+            {#each householdTotals as t (t.currencyCode)}
+              <li class="text-[13px] text-[var(--ink-soft)]">
+                <span class="sl-mono mr-1 text-[11px] text-[var(--ink-mute)]">{t.currencyCode}</span>
+                <span class="text-[var(--ink)]">{fmt(t.total, t.currencyCode)}</span>
+              </li>
+            {/each}
+          </ul>
+        {:else}
+          <p class="mt-3 text-[13px] text-[var(--ink-mute)]">No household giving in this window.</p>
+        {/if}
+      </div>
+    {/if}
 
     <div class="sl-reveal sl-reveal-3 mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
       {#each totalsByCurrency as t (t.currency)}

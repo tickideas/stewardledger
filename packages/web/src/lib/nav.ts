@@ -91,6 +91,7 @@ export const ZONAL_NAV: NavGroup[] = [
     label: "Membership",
     items: [
       { href: "/zone/members", label: "Members" },
+      { href: "/zone/families", label: "Families" },
       { href: "/zone/duplicates", label: "Duplicate members" },
     ],
   },
@@ -128,6 +129,7 @@ export const CHURCH_NAV: NavGroup[] = [
     items: [
       { href: "/church/overview", label: "Overview" },
       { href: "/church/members", label: "Members" },
+      { href: "/church/families", label: "Families" },
     ],
   },
   {
