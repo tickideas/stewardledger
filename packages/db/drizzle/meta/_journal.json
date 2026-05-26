@@ -169,6 +169,13 @@
       "when": 1779780371234,
       "tag": "0023_fix_skipped_retention_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1779818553848,
+      "tag": "0024_families_and_family_members",
+      "breakpoints": true
     }
   ]
 }
