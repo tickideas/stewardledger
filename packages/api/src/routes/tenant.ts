@@ -57,6 +57,7 @@ import {
 } from "../services/invitations";
 import { tenantContributionsRouter } from "./tenant-contributions";
 import { tenantDashboardRouter } from "./tenant-dashboard";
+import { tenantFamiliesRouter } from "./tenant-families";
 import { tenantGivingRouter } from "./tenant-giving";
 import { tenantGroupsRouter } from "./tenant-groups";
 import { tenantGivingEventsRouter } from "./tenant-giving-events";
@@ -77,6 +78,7 @@ tenantRouter.use("*", tenantMiddleware, requireSession, requireTenantAuth);
 
 // Member-domain routes live in their own module to keep this file small.
 tenantRouter.route("/", tenantMembersRouter);
+tenantRouter.route("/", tenantFamiliesRouter);
 tenantRouter.route("/", tenantGivingRouter);
 tenantRouter.route("/", tenantGroupsRouter);
 tenantRouter.route("/", tenantGivingMethodsRouter);

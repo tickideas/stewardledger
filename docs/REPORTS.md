@@ -34,7 +34,7 @@
 
 ### 2.1 Member statement (annual)
 
-**Status**: Done. `packages/api/src/services/reports/member-statement.ts`.
+**Status**: Done. `packages/api/src/services/reports/member-statement.ts`. When the member belongs to an open household the `fetch` result carries a `meta.household` block (family ref, name, per-currency totals over the same date window) and the Excel renderer stamps a household band below the totals — see [`CHURCHPLUS-PORT-NOTES.md` §2.2.1](CHURCHPLUS-PORT-NOTES.md#221-family--household-grouping).
 
 - **Filters**: zone, member, year (or custom range), giving type filter (optional), include voided (no by default).
 - **Columns**: date, service event, giving type, account, payment method, amount; running total.
@@ -171,7 +171,19 @@
 - Cards: total / active / inactive members, pending batches (count + per-currency totals), weekly giving, monthly giving, year-to-date giving, top 5 giving types, top 5 partners, 5 most recent posted contributions.
 - Target progress card deferred (depends on Phase 8 financial targets).
 
-### 2.15 Zone dashboard
+### 2.15 Top families
+
+**Status**: Done. `packages/api/src/services/reports/top-family.ts`.
+
+- **Filters**: zone, chapter (optional), date range, top N (default 20), `partnershipOnly` toggle.
+- **Columns**: rank, family ref, family name, chapter ref, chapter name, member count, currency, total.
+- **Group by**: per-currency ranking (no silent FX).
+- **Export**: Excel + PDF (via the generic branded-table renderer).
+- **Legacy mapping**: `Top Family Report` (Church Plus `custom_client_app`). See [`CHURCHPLUS-PORT-NOTES.md` §2.2.1](CHURCHPLUS-PORT-NOTES.md#221-family--household-grouping).
+- **Attribution**: point-in-time. A contribution counts against the household the giver belonged to ON the contribution date (`joined_at <= contribution_date AND (left_at IS NULL OR left_at > contribution_date)`), not their current household. A bulk transfer therefore does NOT silently re-attribute historical giving.
+- **Acceptance**: per-family totals match the sum of member contributions; reversal pairs net to zero and drop a household out of the ranking when the only giving was reversed; partnership-only filter restricts to `has_partnership_target = true` giving types.
+
+### 2.16 Zone dashboard
 
 **Status**: Done. Server-aggregated payload via `GET /api/tenant/dashboard/zone`; UI at `/zone/dashboard` (the default zonal landing). Service: `packages/api/src/services/dashboards/zone-dashboard.ts`.
 

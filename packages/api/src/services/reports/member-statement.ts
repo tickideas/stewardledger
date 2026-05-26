@@ -24,6 +24,7 @@ import {
   paymentMethods,
   serviceEvents,
 } from "@stewardledger/db/schema";
+import { familyForMember, familyGivingTotals } from "../families";
 import {
   uuidSchema,
 } from "@stewardledger/shared";
@@ -85,6 +86,19 @@ interface MemberStatementMeta {
     chapterId: string | null;
   };
   dateRange: { from: string; to: string };
+  /**
+   * When the member belongs to an open household the statement carries a
+   * household band above the per-currency member totals — the legacy
+   * `Top Family Report` audience reads this line first.
+   *
+   * Null when the member has no open family.
+   */
+  household: {
+    familyId: string;
+    referenceCode: string;
+    name: string;
+    totals: CurrencySubtotal[];
+  } | null;
 }
 
 const COLUMNS: ReportColumn[] = [
@@ -217,6 +231,18 @@ export const memberStatementReport: ReportSpec<
       currencyCode: r.currencyCode,
     })));
 
+    // Household band — cheap when there is no family, slightly more work
+    // when there is. Computed at fetch time so the Excel renderer and
+    // every UI surface (the report screen + the member profile page) see
+    // the same numbers without re-aggregating.
+    const family = await familyForMember(database, ctx.zoneId, member.id);
+    const householdTotals = family
+      ? await familyGivingTotals(database, ctx.zoneId, family.id, {
+          dateFrom: filters.dateFrom,
+          dateTo: filters.dateTo,
+        })
+      : [];
+
     const meta: MemberStatementMeta = {
       member: {
         id: member.id,
@@ -225,6 +251,14 @@ export const memberStatementReport: ReportSpec<
         chapterId: member.chapterId,
       },
       dateRange: { from: filters.dateFrom, to: filters.dateTo },
+      household: family
+        ? {
+            familyId: family.id,
+            referenceCode: family.referenceCode,
+            name: family.name,
+            totals: householdTotals,
+          }
+        : null,
     };
 
     return {
@@ -317,6 +351,37 @@ export const memberStatementReport: ReportSpec<
       head.commit();
       r += 1;
       for (const sub of subtotals) {
+        const subRow = sheet.getRow(r);
+        subRow.getCell(1).value = sub.currencyCode;
+        subRow.getCell(1).font = { bold: true };
+        const amountCell = subRow.getCell(2);
+        amountCell.value = Number(new Decimal(sub.total).toFixed(4));
+        amountCell.numFmt = moneyFormatForCurrency(sub.currencyCode);
+        amountCell.font = { bold: true };
+        subRow.commit();
+        r += 1;
+      }
+    }
+
+    // Household band — rendered tail-side so the existing row-7+
+    // golden assertions stay byte-stable when the member has no
+    // family. CHURCHPLUS-PORT-NOTES §2.2.1.
+    if (meta?.household) {
+      r += 1;
+      const head = sheet.getRow(r);
+      head.getCell(1).value = escapeExcelText(
+        `Household: ${meta.household.referenceCode} ${meta.household.name}`,
+      );
+      head.getCell(1).font = { bold: true };
+      head.commit();
+      r += 1;
+      if (meta.household.totals.length === 0) {
+        const noneRow = sheet.getRow(r);
+        noneRow.getCell(1).value = "No household giving in this range";
+        noneRow.commit();
+        r += 1;
+      }
+      for (const sub of meta.household.totals) {
         const subRow = sheet.getRow(r);
         subRow.getCell(1).value = sub.currencyCode;
         subRow.getCell(1).font = { bold: true };

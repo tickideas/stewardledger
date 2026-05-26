@@ -1091,3 +1091,76 @@ export const savedReportFilterUpdateSchema = z
 export type SavedReportFilterUpdateInput = z.infer<
   typeof savedReportFilterUpdateSchema
 >;
+
+// ─── Families / households (CHURCHPLUS-PORT-NOTES §2.2.1) ─────────────
+
+/**
+ * Create payload for a `families` row. `primaryMemberId` is a convenience:
+ * when supplied, the route adds the named member as the first
+ * `family_members` row with `is_primary_contact = true`. Everything else
+ * — relationship, sibling members — happens via the dedicated member
+ * routes.
+ */
+export const familyCreateSchema = z.object({
+  chapterId: uuidSchema,
+  name: z.string().trim().min(1).max(200),
+  notes: z.string().max(2000).nullish(),
+  primaryAddressId: uuidSchema.nullish(),
+  primaryMemberId: uuidSchema.optional(),
+  primaryMemberRelationship: z.string().trim().max(100).optional(),
+});
+export type FamilyCreateInput = z.infer<typeof familyCreateSchema>;
+
+/**
+ * Family update. Moving a family between chapters is out-of-scope v1
+ * (see docs/plans/2026-05-26-families-households-v1.md §8); the
+ * `chapterId` field is intentionally absent.
+ */
+export const familyUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(200).optional(),
+  notes: z.string().max(2000).nullish(),
+  primaryAddressId: uuidSchema.nullish(),
+});
+export type FamilyUpdateInput = z.infer<typeof familyUpdateSchema>;
+
+export const familyListQuerySchema = z.object({
+  chapterId: uuidSchema.optional(),
+  q: z.string().trim().max(120).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type FamilyListQuery = z.infer<typeof familyListQuerySchema>;
+
+export const familyMemberCreateSchema = z.object({
+  memberId: uuidSchema,
+  relationship: z.string().trim().max(100).nullish(),
+  isPrimaryContact: z.boolean().optional().default(false),
+});
+export type FamilyMemberCreateInput = z.infer<typeof familyMemberCreateSchema>;
+
+export const familyMemberUpdateSchema = z
+  .object({
+    relationship: z.string().trim().max(100).nullish(),
+    isPrimaryContact: z.boolean().optional(),
+  })
+  .refine((v) => v.relationship !== undefined || v.isPrimaryContact !== undefined, {
+    message: "At least one of `relationship` or `isPrimaryContact` must be provided",
+  });
+export type FamilyMemberUpdateInput = z.infer<typeof familyMemberUpdateSchema>;
+
+/** Remove a family member. `reason` is required so the audit row is meaningful. */
+export const familyMemberRemoveSchema = z.object({
+  reason: z.string().trim().min(1).max(500),
+});
+export type FamilyMemberRemoveInput = z.infer<typeof familyMemberRemoveSchema>;
+
+/**
+ * Transfer every open member of one family into another. Both families
+ * must be in the same chapter — cross-chapter moves go through
+ * member-by-member edits so the audit trail is explicit.
+ */
+export const familyTransferSchema = z.object({
+  toFamilyId: uuidSchema,
+  reason: z.string().trim().max(500).optional(),
+});
+export type FamilyTransferInput = z.infer<typeof familyTransferSchema>;

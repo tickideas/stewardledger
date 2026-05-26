@@ -13,6 +13,7 @@ export * from "./roles";
 export * from "./invitations";
 export * from "./lookups";
 export * from "./members";
+export * from "./families";
 export * from "./periods";
 export * from "./giving";
 export * from "./contributions";

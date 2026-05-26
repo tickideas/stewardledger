@@ -123,6 +123,59 @@
   });
   let addrError = $state<string | null>(null);
 
+  // ─── Household panel (CHURCHPLUS-PORT-NOTES §2.2.1) ───────────
+  type HouseholdMember = {
+    id: string;
+    memberId: string;
+    memberFullName: string | null;
+    memberReferenceCode: string;
+    isPrimaryContact: boolean;
+    relationship: string | null;
+    leftAt: string | null;
+  };
+  type HouseholdSummary = {
+    id: string;
+    name: string;
+    referenceCode: string;
+    chapterId: string;
+    familyMemberId: string;
+    isPrimaryContact: boolean;
+    relationship: string | null;
+    members?: HouseholdMember[];
+  };
+  let household = $state<HouseholdSummary | null>(null);
+  let householdLoadError = $state<string | null>(null);
+
+  async function loadHousehold(signal?: AbortSignal) {
+    if (!memberId) return;
+    try {
+      const res = await api.get<{ family: HouseholdSummary | null }>(
+        `/api/tenant/members/${memberId}/family`,
+        signal,
+      );
+      household = res.family;
+      // For the band we want sibling members; pull detail when we have a family.
+      if (res.family) {
+        const detail = await api.get<{ family: { members: HouseholdMember[] } }>(
+          `/api/tenant/families/${res.family.id}`,
+          signal,
+        );
+        household = { ...res.family, members: detail.family.members.filter((m) => !m.leftAt) };
+      }
+      householdLoadError = null;
+    } catch (err) {
+      if (isAbortError(err)) return;
+      householdLoadError =
+        err instanceof ApiError ? err.message : "Could not load household.";
+    }
+  }
+
+  $effect(() => {
+    const ctrl = new AbortController();
+    void loadHousehold(ctrl.signal);
+    return () => ctrl.abort();
+  });
+
   async function load() {
     try {
       // Member fetch separately so a 404 (the case the GDPR
@@ -714,6 +767,51 @@
         </div>
       </section>
     {/if}
+
+    <!-- Household band (CHURCHPLUS-PORT-NOTES §2.2.1) -->
+    <section class="sl-reveal sl-reveal-3 mt-12">
+      <div class="mb-3 flex items-center justify-between">
+        <span class="sl-eyebrow">Household</span>
+        {#if household}
+          <a href={`/zone/families/${household.id}`} class="sl-mono text-[10.5px] text-[var(--ink-mute)] hover:text-[var(--brass-deep)]" style="letter-spacing:0.06em">
+            VIEW HOUSEHOLD →
+          </a>
+        {/if}
+      </div>
+      {#if householdLoadError}
+        <p class="border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{householdLoadError}</p>
+      {:else if household}
+        <div class="sl-card p-5">
+          <p class="sl-display text-[20px] text-[var(--ink)]">{household.name}</p>
+          <p class="sl-mono mt-1 text-[11px] text-[var(--ink-mute)]" style="letter-spacing:0.06em">{household.referenceCode}</p>
+          {#if household.isPrimaryContact}
+            <p class="mt-2"><span class="sl-badge sl-badge-ok">primary contact</span></p>
+          {/if}
+          {#if household.relationship}
+            <p class="mt-2 text-[13px] text-[var(--ink-soft)]">Relationship: {household.relationship}</p>
+          {/if}
+          {#if household.members && household.members.length > 1}
+            <ul class="mt-3 space-y-1">
+              {#each household.members.filter((m) => m.memberId !== memberId) as sibling}
+                <li class="text-[13px] text-[var(--ink-soft)]">
+                  <a href={`/zone/members/${sibling.memberId}`} class="text-[var(--ink)] hover:text-[var(--brass-deep)]">
+                    {sibling.memberFullName ?? sibling.memberReferenceCode}
+                  </a>
+                  {#if sibling.relationship}
+                    <span class="text-[var(--ink-mute)]"> — {sibling.relationship}</span>
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+      {:else}
+        <p class="text-[13px] text-[var(--ink-mute)]">
+          Not in a household.
+          <a href="/zone/families" class="text-[var(--brass-deep)] hover:underline">Manage households →</a>
+        </p>
+      {/if}
+    </section>
 
     <section class="sl-reveal sl-reveal-3 mt-12">
       <div class="mb-3 flex items-center justify-between">

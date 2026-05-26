@@ -30,6 +30,7 @@ export const DEFAULT_MINISTRY_YEAR_START_MONTH = 3;
 /** Reference code formats — configurable per zone. These are defaults. */
 export const DEFAULT_MEMBER_REFERENCE_PREFIX = "M";
 export const DEFAULT_CHAPTER_REFERENCE_PREFIX = "C";
+export const DEFAULT_FAMILY_REFERENCE_PREFIX = "F";
 
 /** Invitation token length, raw bytes (URL-safe base64-encoded in the email link). */
 export const INVITATION_TOKEN_BYTES = 32;
