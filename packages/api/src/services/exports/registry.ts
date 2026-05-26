@@ -217,6 +217,18 @@ export const ZONE_SCOPED_TABLES: readonly ZoneScopedTable[] = [
     note: "Member contact rows.",
   },
   {
+    name: "families",
+    table: schema.families,
+    restoreOrder: 316,
+    note: "Household rows. Depends on `chapters` (composite FK) and optionally `member_addresses` (primary_address_id, ON DELETE SET NULL).",
+  },
+  {
+    name: "family_members",
+    table: schema.familyMembers,
+    restoreOrder: 318,
+    note: "Member ↔ family membership rows. Depends on both `families` and `members` via composite (zone_id, _id) FKs.",
+  },
+  {
     name: "member_merge_proposals",
     table: schema.memberMergeProposals,
     restoreOrder: 320,

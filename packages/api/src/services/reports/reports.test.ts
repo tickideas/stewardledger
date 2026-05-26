@@ -59,7 +59,9 @@ import { memberStatementReport } from "./member-statement";
 import { onlineGivingLedgerReport } from "./online-giving-ledger";
 import { partnershipProgressReport } from "./partnership-progress";
 import { topChaptersReport } from "./top-chapters";
+import { topFamilyReport } from "./top-family";
 import { topPartnersReport } from "./top-partners";
+import { addFamilyMember, createFamily } from "../families";
 import { weeklyFinanceReport } from "./weekly-finance";
 import { ReportError, parseReportFilters } from "./types";
 
@@ -284,6 +286,10 @@ afterAll(async () => {
         await tx.execute(sql`delete from import_files where zone_id = ${id}`);
         await tx.execute(sql`delete from contributions where zone_id = ${id}`);
         await tx.execute(sql`delete from contribution_batches where zone_id = ${id}`);
+        // family_members has FK ON DELETE RESTRICT to members, so it must
+        // be cleared before members; families before chapters.
+        await tx.execute(sql`delete from family_members where zone_id = ${id}`);
+        await tx.execute(sql`delete from families where zone_id = ${id}`);
         // service_events.chapter_id is FK ON DELETE RESTRICT, so the
         // event rows must go before the chapters they reference.
         // service_event_attendance cascades from service_events.
@@ -649,6 +655,78 @@ describe("import-reconciliation report", () => {
     // voided rows from the posted tally.
     expect(result.rows[0].contributionsPosted).toBe(0);
     expect(result.rows[0].totalsByCurrency).toEqual([]);
+  });
+});
+
+describe("member-statement household band (CHURCHPLUS-PORT-NOTES §2.2.1)", () => {
+  it("meta.household carries the per-currency family total when the member belongs to a household", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    const family = await createFamily(
+      db,
+      { zoneId: zone.id, userId: zone.userId },
+      {
+        chapterId: zone.chapterId,
+        name: `Statement household ${unique()}`,
+        primaryMemberId: zone.memberIds[0],
+      },
+    );
+    await addFamilyMember(db, { zoneId: zone.id, userId: zone.userId }, family.id, {
+      memberId: zone.memberIds[1],
+    });
+
+    // Two members, two giving rows, one currency. Household total = 75.
+    for (const [memberId, amount] of [
+      [zone.memberIds[0], "25.00"],
+      [zone.memberIds[1], "50.00"],
+    ] as const) {
+      const c = await createContribution(
+        db,
+        { zoneId: zone.id, userId: zone.userId },
+        {
+          chapterId: zone.chapterId,
+          memberId,
+          sourceType: "manual",
+          paymentMethodId: zone.cashPaymentMethodId,
+          contributionDate: TODAY,
+          lines: [{ givingTypeId: zone.givingTypeId, amount }],
+        },
+      );
+      await postContribution(
+        db,
+        { zoneId: zone.id, userId: zone.userId },
+        c.contribution.id,
+      );
+    }
+
+    const result = await memberStatementReport.fetch(db, ctx, {
+      memberId: zone.memberIds[0],
+      dateFrom: shiftDays(TODAY, -1),
+      dateTo: shiftDays(TODAY, 1),
+      includeVoided: false,
+    });
+    const meta = result.meta as {
+      household: { referenceCode: string; name: string; totals: Array<{ currencyCode: string; total: string }> } | null;
+    };
+    expect(meta.household).not.toBeNull();
+    expect(meta.household!.referenceCode).toBe(family.referenceCode);
+    expect(meta.household!.totals).toEqual([{ currencyCode: "GBP", total: "75.0000" }]);
+  });
+
+  it("meta.household is null when the member is not in a household", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+    const result = await memberStatementReport.fetch(db, ctx, {
+      memberId: zone.memberIds[0],
+      dateFrom: shiftDays(TODAY, -1),
+      dateTo: shiftDays(TODAY, 1),
+      includeVoided: false,
+    });
+    const meta = result.meta as { household: unknown };
+    expect(meta.household).toBeNull();
   });
 });
 
@@ -2494,6 +2572,143 @@ describe("top-chapters report", () => {
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0].chapterReferenceCode).toBe(zone.chapterRef);
     expect(result.rows[0].total).toBe("15.0000");
+  });
+});
+
+describe("top-family report", () => {
+  it("ranks families by combined member giving with per-currency totals", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    // Create two families in chapter A: one holding m0 + m1, one holding
+    // m2 in chapter B. m0 gives 100, m1 gives 50; family A1 total = 150.
+    // m2 gives 200; family A2 total = 200. Top-1 should be family A2.
+    const f1 = await createFamily(
+      db,
+      { zoneId: zone.id, userId: zone.userId },
+      {
+        chapterId: zone.chapterId,
+        name: `Family Top ${unique()}`,
+        primaryMemberId: zone.memberIds[0],
+      },
+    );
+    await addFamilyMember(
+      db,
+      { zoneId: zone.id, userId: zone.userId },
+      f1.id,
+      { memberId: zone.memberIds[1] },
+    );
+    const f2 = await createFamily(
+      db,
+      { zoneId: zone.id, userId: zone.userId },
+      {
+        chapterId: zone.otherChapterId,
+        name: `Family Other ${unique()}`,
+        primaryMemberId: zone.memberIds[2],
+      },
+    );
+
+    for (const [memberId, chapterId, amount] of [
+      [zone.memberIds[0], zone.chapterId, "100.00"],
+      [zone.memberIds[1], zone.chapterId, "50.00"],
+      [zone.memberIds[2], zone.otherChapterId, "200.00"],
+    ] as const) {
+      const c = await createContribution(
+        db,
+        { zoneId: zone.id, userId: zone.userId },
+        {
+          chapterId,
+          memberId,
+          sourceType: "manual",
+          paymentMethodId: zone.cashPaymentMethodId,
+          contributionDate: TODAY,
+          lines: [{ givingTypeId: zone.givingTypeId, amount }],
+        },
+      );
+      await postContribution(
+        db,
+        { zoneId: zone.id, userId: zone.userId },
+        c.contribution.id,
+      );
+    }
+
+    const filters = {
+      dateFrom: shiftDays(TODAY, -1),
+      dateTo: shiftDays(TODAY, 1),
+      topN: 20,
+      partnershipOnly: false,
+    };
+    const result = await topFamilyReport.fetch(db, ctx, filters);
+
+    expect(result.rows.map((r) => r.familyReferenceCode)).toEqual([
+      f2.referenceCode,
+      f1.referenceCode,
+    ]);
+    expect(result.rows.map((r) => r.total)).toEqual(["200.0000", "150.0000"]);
+    expect(result.rows[1].memberCount).toBe(2);
+    expect(result.subtotals).toEqual([{ currencyCode: "GBP", total: "350.0000" }]);
+
+    const branding = await loadReportBranding(db, zone.id);
+    const bytes = await topFamilyReport.excel(
+      result.rows,
+      result.subtotals,
+      filters,
+      branding,
+    );
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(toArrayBuffer(bytes));
+    const sheet = wb.getWorksheet("Top families");
+    expect(sheet).toBeTruthy();
+    expect(sheet!.getCell("A1").value).toBe(branding.zoneName);
+  });
+
+  it("reversal pair nets to zero so the family drops out of the ranking", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const ctx = zoneCtx(zone);
+
+    const f = await createFamily(
+      db,
+      { zoneId: zone.id, userId: zone.userId },
+      {
+        chapterId: zone.chapterId,
+        name: `Family Reverse ${unique()}`,
+        primaryMemberId: zone.memberIds[0],
+      },
+    );
+
+    const c = await createContribution(
+      db,
+      { zoneId: zone.id, userId: zone.userId },
+      {
+        chapterId: zone.chapterId,
+        memberId: zone.memberIds[0],
+        sourceType: "manual",
+        paymentMethodId: zone.cashPaymentMethodId,
+        contributionDate: TODAY,
+        lines: [{ givingTypeId: zone.givingTypeId, amount: "75.00" }],
+      },
+    );
+    await postContribution(
+      db,
+      { zoneId: zone.id, userId: zone.userId },
+      c.contribution.id,
+    );
+    await reverseContribution(
+      db,
+      { zoneId: zone.id, userId: zone.userId },
+      c.contribution.id,
+      { reason: "test reversal" },
+    );
+
+    const result = await topFamilyReport.fetch(db, ctx, {
+      dateFrom: shiftDays(TODAY, -1),
+      dateTo: shiftDays(TODAY, 1),
+      topN: 20,
+      partnershipOnly: false,
+    });
+    expect(result.rows.find((r) => r.familyReferenceCode === f.referenceCode)).toBeUndefined();
   });
 });
 
