@@ -30,9 +30,21 @@
 -- So: a new migration, `IF NOT EXISTS` on both columns, runs once
 -- on every environment regardless of whether 0018/0019 landed.
 --
+-- Guard: `packages/db/scripts/check-journal-monotonic.mjs` (wired
+-- into `pnpm --filter @stewardledger/db check`) enforces strictly
+-- monotonic `when` values + matching `.sql` files + unique `idx`
+-- going forward, so this class of bug should be caught at PR review
+-- instead of in prod logs. 0018 and 0019 are explicitly
+-- grandfathered in that script with a back-reference to this file.
+--
+-- The accompanying `0023_snapshot.json` is byte-identical to
+-- `0022_snapshot.json` in declared schema — we're re-asserting
+-- columns that drizzle already considers part of the model. Only
+-- the snapshot's `id` and `prevId` differ to extend the chain.
+--
 -- (Same class of bug fixed in 814a132 — that one was an orphan
--- journal entry. We should consider lint-checking that journal
--- `when` values are strictly monotonic in CI.)
+-- journal entry, the duplicate-idx failure mode the lint script
+-- now also covers.)
 
 ALTER TABLE "zones" ADD COLUMN IF NOT EXISTS "retention_policy" jsonb DEFAULT '{}'::jsonb NOT NULL;
 --> statement-breakpoint
