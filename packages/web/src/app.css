@@ -390,6 +390,41 @@ body::before {
   background: var(--brass);
 }
 
+.sl-side-group-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.25rem 0.25rem 0.25rem 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: inherit;
+  text-align: left;
+}
+.sl-side-group-toggle:disabled {
+  cursor: default;
+}
+.sl-side-group-toggle:hover:not(:disabled) .sl-eyebrow {
+  color: var(--ink);
+}
+.sl-side-group-toggle:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+.sl-side-group-chevron {
+  width: 10px;
+  height: 10px;
+  color: var(--ink-mute);
+  transition: transform 120ms ease;
+  transform: rotate(-90deg);
+}
+.sl-side-group-chevron-open {
+  transform: rotate(0deg);
+}
+
 .sl-side-link {
   position: relative;
   display: flex;

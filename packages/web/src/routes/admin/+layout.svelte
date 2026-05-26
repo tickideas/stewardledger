@@ -6,7 +6,9 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
-  import { PLATFORM_NAV, isNavActive } from "$lib/nav";
+  import MobileNavDrawer from "$lib/MobileNavDrawer.svelte";
+  import SidebarNav from "$lib/SidebarNav.svelte";
+  import { PLATFORM_NAV } from "$lib/nav";
   import { isSuperAdmin, session, signOut } from "$lib/session.svelte";
   import { canEnterAdminPath } from "$lib/session-paths";
 
@@ -89,11 +91,18 @@
   );
 
   let profileOpen = $state(false);
+  let mobileNavOpen = $state(false);
   function toggleProfile() {
     profileOpen = !profileOpen;
   }
   function closeProfile() {
     profileOpen = false;
+  }
+  function openMobileNav() {
+    mobileNavOpen = true;
+  }
+  function closeMobileNav() {
+    mobileNavOpen = false;
   }
 
   async function handleSignOut() {
@@ -143,32 +152,8 @@
         </div>
       </div>
 
-      <nav class="flex flex-1 flex-col gap-7 overflow-y-auto px-6">
-        {#each groups as group (group.label)}
-          <div>
-            <div class="sl-eyebrow mb-3" style="font-size:10px">{group.label}</div>
-            <ul class="flex flex-col gap-0.5">
-              {#each group.items as item (item.href)}
-                {@const active = isNavActive(item, path)}
-                <li>
-                  <a
-                    href={item.href}
-                    aria-current={active ? "page" : undefined}
-                    class="sl-side-link"
-                    class:sl-side-link-active={active}
-                  >
-                    <span
-                      class="sl-side-link-rail"
-                      style={active ? "background:var(--brass)" : ""}
-                      aria-hidden="true"
-                    ></span>
-                    <span class="truncate">{item.label}</span>
-                  </a>
-                </li>
-              {/each}
-            </ul>
-          </div>
-        {/each}
+      <nav class="flex flex-1 flex-col gap-5 overflow-y-auto px-6">
+        <SidebarNav {groups} pathname={path} storageKey="admin" />
       </nav>
 
       <!-- Profile + sign-out -->
@@ -242,15 +227,29 @@
         style="background: linear-gradient(180deg, var(--brass-soft) 0%, var(--paper) 100%)"
       >
         <div class="flex items-center justify-between gap-3 px-5 py-3 sm:px-8">
-          <a href="/" class="flex items-center gap-2">
-            <span
-              class="inline-flex h-6 w-6 items-center justify-center rounded-[2px] bg-[var(--ink)] text-[10px] font-medium text-[var(--paper)] sl-display"
-              >S</span
+          <div class="flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              onclick={openMobileNav}
+              aria-label="Open navigation"
+              aria-expanded={mobileNavOpen}
+              aria-controls="sl-mobile-nav-admin"
+              class="-ml-2 inline-flex h-9 w-9 items-center justify-center rounded-[3px] text-[var(--ink)] transition-colors hover:bg-[var(--paper-soft)]"
             >
-            <span class="sl-display text-[15px] font-medium text-[var(--ink)]">
-              Steward<span class="sl-serif-italic font-normal text-[var(--brass-deep)]">Ledger</span>
-            </span>
-          </a>
+              <svg viewBox="0 0 18 18" class="h-4 w-4" fill="none" aria-hidden="true">
+                <path d="M2 4.5h14M2 9h14M2 13.5h14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+              </svg>
+            </button>
+            <a href="/" class="flex items-center gap-2">
+              <span
+                class="inline-flex h-6 w-6 items-center justify-center rounded-[2px] bg-[var(--ink)] text-[10px] font-medium text-[var(--paper)] sl-display"
+                >S</span
+              >
+              <span class="sl-display text-[15px] font-medium text-[var(--ink)]">
+                Steward<span class="sl-serif-italic font-normal text-[var(--brass-deep)]">Ledger</span>
+              </span>
+            </a>
+          </div>
           <div class="flex items-center gap-3">
             <span class="sl-eyebrow" style="color:var(--brass-deep);font-size:10px">Platform</span>
             <a
@@ -262,18 +261,36 @@
             >
           </div>
         </div>
-        <nav class="flex gap-6 overflow-x-auto border-t border-[var(--rule)] px-5 py-3 sm:px-8">
-          {#each groups as group (group.label)}
-            {#each group.items as item (item.href)}
-              <a
-                href={item.href}
-                class="sl-nav-link shrink-0"
-                aria-current={isNavActive(item, path) ? "page" : undefined}>{item.label}</a
-              >
-            {/each}
-          {/each}
-        </nav>
       </div>
+
+      <MobileNavDrawer
+        open={mobileNavOpen}
+        onclose={closeMobileNav}
+        eyebrow="Platform admin"
+        title="Cross-zone access"
+      >
+        <nav class="flex flex-col gap-5" id="sl-mobile-nav-admin">
+          <SidebarNav {groups} pathname={path} storageKey="admin" />
+        </nav>
+
+        <div class="mt-6 border-t border-[var(--rule)] pt-4">
+          <a href="/account" class="sl-side-link">
+            <span class="sl-side-link-rail" aria-hidden="true"></span>
+            <span class="truncate">Profile &amp; password</span>
+          </a>
+          <button
+            type="button"
+            onclick={() => {
+              closeMobileNav();
+              handleSignOut();
+            }}
+            class="sl-side-link w-full text-left"
+          >
+            <span class="sl-side-link-rail" aria-hidden="true"></span>
+            <span class="truncate">Sign out</span>
+          </button>
+        </div>
+      </MobileNavDrawer>
 
       <div class="px-6 pt-6 pb-12 sm:px-10 lg:pt-10 lg:pr-12 lg:pl-12">
         {@render children?.()}
