@@ -1,0 +1,51 @@
+-- Fix-up: re-apply columns from 0018/0019 that drizzle silently
+-- skipped in production.
+--
+-- Drizzle's pg migrator decides whether to run a journal entry by
+-- comparing the entry's `when` against the single max `created_at`
+-- in `__drizzle_migrations` (see pg-core/dialect.js → migrate). It
+-- does NOT track which specific entries have been applied. So if a
+-- later journal entry carries an *older* `when` than an
+-- already-applied entry, it gets silently skipped — no error, exit
+-- 0 on the migrate one-shot, broken column on the next read.
+--
+-- That's what happened here. Entries 0017, 0018, 0019 shipped with:
+--   0017_report_jobs_pr2        when = 1779724800000  (hand-rounded)
+--   0018_zone_retention_policy  when = 1779708428764  ← OLDER
+--   0019_import_files_purged_at when = 1779714042072  ← OLDER
+--   0020_zone_exports           when = 1779726067782
+--   ...
+-- Prod had already applied 0017 from an earlier deploy. On the
+-- next deploy, `lastDbMigration.created_at` was 1779724800000, so
+-- the runner skipped 0018 + 0019 (both <) and applied 20/21/22 (all
+-- >). Result: `zones.retention_policy` and `import_files.purged_at`
+-- never got created in prod. The /api/tenant/zones/retention-policy
+-- route blew up with `column "retention_policy" does not exist`.
+--
+-- We CAN'T fix this by editing 0018/0019's `when` in the journal:
+-- any DB that *did* apply them in order (fresh installs, dev DBs
+-- migrated incrementally before the timestamps drifted) would try
+-- to re-run the ADD COLUMN and fail.
+--
+-- So: a new migration, `IF NOT EXISTS` on both columns, runs once
+-- on every environment regardless of whether 0018/0019 landed.
+--
+-- Guard: `packages/db/scripts/check-journal-monotonic.mjs` (wired
+-- into `pnpm --filter @stewardledger/db check`) enforces strictly
+-- monotonic `when` values + matching `.sql` files + unique `idx`
+-- going forward, so this class of bug should be caught at PR review
+-- instead of in prod logs. 0018 and 0019 are explicitly
+-- grandfathered in that script with a back-reference to this file.
+--
+-- The accompanying `0023_snapshot.json` is byte-identical to
+-- `0022_snapshot.json` in declared schema — we're re-asserting
+-- columns that drizzle already considers part of the model. Only
+-- the snapshot's `id` and `prevId` differ to extend the chain.
+--
+-- (Same class of bug fixed in 814a132 — that one was an orphan
+-- journal entry, the duplicate-idx failure mode the lint script
+-- now also covers.)
+
+ALTER TABLE "zones" ADD COLUMN IF NOT EXISTS "retention_policy" jsonb DEFAULT '{}'::jsonb NOT NULL;
+--> statement-breakpoint
+ALTER TABLE "import_files" ADD COLUMN IF NOT EXISTS "purged_at" timestamp with time zone;
