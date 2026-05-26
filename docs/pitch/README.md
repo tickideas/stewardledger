@@ -9,8 +9,9 @@
 
 | File | Purpose |
 |---|---|
-| `STEWARDLEDGER-PITCH.md` | The deck. Marp-formatted Markdown; one slide per `---` block. |
-| `README.md` (this file) | How to read, present, and export it. |
+| `STEWARDLEDGER-PITCH.md` | The full deck (~21 slides). Marp-formatted Markdown; one slide per `---` block. |
+| `STEWARDLEDGER-HANDOUT.md` | The one-page A4 take-away for Pastor after the meeting. Marp-formatted. |
+| `README.md` (this file) | How to read, present, and export both. |
 
 ## How to read it
 
@@ -28,10 +29,13 @@ Requires Node:
 # one-off install
 pnpm dlx @marp-team/marp-cli --version || npm i -g @marp-team/marp-cli
 
-# export
+# export the full deck
 marp docs/pitch/STEWARDLEDGER-PITCH.md --pdf      # → STEWARDLEDGER-PITCH.pdf
 marp docs/pitch/STEWARDLEDGER-PITCH.md --pptx     # → STEWARDLEDGER-PITCH.pptx
 marp docs/pitch/STEWARDLEDGER-PITCH.md --html     # → STEWARDLEDGER-PITCH.html (preview)
+
+# export the one-page A4 handout
+marp docs/pitch/STEWARDLEDGER-HANDOUT.md --pdf --allow-local-files
 ```
 
 ### Option 2 — VS Code Marp extension
@@ -41,6 +45,21 @@ Install the **Marp for VS Code** extension, open the deck, click "Open Preview".
 ### Option 3 — Slides.com / Google Slides
 
 Copy the Markdown, paste into your preferred deck tool, restyle. The slide content is the asset; the layout is replaceable.
+
+## The handout
+
+`STEWARDLEDGER-HANDOUT.md` is a single A4 page intended to be **printed and left with the pastor** at the end of the meeting. It mirrors the deck's structure but compresses it into:
+
+- One headline + tagline.
+- A 10-row comparison table (Church Plus v2 vs StewardLedger).
+- Three short lists: shipping today, planned, adoption strategy.
+- The three asks.
+
+Design rules for the handout:
+
+- Always one page. Anything that won't fit doesn't belong.
+- Same tone as the deck — respectful, no people-comparisons.
+- The CSS in the handout's front-matter is the only inline styling we accept. Keep it; do not add brand colours beyond the brass `#c9a010` accent and warm parchment greys already in `BRAND.md`.
 
 ## How to tweak
 
