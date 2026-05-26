@@ -180,6 +180,7 @@
 - **Group by**: per-currency ranking (no silent FX).
 - **Export**: Excel + PDF (via the generic branded-table renderer).
 - **Legacy mapping**: `Top Family Report` (Church Plus `custom_client_app`). See [`CHURCHPLUS-PORT-NOTES.md` §2.2.1](CHURCHPLUS-PORT-NOTES.md#221-family--household-grouping).
+- **Attribution**: point-in-time. A contribution counts against the household the giver belonged to ON the contribution date (`joined_at <= contribution_date AND (left_at IS NULL OR left_at > contribution_date)`), not their current household. A bulk transfer therefore does NOT silently re-attribute historical giving.
 - **Acceptance**: per-family totals match the sum of member contributions; reversal pairs net to zero and drop a household out of the ranking when the only giving was reversed; partnership-only filter restricts to `has_partnership_target = true` giving types.
 
 ### 2.15 Zone dashboard

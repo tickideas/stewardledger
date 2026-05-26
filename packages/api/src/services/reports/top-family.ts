@@ -132,12 +132,18 @@ export const topFamilyReport: ReportSpec<TopFamilyFilters, TopFamilyRow> = {
           eq(givingTypes.id, contributionLines.givingTypeId),
         ),
       )
+      // Point-in-time membership match: see
+      // services/families.ts:familyGivingTotals header. A contribution
+      // is attributed to the household the giver belonged to ON the
+      // contribution date, so a later transfer doesn't silently rewrite
+      // last year's ranking.
       .innerJoin(
         familyMembers,
         and(
           eq(familyMembers.zoneId, contributions.zoneId),
           eq(familyMembers.memberId, contributions.memberId),
-          isNull(familyMembers.leftAt),
+          sql`${familyMembers.joinedAt} <= ${contributions.contributionDate}`,
+          sql`(${familyMembers.leftAt} is null or ${familyMembers.leftAt} > ${contributions.contributionDate})`,
         ),
       )
       .innerJoin(

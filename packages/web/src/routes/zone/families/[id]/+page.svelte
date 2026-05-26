@@ -61,6 +61,11 @@
 
   let actionError = $state<string | null>(null);
 
+  // Typeahead bookkeeping: debounce keystrokes + abort the in-flight
+  // search so a slow response can't overwrite a faster, newer one.
+  let searchTimer: ReturnType<typeof setTimeout> | null = null;
+  let searchController: AbortController | null = null;
+
   async function refresh() {
     try {
       const res = await api.get<FamilyDetailResp>(`/api/tenant/families/${familyId}`);
@@ -83,7 +88,15 @@
     refresh();
   });
 
-  async function searchMembers() {
+  function searchMembers() {
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(runSearch, 200);
+  }
+
+  async function runSearch() {
+    searchController?.abort();
+    const controller = new AbortController();
+    searchController = controller;
     try {
       const params = new URLSearchParams();
       if (memberQuery.trim()) params.set("q", memberQuery.trim());
@@ -92,6 +105,7 @@
       params.set("limit", "10");
       const res = await api.get<{ items: MemberLite[] }>(
         `/api/tenant/members?${params.toString()}`,
+        controller.signal,
       );
       memberResults = res.items;
     } catch (err) {
@@ -156,6 +170,8 @@
 
   async function removeMember(member: FamilyMemberRow) {
     if (!family) return;
+    // window.prompt() is the v1 placeholder until the shared reason-
+    // modal lands (also TODO on the member-archive flow). Replace then.
     const reason = window.prompt("Reason for archiving this household member?");
     if (!reason) return;
     actionError = null;
@@ -172,6 +188,7 @@
 
   async function deleteFamily() {
     if (!family) return;
+    // window.prompt() placeholder — same TODO as removeMember().
     const reason = window.prompt("Reason for archiving this household? (audit)");
     if (!reason) return;
     actionError = null;

@@ -140,9 +140,15 @@ export const familyMembers = pgTable(
   (table) => [
     // Composite FK target so future tables can scope by (zone_id, id).
     unique("family_members_zone_id_unique").on(table.zoneId, table.id),
-    // Composite cross-tenant FKs. The single-column FKs above keep
-    // cascading delete semantics; these guarantee that (zone_id,
-    // family_id) and (zone_id, member_id) cannot disagree across tenants.
+    // Composite cross-tenant FKs. The single-column FKs declared above
+    // via `.references(() => ...)` keep cascading-delete semantics; the
+    // composite FKs below guarantee that (zone_id, family_id) and
+    // (zone_id, member_id) cannot disagree across tenants. The
+    // duplication is intentional — do not "clean up" by dropping either
+    // half. Removing the single-column FK breaks cascade-on-delete;
+    // removing the composite FK reopens cross-tenant smuggling (see
+    // tenant-families.test.ts "composite FK refuses cross-tenant
+    // smuggling" and families.schema.test.ts).
     foreignKey({
       name: "family_members_zone_family_fk",
       columns: [table.zoneId, table.familyId],

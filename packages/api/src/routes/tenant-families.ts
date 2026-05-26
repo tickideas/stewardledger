@@ -117,6 +117,7 @@ function mapFamilyErrorStatus(code: string): 400 | 404 | 409 | 422 {
     case "family_deleted":
       return 409;
     case "member_chapter_mismatch":
+    case "member_chapter_missing":
     case "address_not_in_member":
     case "address_not_in_zone":
     case "primary_address_without_member":
@@ -267,10 +268,14 @@ tenantFamiliesRouter.get("/members/:id/family", async (c) => {
   const family = await familyForMember(db, ctx.zoneId, memberId);
   if (!family) return c.json({ family: null });
 
+  // Existence-oracle guard: a cross-zone member returns `null` from
+  // `familyForMember` (200), so an in-zone member whose family the caller
+  // cannot see must look the same shape. Otherwise a chapter-A-only admin
+  // could probe member ids and distinguish "no family" (200 null) from
+  // "family in chapter B" (403). Mirrors the member-statement existence
+  // oracle in services/reports/member-statement.ts.
   const scope = await requireChapterScope(ctx, family.chapterId, FAMILY_ZONE_READ_ROLES);
-  if (!scope.ok) {
-    return c.json({ error: { code: scope.code, message: scope.message } }, scope.status);
-  }
+  if (!scope.ok) return c.json({ family: null });
   return c.json({ family });
 });
 
@@ -338,6 +343,14 @@ tenantFamiliesRouter.patch(
 
 // ─── Delete (soft) ───────────────────────────────────────────────────
 
+// `reason` rides on the query string because the in-house `api.delete()`
+// wrapper does not forward a body (DELETE bodies are valid but rare in
+// browser fetch wrappers, and ours is no exception). Query-string reasons
+// land in access logs alongside the request line, which is acceptable
+// here because the audit row already captures the actor + entity; the
+// reason text itself is operator-facing context, not PII. When the client
+// wrapper grows a DELETE-body affordance, fold both delete routes to use
+// it for parity with PATCH.
 const deleteFamilyQuery = z.object({
   reason: z.string().trim().max(500).optional(),
 });

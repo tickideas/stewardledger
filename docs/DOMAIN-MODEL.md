@@ -337,6 +337,8 @@ family_members
   check  family_members_window_check       (left_at is null or left_at >= joined_at)
 ```
 
+Reporting invariant (point-in-time attribution): household roll-ups (`familyGivingTotals`, `top-family`, the member-statement household band) join through `family_members` with `joined_at <= contribution_date AND (left_at IS NULL OR left_at > contribution_date)` so a contribution attributes to the household the giver belonged to on the contribution date — not their current household. Bulk transfer (`transferFamily`) moves the open membership row in place and does not preserve a historical bracket on the source household; if you need that fidelity, archive the source member (`removeFamilyMember`) and add to the destination instead.
+
 Service-layer invariants in `packages/api/src/services/families.ts`:
 
 - A family lives in one chapter; members must be in that chapter when they join.

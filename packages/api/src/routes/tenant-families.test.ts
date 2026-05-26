@@ -399,6 +399,35 @@ describe("tenant families routes", () => {
     expect(body.family).toBeNull();
   });
 
+  it("/members/:id/family hides in-zone families from out-of-scope chapter admins (existence oracle)", async () => {
+    // Chapter admin for chapterAOther probes a member in chapterA who is
+    // a primary contact of an existing household. The response must be
+    // `{ family: null }` — indistinguishable from "member has no
+    // family" — so the probe can't be used to enumerate household
+    // existence in chapters outside the caller's scope.
+    const fam = await createFamilyAs(userAOwner, zoneA.slug, {
+      chapterId: chapterA,
+      name: `Probe target ${unique()}`,
+      primaryMemberId: await seedMember(zoneA.id, "ProbeTgt", chapterA),
+    });
+    expect(fam.id).toBeTruthy();
+    // The probe target IS in a household; query it as the out-of-scope
+    // chapter admin.
+    const targetMember = (
+      await db
+        .select({ memberId: familyMembers.memberId })
+        .from(familyMembers)
+        .where(sql`${familyMembers.familyId} = ${fam.id} and ${familyMembers.leftAt} is null`)
+    )[0]!.memberId;
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(
+      fakeSession(userChapterAdminAOther, "chOther@x"),
+    );
+    const res = await call(zoneA.slug, `/api/tenant/members/${targetMember}/family`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { family: unknown };
+    expect(body.family).toBeNull();
+  });
+
   // ─── Chapter clamp + role gating ───────────────────────────────────
 
   it("chapter-admin in chapter-A can create a family in chapter-A only", async () => {

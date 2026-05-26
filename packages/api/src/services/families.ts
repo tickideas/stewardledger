@@ -124,7 +124,17 @@ async function ensureMemberInZoneAndChapter(
     )
     .limit(1);
   if (!row) throw new FamilyError("member_not_found", "Member is not in this zone.");
-  if (row.chapterId && row.chapterId !== chapterId) {
+  // A family is chapter-scoped (DOMAIN-MODEL.md §3.5). A chapterless
+  // member would force the operator to pick a chapter implicitly by
+  // picking the family — better to fail loud and route them through
+  // the member-profile chapter-assign flow first.
+  if (!row.chapterId) {
+    throw new FamilyError(
+      "member_chapter_missing",
+      "Assign the member to a chapter before adding them to a household.",
+    );
+  }
+  if (row.chapterId !== chapterId) {
     throw new FamilyError(
       "member_chapter_mismatch",
       "Member belongs to a different chapter than this family.",
@@ -662,6 +672,11 @@ export async function removeFamilyMember(
       // archive write doesn't leave a stale primary in history.
     }
 
+    // `left_at` is a calendar date in UTC — same convention as
+    // `member_addresses.date_to` and `joined_at` above. A zone in a far-
+    // east TZ writing at local 02:00 will see UTC "yesterday", which is
+    // consistent across the schema; the `family_members_window_check`
+    // (left_at >= joined_at) covers same-day add+remove.
     const today = new Date().toISOString().slice(0, 10);
     await tx
       .update(familyMembers)
@@ -851,6 +866,13 @@ export async function familyForMember(
  * `contribution_lines.amount` (so original + reversal nets to zero). The
  * caller is responsible for clamping `dateFrom`/`dateTo` to its own
  * reporting window — this helper does not infer a default range.
+ *
+ * Membership is matched POINT-IN-TIME: a contribution is attributed to a
+ * household only if the giver was in that household on the contribution
+ * date (`joined_at <= contribution_date AND (left_at IS NULL OR left_at >
+ * contribution_date)`). This prevents transfers and member-archives from
+ * silently re-attributing historical giving — a treasurer reading last
+ * year's number gets last year's household composition.
  */
 export async function familyGivingTotals(
   database: Db,
@@ -876,7 +898,8 @@ export async function familyGivingTotals(
       and(
         eq(familyMembers.zoneId, contributions.zoneId),
         eq(familyMembers.memberId, contributions.memberId),
-        isNull(familyMembers.leftAt),
+        sql`${familyMembers.joinedAt} <= ${contributions.contributionDate}`,
+        sql`(${familyMembers.leftAt} is null or ${familyMembers.leftAt} > ${contributions.contributionDate})`,
       ),
     )
     .where(
@@ -1003,7 +1026,7 @@ export async function getFamilyDetail(
     .where(
       and(eq(familyMembers.zoneId, zoneId), eq(familyMembers.familyId, familyId)),
     )
-    .orderBy(sql`${familyMembers.isPrimaryContact} desc nulls last, ${members.fullName} asc`);
+    .orderBy(sql`${familyMembers.isPrimaryContact} desc, ${members.fullName} asc`);
 
   return {
     ...(family as FamilyRow),

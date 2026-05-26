@@ -6,8 +6,17 @@
 
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { chapters, members, zones } from "@stewardledger/db/schema";
+import {
+  chapters,
+  contributionLines,
+  contributions,
+  familyMembers,
+  givingTypes,
+  members,
+  zones,
+} from "@stewardledger/db/schema";
 import { db } from "../db";
+import { seedZoneGivingSetup } from "./giving-setup-seed";
 import {
   FamilyError,
   addFamilyMember,
@@ -325,5 +334,152 @@ describe("services/families — service-level rules", () => {
     const chIds = chRes.rows.map((r) => r.id);
     expect(chIds).toContain(fB.id);
     expect(chIds).not.toContain(fA.id);
+  });
+});
+
+/**
+ * Point-in-time attribution: a contribution counts against the household
+ * the giver belonged to ON the contribution date, even after the giver
+ * transfers to a different household. Catches a regression to the
+ * previous semantic (current-membership join) that re-attributed history.
+ */
+describe("services/families — historical attribution", () => {
+  let zoneId: string;
+  let chapterId: string;
+  let givingTypeId: string;
+  let person: string;
+
+  beforeAll(async () => {
+    zoneId = await seedZone();
+    await seedZoneGivingSetup(db, zoneId, "GBP");
+    chapterId = await seedChapter(zoneId, "Attribution");
+    person = await seedMember(zoneId, chapterId, "Pat");
+    const [gt] = await db
+      .select({ id: givingTypes.id })
+      .from(givingTypes)
+      .where(sql`${givingTypes.zoneId} = ${zoneId} and ${givingTypes.shortCode} = 'TITHE'`)
+      .limit(1);
+    givingTypeId = gt.id;
+  });
+
+  afterAll(async () => {
+    // Posted contributions are immutable / undeletable via the
+    // contributions_no_delete_when_posted trigger; disable it for the
+    // test cleanup (same pattern as contributions.test.ts:186). The
+    // advisory lock serialises against any other suite calling
+    // applyContributionTriggers concurrently.
+    const TRIGGER_BOOTSTRAP_LOCK_TAG = "stewardledger.applyContributionTriggers";
+    const guards = [
+      ["contributions", "contributions_posted_guard"],
+      ["contributions", "contributions_no_delete_when_posted"],
+      ["contribution_lines", "contribution_lines_posted_guard"],
+    ] as const;
+    await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtext(${TRIGGER_BOOTSTRAP_LOCK_TAG}))`,
+      );
+      for (const [table, name] of guards) {
+        await tx.execute(sql.raw(`alter table ${table} disable trigger ${name}`));
+      }
+      await tx.execute(sql`delete from contribution_lines where zone_id = ${zoneId}`);
+      await tx.execute(sql`delete from contributions where zone_id = ${zoneId}`);
+      await tx.execute(sql`delete from family_members where zone_id = ${zoneId}`);
+      await tx.execute(sql`delete from families where zone_id = ${zoneId}`);
+      await tx.execute(sql`delete from members where zone_id = ${zoneId}`);
+      await tx.execute(sql`delete from chapters where zone_id = ${zoneId}`);
+      await tx.execute(sql`delete from zones where id = ${zoneId}`);
+      for (const [table, name] of guards) {
+        await tx.execute(sql.raw(`alter table ${table} enable trigger ${name}`));
+      }
+    });
+  });
+
+  it("familyGivingTotals attributes to the household active on the contribution date, not the current one", async () => {
+    // Model the real-world shape: Pat was in household A from
+    // 2025-01-01 to 2025-05-31, then moved to household B from
+    // 2025-06-01 onward. We insert the rows directly because
+    // transferFamily moves a row in place rather than closing one
+    // and opening another — the test needs both states to coexist.
+    const famA = await createFamily(
+      db,
+      { zoneId, userId: null as unknown as string },
+      { chapterId, name: `Attrib A ${unique()}` },
+    );
+    const famB = await createFamily(
+      db,
+      { zoneId, userId: null as unknown as string },
+      { chapterId, name: `Attrib B ${unique()}` },
+    );
+    await db.insert(familyMembers).values({
+      zoneId,
+      familyId: famA.id,
+      memberId: person,
+      relationship: "head",
+      isPrimaryContact: false,
+      joinedAt: "2025-01-01",
+      leftAt: "2025-05-31",
+    });
+    await db.insert(familyMembers).values({
+      zoneId,
+      familyId: famB.id,
+      memberId: person,
+      relationship: "head",
+      isPrimaryContact: true,
+      joinedAt: "2025-06-01",
+      leftAt: null,
+    });
+
+    // Two contributions: 2025-03-01 (inside Pat's A window) and
+    // 2025-08-01 (inside Pat's B window). Insert as draft so the
+    // posted-immutability trigger doesn't reject the line insert; then
+    // transition status to posted via UPDATE (legal per
+    // contributions_posted_guard — the trigger allows draft→posted).
+    const seedContribution = async (
+      date: string,
+      amount: string,
+    ): Promise<string> => {
+      const [row] = await db
+        .insert(contributions)
+        .values({
+          zoneId,
+          chapterId,
+          memberId: person,
+          sourceType: "manual",
+          contributionDate: date,
+          totalAmount: amount,
+          currencyCode: "GBP",
+          status: "draft",
+        })
+        .returning({ id: contributions.id });
+      await db.insert(contributionLines).values({
+        zoneId,
+        contributionId: row.id,
+        givingTypeId,
+        amount,
+        currencyCode: "GBP",
+      });
+      await db
+        .update(contributions)
+        .set({ status: "posted", postedAt: new Date(`${date}T10:00:00Z`) })
+        .where(sql`${contributions.id} = ${row.id}`);
+      return row.id;
+    };
+    await seedContribution("2025-03-01", "100.0000");
+    await seedContribution("2025-08-01", "50.0000");
+
+    const totalsA = await familyGivingTotals(db, zoneId, famA.id, {
+      dateFrom: "2025-01-01",
+      dateTo: "2025-12-31",
+    });
+    const totalsB = await familyGivingTotals(db, zoneId, famB.id, {
+      dateFrom: "2025-01-01",
+      dateTo: "2025-12-31",
+    });
+
+    // March contribution attributes to A; August contribution attributes
+    // to B. The pre-fix current-membership join would have rolled both
+    // into B (Pat's current household).
+    expect(totalsA).toEqual([{ currencyCode: "GBP", total: "100.0000" }]);
+    expect(totalsB).toEqual([{ currencyCode: "GBP", total: "50.0000" }]);
   });
 });
