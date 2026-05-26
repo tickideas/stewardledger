@@ -5,7 +5,7 @@ Branch (proposed): `feat/families-households`
 Phase: 10 — Billing & GA exit-checklist item *"Family / household grouping"*.
 Reference: [`docs/CHURCHPLUS-PORT-NOTES.md` §2.2.1](../CHURCHPLUS-PORT-NOTES.md#221-family--household-grouping).
 
-> Status: **awaiting approval**. Do not start coding until the plan is approved.
+> Status: **implemented** in PR #70. Kept as the archived implementation plan and checklist for the families / households v1 port.
 
 ---
 
@@ -358,7 +358,7 @@ The PR is complete when every box below is checked:
 - [ ] Tests added: unit (`families.test.ts`), integration (`tenant-families.test.ts` incl. 12-case cross-tenant fuzz), report golden files (`reports.test.ts`).
 - [ ] `pnpm -w lint && pnpm -w typecheck && pnpm -w test` all green.
 - [ ] `docs/DOMAIN-MODEL.md` updated: new §3.5 "Families and household membership" + a `Family / Family Member` row added to the §13 legacy mapping table.
-- [ ] `docs/REPORTS.md` updated: new §2.16 entry for **Top Family**; `groupBy = 'family'` note added to §2.1 Member statement and §2.2 Member finance summary.
+- [x] `docs/REPORTS.md` updated: new §2.15 entry for **Top Family**; household band note added to §2.1 Member statement.
 - [ ] `docs/ROADMAP.md` Phase 10 line "Family / household grouping" ticked.
 - [ ] `docs/CHURCHPLUS-PORT-NOTES.md` §2.2.1 marked as **landed** with the merge SHA.
 - [ ] PR body mirrors this exit checklist verbatim and links back to `docs/plans/2026-05-26-families-households-v1.md`.

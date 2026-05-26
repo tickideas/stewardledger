@@ -1,9 +1,10 @@
 // packages/api/src/services/reports/top-family.ts
-// Phase 10 / GA — Top Family report (REPORTS.md §2.16).
-// Mirrors top-partners.ts but groups by household (`families` joined
-// through `family_members.left_at is null`). Ranks per currency, with
-// the same `partnershipOnly` toggle that covers the legacy
-// `Top Family Report`.
+// Phase 10 / GA — Top Family report (REPORTS.md §2.15).
+// Mirrors top-partners.ts but groups by household via point-in-time
+// membership (`joined_at <= contribution_date` and
+// `left_at is null OR left_at > contribution_date`). Ranks per
+// currency, with the same `partnershipOnly` toggle that covers the
+// legacy `Top Family Report`.
 // RELEVANT FILES: packages/api/src/services/reports/top-partners.ts, packages/api/src/services/reports/registry.ts, packages/db/src/schema/families.ts, docs/CHURCHPLUS-PORT-NOTES.md
 
 import Decimal from "decimal.js";

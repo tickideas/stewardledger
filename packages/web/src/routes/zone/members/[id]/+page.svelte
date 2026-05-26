@@ -131,6 +131,7 @@
     memberReferenceCode: string;
     isPrimaryContact: boolean;
     relationship: string | null;
+    leftAt: string | null;
   };
   type HouseholdSummary = {
     id: string;
@@ -159,7 +160,7 @@
           `/api/tenant/families/${res.family.id}`,
           signal,
         );
-        household = { ...res.family, members: detail.family.members.filter((m) => !(m as unknown as { leftAt: string | null }).leftAt) };
+        household = { ...res.family, members: detail.family.members.filter((m) => !m.leftAt) };
       }
       householdLoadError = null;
     } catch (err) {

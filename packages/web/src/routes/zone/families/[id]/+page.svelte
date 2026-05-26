@@ -7,6 +7,7 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { api, ApiError, isAbortError } from "$lib/api";
+  import { formatMoney } from "@stewardledger/shared";
 
   type FamilyMemberRow = {
     id: string;
@@ -204,6 +205,10 @@
   function fmtMember(row: FamilyMemberRow): string {
     return row.memberFullName ?? row.memberReferenceCode;
   }
+
+  function fmtMoney(total: CurrencyTotal): string {
+    return formatMoney({ amount: total.total, currency: total.currencyCode });
+  }
 </script>
 
 <div class="pt-2 pb-10 lg:pt-0">
@@ -262,7 +267,7 @@
         {#each givingTotals as t}
           <li class="flex items-baseline justify-between">
             <span class="sl-mono text-[12px] text-[var(--ink-soft)]">{t.currencyCode}</span>
-            <span class="sl-display text-[20px] text-[var(--ink)]">{t.total}</span>
+            <span class="sl-display text-[20px] text-[var(--ink)]">{fmtMoney(t)}</span>
           </li>
         {:else}
           <li class="text-[13px] text-[var(--ink-mute)]">No posted giving in this window.</li>

@@ -105,10 +105,11 @@
             controller.signal,
           );
           if (my === loadToken) householdTotals = detail.givingTotals;
-        } catch {
-          householdTotals = [];
+        } catch (err) {
+          if (isAbortError(err)) return;
+          if (my === loadToken) householdTotals = [];
         }
-      } else {
+      } else if (my === loadToken) {
         householdTotals = [];
       }
       loadError = null;
