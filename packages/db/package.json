@@ -10,7 +10,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && node scripts/check-journal-monotonic.mjs",
+    "check:journal": "node scripts/check-journal-monotonic.mjs",
     "lint": "biome lint src",
     "clean": "rm -rf dist",
     "db:generate": "drizzle-kit generate",
