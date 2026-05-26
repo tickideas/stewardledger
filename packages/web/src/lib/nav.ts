@@ -13,6 +13,8 @@ export type NavItem = {
 };
 
 export type NavGroup = {
+  /** Stable id used to persist collapsed/expanded state in localStorage. */
+  key: string;
   label: string;
   items: NavItem[];
 };
@@ -39,6 +41,7 @@ export function roleForPath(pathname: string): Role {
 /** Platform-admin sidebar — what the platform admin needs and only that. */
 export const PLATFORM_NAV: NavGroup[] = [
   {
+    key: "tenants",
     label: "Tenants",
     items: [
       { href: "/admin/zones", label: "Zones" },
@@ -47,6 +50,7 @@ export const PLATFORM_NAV: NavGroup[] = [
     ],
   },
   {
+    key: "access",
     label: "Access",
     items: [
       { href: "/admin/administrators", label: "Administrators" },
@@ -56,12 +60,26 @@ export const PLATFORM_NAV: NavGroup[] = [
 ];
 
 /**
- * Zonal sidebar. The zonal admin reads across every chapter in their zone,
- * so the navigation starts with the zone's organisational structure, then
- * separates membership, giving, insight, and settings tasks.
+ * Zonal sidebar. The zonal admin reads across every chapter in their zone.
+ *
+ * Insight leads with Dashboard because that's the landing surface for the
+ * zonal role; pinning it to the top means the section auto-opens on first
+ * visit and the admin can collapse the others to keep the rail short as
+ * more items are added. After Insight, the order follows the underlying
+ * data model: organisation → membership → giving → operations/settings.
  */
 export const ZONAL_NAV: NavGroup[] = [
   {
+    key: "insight",
+    label: "Insight",
+    items: [
+      { href: "/zone/dashboard", label: "Dashboard" },
+      { href: "/zone/partnership-progress", label: "Partnership progress" },
+      { href: "/zone/reports", label: "Reports" },
+    ],
+  },
+  {
+    key: "organization",
     label: "Organization",
     items: [
       { href: "/zone/groups", label: "Groups" },
@@ -69,6 +87,7 @@ export const ZONAL_NAV: NavGroup[] = [
     ],
   },
   {
+    key: "membership",
     label: "Membership",
     items: [
       { href: "/zone/members", label: "Members" },
@@ -76,6 +95,7 @@ export const ZONAL_NAV: NavGroup[] = [
     ],
   },
   {
+    key: "giving",
     label: "Giving",
     items: [
       { href: "/zone/contributions", label: "Contributions" },
@@ -86,14 +106,7 @@ export const ZONAL_NAV: NavGroup[] = [
     ],
   },
   {
-    label: "Insight",
-    items: [
-      { href: "/zone/dashboard", label: "Dashboard" },
-      { href: "/zone/partnership-progress", label: "Partnership progress" },
-      { href: "/zone/reports", label: "Reports" },
-    ],
-  },
-  {
+    key: "settings",
     label: "Settings",
     items: [
       { href: "/zone/administrators", label: "Team access" },
@@ -110,6 +123,7 @@ export const ZONAL_NAV: NavGroup[] = [
  */
 export const CHURCH_NAV: NavGroup[] = [
   {
+    key: "chapter",
     label: "Chapter",
     items: [
       { href: "/church/overview", label: "Overview" },
@@ -117,6 +131,7 @@ export const CHURCH_NAV: NavGroup[] = [
     ],
   },
   {
+    key: "giving",
     label: "Giving",
     items: [
       { href: "/church/contributions", label: "Contributions" },
@@ -124,10 +139,12 @@ export const CHURCH_NAV: NavGroup[] = [
     ],
   },
   {
+    key: "insight",
     label: "Insight",
     items: [{ href: "/church/reports", label: "Reports" }],
   },
   {
+    key: "admin",
     label: "Admin",
     items: [{ href: "/church/settings", label: "Settings" }],
   },

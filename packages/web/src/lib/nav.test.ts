@@ -7,17 +7,28 @@ import { describe, expect, it } from "vitest";
 import { ZONAL_NAV, isNavActive } from "./nav";
 
 describe("ZONAL_NAV", () => {
-  it("starts with the Organization group and orders Groups before Chapters", () => {
+  it("starts with Insight so Dashboard is the first sidebar item", () => {
     // `toMatchObject` matches arrays positionally, so this assertion locks the
     // sidebar order by index. Do not switch to `arrayContaining` — ordering is
-    // part of the contract this test protects.
+    // part of the contract this test protects. The zonal admin lands on
+    // `/zone/dashboard`; pinning Insight first means the auto-open group is
+    // also the top group, satisfying "Dashboard at the top, first thing open."
     expect(ZONAL_NAV[0]).toMatchObject({
-      label: "Organization",
+      label: "Insight",
       items: [
-        { href: "/zone/groups", label: "Groups" },
-        { href: "/zone/chapters", label: "Chapters" },
+        { href: "/zone/dashboard", label: "Dashboard" },
+        { href: "/zone/partnership-progress", label: "Partnership progress" },
+        { href: "/zone/reports", label: "Reports" },
       ],
     });
+  });
+
+  it("keeps the Organization group ordered Groups before Chapters", () => {
+    const organization = ZONAL_NAV.find((group) => group.label === "Organization");
+    expect(organization?.items).toEqual([
+      { href: "/zone/groups", label: "Groups" },
+      { href: "/zone/chapters", label: "Chapters" },
+    ]);
   });
 
   it("keeps team administration under Settings with a clearer label", () => {

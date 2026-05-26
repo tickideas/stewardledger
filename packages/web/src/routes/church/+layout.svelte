@@ -23,7 +23,10 @@
     type ChapterChoice,
   } from "$lib/active-chapter.svelte";
   import { api } from "$lib/api";
-  import { CHURCH_NAV, isNavActive } from "$lib/nav";
+  import MobileNavDrawer from "$lib/MobileNavDrawer.svelte";
+  import MobileNavTrigger from "$lib/MobileNavTrigger.svelte";
+  import SidebarNav from "$lib/SidebarNav.svelte";
+  import { CHURCH_NAV } from "$lib/nav";
   import {
     authenticatedLandingPath,
     canAccessRole,
@@ -166,6 +169,13 @@
   // ─── Popovers ────────────────────────────────────────────────────────────
   let profileOpen = $state(false);
   let chapterSwitcherOpen = $state(false);
+  let mobileNavOpen = $state(false);
+  function openMobileNav() {
+    mobileNavOpen = true;
+  }
+  function closeMobileNav() {
+    mobileNavOpen = false;
+  }
 
   function toggleProfile() {
     profileOpen = !profileOpen;
@@ -285,32 +295,8 @@
         </div>
       {/if}
 
-      <nav class="flex flex-1 flex-col gap-7 overflow-y-auto px-6">
-        {#each CHURCH_NAV as group (group.label)}
-          <div>
-            <div class="sl-eyebrow mb-3" style="font-size:10px">{group.label}</div>
-            <ul class="flex flex-col gap-0.5">
-              {#each group.items as item (item.href)}
-                {@const active = isNavActive(item, path)}
-                <li>
-                  <a
-                    href={item.href}
-                    aria-current={active ? "page" : undefined}
-                    class="sl-side-link"
-                    class:sl-side-link-active={active}
-                  >
-                    <span
-                      class="sl-side-link-rail"
-                      style={active ? "background:var(--brass)" : ""}
-                      aria-hidden="true"
-                    ></span>
-                    <span class="truncate">{item.label}</span>
-                  </a>
-                </li>
-              {/each}
-            </ul>
-          </div>
-        {/each}
+      <nav class="flex flex-1 flex-col gap-5 overflow-y-auto px-6">
+        <SidebarNav groups={CHURCH_NAV} pathname={path} storageKey="church" />
 
         {#if showZoneLink || showAdminLink}
           <div class="mt-2 border-t border-[var(--rule)] pt-5">
@@ -396,15 +382,18 @@
         style="background: linear-gradient(180deg, var(--brass-soft) 0%, var(--paper) 100%)"
       >
         <div class="flex items-center justify-between gap-3 px-5 py-3 sm:px-8">
-          <a href="/" class="flex items-center gap-2">
-            <span
-              class="inline-flex h-6 w-6 items-center justify-center rounded-[2px] bg-[var(--ink)] text-[10px] font-medium text-[var(--paper)] sl-display"
-              >S</span
-            >
-            <span class="sl-display text-[15px] font-medium text-[var(--ink)]">
-              Steward<span class="sl-serif-italic font-normal text-[var(--brass-deep)]">Ledger</span>
-            </span>
-          </a>
+          <div class="flex min-w-0 items-center gap-2">
+            <MobileNavTrigger open={mobileNavOpen} controls="sl-mobile-nav-church" onclick={openMobileNav} />
+            <a href="/" class="flex items-center gap-2">
+              <span
+                class="inline-flex h-6 w-6 items-center justify-center rounded-[2px] bg-[var(--ink)] text-[10px] font-medium text-[var(--paper)] sl-display"
+                >S</span
+              >
+              <span class="sl-display text-[15px] font-medium text-[var(--ink)]">
+                Steward<span class="sl-serif-italic font-normal text-[var(--brass-deep)]">Ledger</span>
+              </span>
+            </a>
+          </div>
           <div class="flex items-center gap-3">
             {#if activeChapter}
               <span class="max-w-[10rem] truncate text-[12px] text-[var(--ink-mute)]" title={activeChapter.name}>
@@ -422,36 +411,73 @@
             >
           </div>
         </div>
-        <!-- Mobile chapter switcher: a plain <select> is unbeatable here. -->
-        {#if chapters.length > 1}
-          <div class="border-t border-[var(--rule)] px-5 py-2 sm:px-8">
-            <label class="flex items-center gap-2 text-[12px] text-[var(--ink-mute)]">
-              <span class="sl-eyebrow" style="font-size:9.5px">Chapter</span>
-              <select
-                value={activeChapterId ?? ""}
-                onchange={(e) => selectChapter((e.target as HTMLSelectElement).value)}
-                class="sl-select"
-                style="padding:0.3rem 0.5rem;font-size:12.5px"
-              >
-                {#each chapters as c (c.id)}
-                  <option value={c.id}>{c.name}</option>
-                {/each}
-              </select>
-            </label>
-          </div>
-        {/if}
-        <nav class="flex gap-6 overflow-x-auto border-t border-[var(--rule)] px-5 py-3 sm:px-8">
-          {#each CHURCH_NAV as group (group.label)}
-            {#each group.items as item (item.href)}
-              <a
-                href={item.href}
-                class="sl-nav-link shrink-0"
-                aria-current={isNavActive(item, path) ? "page" : undefined}>{item.label}</a
-              >
-            {/each}
-          {/each}
-        </nav>
       </div>
+
+      <MobileNavDrawer
+        open={mobileNavOpen}
+        onclose={closeMobileNav}
+        eyebrow="Chapter"
+        title={activeChapter?.name ?? "Navigation"}
+      >
+        <!-- Chapter switcher: native <select> wins on mobile — OS pickers handle
+             long lists, search, and accessibility better than any custom popover. -->
+        {#if chapters.length > 1}
+          <label class="mb-5 flex flex-col gap-1.5">
+            <span class="sl-eyebrow" style="font-size:9.5px">Switch chapter</span>
+            <select
+              value={activeChapterId ?? ""}
+              onchange={(e) => {
+                closeMobileNav();
+                selectChapter((e.target as HTMLSelectElement).value);
+              }}
+              class="sl-select"
+              style="padding:0.5rem 0.6rem;font-size:13px"
+            >
+              {#each chapters as c (c.id)}
+                <option value={c.id}>{c.name}</option>
+              {/each}
+            </select>
+          </label>
+        {/if}
+
+        <nav class="flex flex-col gap-5" id="sl-mobile-nav-church">
+          <SidebarNav groups={CHURCH_NAV} pathname={path} storageKey="church" />
+          {#if showZoneLink || showAdminLink}
+            <div class="mt-2 border-t border-[var(--rule)] pt-4">
+              {#if showZoneLink}
+                <a href="/zone/chapters" class="sl-side-link">
+                  <span class="sl-side-link-rail" aria-hidden="true"></span>
+                  <span class="truncate">Zone view →</span>
+                </a>
+              {/if}
+              {#if showAdminLink}
+                <a href="/admin/zones" class="sl-side-link" style="color:var(--brass-deep)">
+                  <span class="sl-side-link-rail" aria-hidden="true"></span>
+                  <span class="truncate">Platform admin →</span>
+                </a>
+              {/if}
+            </div>
+          {/if}
+        </nav>
+
+        <div class="mt-6 border-t border-[var(--rule)] pt-4">
+          <a href="/account" class="sl-side-link">
+            <span class="sl-side-link-rail" aria-hidden="true"></span>
+            <span class="truncate">Profile &amp; password</span>
+          </a>
+          <button
+            type="button"
+            onclick={() => {
+              closeMobileNav();
+              handleSignOut();
+            }}
+            class="sl-side-link w-full text-left"
+          >
+            <span class="sl-side-link-rail" aria-hidden="true"></span>
+            <span class="truncate">Sign out</span>
+          </button>
+        </div>
+      </MobileNavDrawer>
 
       <div class="px-6 pt-6 pb-12 sm:px-10 lg:pt-10 lg:pr-12 lg:pl-12">
         {@render children?.()}

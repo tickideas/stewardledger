@@ -6,7 +6,10 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
-  import { ZONAL_NAV, isNavActive } from "$lib/nav";
+  import MobileNavDrawer from "$lib/MobileNavDrawer.svelte";
+  import MobileNavTrigger from "$lib/MobileNavTrigger.svelte";
+  import SidebarNav from "$lib/SidebarNav.svelte";
+  import { ZONAL_NAV } from "$lib/nav";
   import {
     ACTIVE_ZONE_KEY,
     authenticatedLandingPath,
@@ -53,6 +56,7 @@
 
   let profileOpen = $state(false);
   let zoneSwitcherOpen = $state(false);
+  let mobileNavOpen = $state(false);
   function toggleProfile() {
     profileOpen = !profileOpen;
     if (profileOpen) zoneSwitcherOpen = false;
@@ -66,6 +70,12 @@
   }
   function closeZoneSwitcher() {
     zoneSwitcherOpen = false;
+  }
+  function openMobileNav() {
+    mobileNavOpen = true;
+  }
+  function closeMobileNav() {
+    mobileNavOpen = false;
   }
 
   function onKey(ev: KeyboardEvent) {
@@ -172,32 +182,8 @@
         </div>
       {/if}
 
-      <nav class="flex flex-1 flex-col gap-7 overflow-y-auto px-6">
-        {#each ZONAL_NAV as group (group.label)}
-          <div>
-            <div class="sl-eyebrow mb-3" style="font-size:10px">{group.label}</div>
-            <ul class="flex flex-col gap-0.5">
-              {#each group.items as item (item.href)}
-                {@const active = isNavActive(item, path)}
-                <li>
-                  <a
-                    href={item.href}
-                    aria-current={active ? "page" : undefined}
-                    class="sl-side-link"
-                    class:sl-side-link-active={active}
-                  >
-                    <span
-                      class="sl-side-link-rail"
-                      style={active ? "background:var(--brass)" : ""}
-                      aria-hidden="true"
-                    ></span>
-                    <span class="truncate">{item.label}</span>
-                  </a>
-                </li>
-              {/each}
-            </ul>
-          </div>
-        {/each}
+      <nav class="flex flex-1 flex-col gap-5 overflow-y-auto px-6">
+        <SidebarNav groups={ZONAL_NAV} pathname={path} storageKey="zone" />
 
         {#if showAdminLink}
           <div class="mt-2 border-t border-[var(--rule)] pt-5">
@@ -282,15 +268,18 @@
         style="background: linear-gradient(180deg, var(--card-warm) 0%, var(--paper) 100%)"
       >
         <div class="flex items-center justify-between gap-3 px-5 py-3 sm:px-8">
-          <a href="/" class="flex items-center gap-2">
-            <span
-              class="inline-flex h-6 w-6 items-center justify-center rounded-[2px] bg-[var(--ink)] text-[10px] font-medium text-[var(--paper)] sl-display"
-              >S</span
-            >
-            <span class="sl-display text-[15px] font-medium text-[var(--ink)]">
-              Steward<span class="sl-serif-italic font-normal text-[var(--brass-deep)]">Ledger</span>
-            </span>
-          </a>
+          <div class="flex min-w-0 items-center gap-2">
+            <MobileNavTrigger open={mobileNavOpen} controls="sl-mobile-nav-zone" onclick={openMobileNav} />
+            <a href="/" class="flex items-center gap-2">
+              <span
+                class="inline-flex h-6 w-6 items-center justify-center rounded-[2px] bg-[var(--ink)] text-[10px] font-medium text-[var(--paper)] sl-display"
+                >S</span
+              >
+              <span class="sl-display text-[15px] font-medium text-[var(--ink)]">
+                Steward<span class="sl-serif-italic font-normal text-[var(--brass-deep)]">Ledger</span>
+              </span>
+            </a>
+          </div>
           <div class="flex items-center gap-3">
             {#if activeZone}
               <span class="max-w-[10rem] truncate text-[12px] text-[var(--ink-mute)]" title={activeZone.slug}>
@@ -306,18 +295,66 @@
             >
           </div>
         </div>
-        <nav class="flex gap-6 overflow-x-auto border-t border-[var(--rule)] px-5 py-3 sm:px-8">
-          {#each ZONAL_NAV as group (group.label)}
-            {#each group.items as item (item.href)}
-              <a
-                href={item.href}
-                class="sl-nav-link shrink-0"
-                aria-current={isNavActive(item, path) ? "page" : undefined}>{item.label}</a
-              >
-            {/each}
-          {/each}
-        </nav>
       </div>
+
+      <MobileNavDrawer
+        open={mobileNavOpen}
+        onclose={closeMobileNav}
+        eyebrow="Zonal"
+        title={activeZone?.name ?? "Navigation"}
+      >
+        <!-- Zone switcher: native <select> wins on mobile — OS pickers handle
+             long lists, search, and accessibility better than a custom popover
+             (mirrors the church drawer's chapter switcher). -->
+        {#if zones.length > 1}
+          <label class="mb-5 flex flex-col gap-1.5">
+            <span class="sl-eyebrow" style="font-size:9.5px">Switch zone</span>
+            <select
+              value={activeZone?.slug ?? ""}
+              onchange={(e) => {
+                closeMobileNav();
+                switchZone((e.target as HTMLSelectElement).value);
+              }}
+              class="sl-select"
+              style="padding:0.5rem 0.6rem;font-size:13px"
+            >
+              {#each zones as zone (zone.id)}
+                <option value={zone.slug}>{zone.name}</option>
+              {/each}
+            </select>
+          </label>
+        {/if}
+
+        <nav class="flex flex-col gap-5" id="sl-mobile-nav-zone">
+          <SidebarNav groups={ZONAL_NAV} pathname={path} storageKey="zone" />
+          {#if showAdminLink}
+            <div class="mt-2 border-t border-[var(--rule)] pt-4">
+              <a href="/admin/zones" class="sl-side-link" style="color:var(--brass-deep)">
+                <span class="sl-side-link-rail" aria-hidden="true"></span>
+                <span class="truncate">Platform admin →</span>
+              </a>
+            </div>
+          {/if}
+        </nav>
+
+        <div class="mt-6 border-t border-[var(--rule)] pt-4">
+          <a href="/account" class="sl-side-link">
+            <span class="sl-side-link-rail" aria-hidden="true"></span>
+            <span class="truncate">Profile &amp; password</span>
+          </a>
+          <button
+            type="button"
+            onclick={() => {
+              closeMobileNav();
+              handleSignOut();
+            }}
+            class="sl-side-link w-full text-left"
+          >
+            <span class="sl-side-link-rail" aria-hidden="true"></span>
+            <span class="truncate">Sign out</span>
+          </button>
+        </div>
+      </MobileNavDrawer>
 
       <div class="px-6 pt-6 pb-12 sm:px-10 lg:pt-10 lg:pr-12 lg:pl-12">
         {@render children?.()}
