@@ -267,7 +267,9 @@ Audited implementation status (2026-05-13):
 - [x] Zone dashboard endpoint + UI are implemented and tested (`services/dashboards/zone-dashboard.ts`, `routes/tenant-dashboard.ts`, `routes/zone/dashboard/+page.svelte`).
 - [x] Chapter dashboard endpoint + UI are implemented and tested (`services/dashboards/chapter-dashboard.ts`, `routes/tenant-dashboard.ts`, `routes/church/overview/+page.svelte`).
 - [x] Weekly finance report data + Excel export are implemented and tested (`weekly-finance.ts`, `reports.test.ts`); attendance lives in `service_event_attendance` (migration `0002_hesitant_human_robot.sql`).
-- [x] PDF export infrastructure (`pdfkit`-based generic branded-table renderer at `services/reports/pdf/branded-table.ts`; `GET /api/tenant/reports/:id/export.pdf` route; UI "Download PDF" alongside "Download Excel"). Bespoke layouts (letter-style member statement, partnership receipts) deferred until Playwright lands.
+- [x] PDF export infrastructure (`pdfkit`-based generic branded-table renderer at `services/reports/pdf/branded-table.ts`; `GET /api/tenant/reports/:id/export.pdf` route; UI "Download PDF" alongside "Download Excel").
+- [ ] **Bespoke letter-style member statement PDF (GA blocker).** Promoted from "Playwright follow-up" because the annual member statement is the single most-printed document and treasurers will compare it line-for-line to the legacy letter. Playwright + HTML/CSS template at `packages/pdf/templates/member-statement.html`, rendered via `packages/api/src/services/reports/pdf/member-statement.ts`, branding inputs reused from `services/reports/branding.ts`. See [`CHURCHPLUS-PORT-NOTES.md` §2.2.5](CHURCHPLUS-PORT-NOTES.md#225-member-statement-pdf-as-bespoke-layout).
+- [ ] Bespoke partnership receipt PDF (post-GA follow-up; not blocking).
 - [x] Saved filters.
 - [x] Background `report.generate` worker + object-storage retention for large exports. *(pg-boss-backed worker + email-when-ready + daily expiry-cleanup job all landed.)*
 
@@ -353,6 +355,10 @@ Exit checklist:
 - [ ] Backup restore drill passes in staging.
 - [ ] Stripe events (subscription.created, .updated, .deleted, invoice.payment_failed) handled end-to-end.
 - [ ] Invoice path still works alongside Stripe.
+- [ ] **Family / household grouping** shipped (zone-scoped `families` + `family_members`, household totals on the member statement, Top Family report). See [`CHURCHPLUS-PORT-NOTES.md` §2.2.1](CHURCHPLUS-PORT-NOTES.md#221-family--household-grouping).
+- [ ] **Bulk template download centre** shipped (one-click empty-template downloads for every registered importer, surfaced on `/zone/imports` and `/church/imports`). See [`CHURCHPLUS-PORT-NOTES.md` §2.2.2](CHURCHPLUS-PORT-NOTES.md#222-bulk-template-download-centre).
+- [ ] **Bulk slip / envelope import** shipped (envelope-batch parser plugged into the existing `upload → match → schedule → commit` pipeline, surfaced as a new tab on `/church/imports`). See [`CHURCHPLUS-PORT-NOTES.md` §2.2.3](CHURCHPLUS-PORT-NOTES.md#223-bulk-slip--envelope-import-xlsxcsv).
+- [ ] **Member email verification (double opt-in)** shipped (`members.email_verification_status`, token issue/verify endpoints, rate-limited resend, GDPR-aligned audit trail). Required by the v1.1 broadcasts + campaign-reminder work. See [`CHURCHPLUS-PORT-NOTES.md` §2.2.4](CHURCHPLUS-PORT-NOTES.md#224-member-email-verification-double-opt-in).
 
 ---
 
@@ -367,6 +373,10 @@ Deliverables:
 - API rate limiting.
 - Per-chapter branding overrides (zone admin discretion).
 - Optional invoice-based billing automation (alongside Stripe).
+- **Online giving (public donation flow) + Stripe Connect per-zone account** — public `/:zone/donate` page, payment-intent flow, webhook reconciliation, refund→reversal mapping, per-currency handling. See [`CHURCHPLUS-PORT-NOTES.md` §2.3.1](CHURCHPLUS-PORT-NOTES.md#231-online-giving-public-donation-flow).
+- **Fundraising campaigns** — time-boxed asks distinct from partnership: `campaigns`, `campaign_targets` (zone / group / chapter scope), campaign-tagged contributions, campaign progress reports, reminder cron. Depends on online giving + comms. See [`CHURCHPLUS-PORT-NOTES.md` §2.3.2](CHURCHPLUS-PORT-NOTES.md#232-fundraising-campaigns).
+- **Member email broadcast + reminders** — chapter- or zone-scoped sends to verified members only; queued workers with per-zone send-rate caps; preview + dry-run mandatory; MFA-required to raise the cap. Depends on Phase 10 member email verification. See [`CHURCHPLUS-PORT-NOTES.md` §2.3.3](CHURCHPLUS-PORT-NOTES.md#233-member-email-broadcast--reminders).
+- **Custom bank accounts per chapter** — `bank_accounts` metadata table (zone, chapter?, currency, IBAN / sort code / account number) linked from imports and contribution batches. See [`CHURCHPLUS-PORT-NOTES.md` §2.3.4](CHURCHPLUS-PORT-NOTES.md#234-custom-bank-accounts-per-chapter).
 
 ---
 
