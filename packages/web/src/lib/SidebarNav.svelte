@@ -26,22 +26,32 @@
   );
 
   // Collapsed-group set. Persisted as a list of keys under
-  // `sl-sidebar-collapsed:<storageKey>`. We treat unknown keys as expanded so
-  // newly-added groups appear by default; only explicit user collapses persist.
+  // `sl-sidebar-collapsed:<storageKey>`.
+  //
+  // Behaviour rules (intentional):
+  //   - First visit (no stored entry): every group is seeded as collapsed.
+  //     Combined with the `activeKey` override in `isOpen`, the user lands
+  //     with only their current group expanded — which is what fixes the
+  //     original scrollbar problem.
+  //   - Returning visit: honour the stored set verbatim.
+  //   - Group added in a later release: its key isn't in the stored set, so
+  //     it appears *expanded* by default. That's the right default for
+  //     introducing new functionality — a quiet collapsed group is easy to
+  //     miss. Users can collapse it once and the state persists.
   const fullKey = $derived(`sl-sidebar-collapsed:${storageKey}`);
   let collapsed = $state<Set<string>>(new Set());
 
   $effect(() => {
     if (typeof localStorage === "undefined") return;
+    // Track both reactive inputs so a role-change that swaps `groups`
+    // (e.g. the admin shell filters by platform role) re-seeds the
+    // collapsed set against the new group keys.
+    const key = fullKey;
+    const seed = groups;
     try {
-      const raw = localStorage.getItem(fullKey);
+      const raw = localStorage.getItem(key);
       if (!raw) {
-        // First visit: collapse every group except the active one so the
-        // sidebar fits without scrolling. The active group is always open
-        // regardless of what's in `collapsed`, so we collapse it too — that
-        // way when the user navigates away the previously-active group
-        // doesn't suddenly stay open without their asking for it.
-        collapsed = new Set(groups.map((g) => g.key));
+        collapsed = new Set(seed.map((g) => g.key));
         return;
       }
       const parsed = JSON.parse(raw);

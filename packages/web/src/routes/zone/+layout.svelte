@@ -7,6 +7,7 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import MobileNavDrawer from "$lib/MobileNavDrawer.svelte";
+  import MobileNavTrigger from "$lib/MobileNavTrigger.svelte";
   import SidebarNav from "$lib/SidebarNav.svelte";
   import { ZONAL_NAV } from "$lib/nav";
   import {
@@ -56,7 +57,6 @@
   let profileOpen = $state(false);
   let zoneSwitcherOpen = $state(false);
   let mobileNavOpen = $state(false);
-  let mobileZoneSwitcherOpen = $state(false);
   function toggleProfile() {
     profileOpen = !profileOpen;
     if (profileOpen) zoneSwitcherOpen = false;
@@ -76,7 +76,6 @@
   }
   function closeMobileNav() {
     mobileNavOpen = false;
-    mobileZoneSwitcherOpen = false;
   }
 
   function onKey(ev: KeyboardEvent) {
@@ -270,18 +269,7 @@
       >
         <div class="flex items-center justify-between gap-3 px-5 py-3 sm:px-8">
           <div class="flex min-w-0 items-center gap-2">
-            <button
-              type="button"
-              onclick={openMobileNav}
-              aria-label="Open navigation"
-              aria-expanded={mobileNavOpen}
-              aria-controls="sl-mobile-nav-zone"
-              class="-ml-2 inline-flex h-9 w-9 items-center justify-center rounded-[3px] text-[var(--ink)] transition-colors hover:bg-[var(--paper-soft)]"
-            >
-              <svg viewBox="0 0 18 18" class="h-4 w-4" fill="none" aria-hidden="true">
-                <path d="M2 4.5h14M2 9h14M2 13.5h14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-              </svg>
-            </button>
+            <MobileNavTrigger open={mobileNavOpen} controls="sl-mobile-nav-zone" onclick={openMobileNav} />
             <a href="/" class="flex items-center gap-2">
               <span
                 class="inline-flex h-6 w-6 items-center justify-center rounded-[2px] bg-[var(--ink)] text-[10px] font-medium text-[var(--paper)] sl-display"
@@ -315,53 +303,26 @@
         eyebrow="Zonal"
         title={activeZone?.name ?? "Navigation"}
       >
+        <!-- Zone switcher: native <select> wins on mobile — OS pickers handle
+             long lists, search, and accessibility better than a custom popover
+             (mirrors the church drawer's chapter switcher). -->
         {#if zones.length > 1}
-          <div class="mb-5">
-            <button
-              type="button"
-              onclick={() => (mobileZoneSwitcherOpen = !mobileZoneSwitcherOpen)}
-              aria-haspopup="listbox"
-              aria-expanded={mobileZoneSwitcherOpen}
-              class="flex w-full items-start gap-3 rounded-[3px] border border-[var(--rule)] px-3 py-2.5 text-left transition-colors hover:bg-[var(--paper-soft)]"
+          <label class="mb-5 flex flex-col gap-1.5">
+            <span class="sl-eyebrow" style="font-size:9.5px">Switch zone</span>
+            <select
+              value={activeZone?.slug ?? ""}
+              onchange={(e) => {
+                closeMobileNav();
+                switchZone((e.target as HTMLSelectElement).value);
+              }}
+              class="sl-select"
+              style="padding:0.5rem 0.6rem;font-size:13px"
             >
-              <span class="min-w-0 flex-1">
-                <span class="sl-eyebrow block" style="font-size:9.5px">Switch zone</span>
-                <span class="mt-0.5 block truncate text-[13px] font-medium text-[var(--ink)]">
-                  {activeZone?.name ?? "Select a zone"}
-                </span>
-              </span>
-              <svg class="mt-1 h-3 w-3 shrink-0 text-[var(--ink-mute)]" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                <path d="M3 4.5l3 3 3-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
-              </svg>
-            </button>
-            {#if mobileZoneSwitcherOpen}
-              <ul role="listbox" class="mt-2 max-h-60 overflow-y-auto rounded-[3px] border border-[var(--rule)] bg-[var(--card)]">
-                {#each zones as zone (zone.id)}
-                  <li>
-                    <button
-                      type="button"
-                      onclick={() => {
-                        mobileZoneSwitcherOpen = false;
-                        closeMobileNav();
-                        switchZone(zone.slug);
-                      }}
-                      role="option"
-                      aria-selected={zone.slug === activeZone?.slug}
-                      class="flex w-full items-baseline gap-3 border-b border-[var(--rule)] px-3 py-2 text-left last:border-b-0 transition-colors hover:bg-[var(--paper-soft)]"
-                    >
-                      <span class="min-w-0 flex-1">
-                        <span class="block truncate text-[13px] text-[var(--ink)]">{zone.name}</span>
-                        <span class="sl-mono block truncate text-[10.5px] text-[var(--ink-mute)]">{zone.slug}</span>
-                      </span>
-                      {#if zone.slug === activeZone?.slug}
-                        <span class="sl-eyebrow shrink-0" style="font-size:9px;color:var(--brass-deep)">Active</span>
-                      {/if}
-                    </button>
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-          </div>
+              {#each zones as zone (zone.id)}
+                <option value={zone.slug}>{zone.name}</option>
+              {/each}
+            </select>
+          </label>
         {/if}
 
         <nav class="flex flex-col gap-5" id="sl-mobile-nav-zone">

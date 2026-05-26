@@ -472,6 +472,10 @@ body::before {
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+@keyframes sl-slide-in-left {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0); }
+}
 @keyframes sl-rule-grow {
   from { transform: scaleX(0); }
   to   { transform: scaleX(1); }

@@ -7,6 +7,7 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import MobileNavDrawer from "$lib/MobileNavDrawer.svelte";
+  import MobileNavTrigger from "$lib/MobileNavTrigger.svelte";
   import SidebarNav from "$lib/SidebarNav.svelte";
   import { PLATFORM_NAV } from "$lib/nav";
   import { isSuperAdmin, session, signOut } from "$lib/session.svelte";
@@ -228,18 +229,7 @@
       >
         <div class="flex items-center justify-between gap-3 px-5 py-3 sm:px-8">
           <div class="flex min-w-0 items-center gap-2">
-            <button
-              type="button"
-              onclick={openMobileNav}
-              aria-label="Open navigation"
-              aria-expanded={mobileNavOpen}
-              aria-controls="sl-mobile-nav-admin"
-              class="-ml-2 inline-flex h-9 w-9 items-center justify-center rounded-[3px] text-[var(--ink)] transition-colors hover:bg-[var(--paper-soft)]"
-            >
-              <svg viewBox="0 0 18 18" class="h-4 w-4" fill="none" aria-hidden="true">
-                <path d="M2 4.5h14M2 9h14M2 13.5h14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-              </svg>
-            </button>
+            <MobileNavTrigger open={mobileNavOpen} controls="sl-mobile-nav-admin" onclick={openMobileNav} />
             <a href="/" class="flex items-center gap-2">
               <span
                 class="inline-flex h-6 w-6 items-center justify-center rounded-[2px] bg-[var(--ink)] text-[10px] font-medium text-[var(--paper)] sl-display"

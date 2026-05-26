@@ -58,6 +58,12 @@
 
   function focusable(): HTMLElement[] {
     if (!panelEl) return [];
+    // Two-layer filter on purpose:
+    //   - the selector skips the easy cases (disabled form controls, items
+    //     with `tabindex="-1"` as an attribute);
+    //   - the `tabIndex >= 0` check catches anything made non-focusable
+    //     programmatically after render (e.g. an effect setting
+    //     `el.tabIndex = -1`) which the selector can't see.
     return Array.from(
       panelEl.querySelectorAll<HTMLElement>(
         'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
@@ -149,21 +155,11 @@
   </div>
 {/if}
 
-<style>
-  @keyframes sl-fade-in {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
-  }
-  @keyframes sl-slide-in-left {
-    from {
-      transform: translateX(-100%);
-    }
-    to {
-      transform: translateX(0);
-    }
-  }
-</style>
+<!--
+  Keyframes (`sl-fade-in`, `sl-slide-in-left`) are declared globally in
+  `app.css` rather than in a component <style> block. Svelte scopes
+  keyframe *names* inside component <style>, but the inline
+  `animation: sl-slide-in-left ...` references the unscoped name and
+  never matches — leaving the panel without an entrance animation.
+  Keeping the keyframes global side-steps that scoping mismatch.
+-->
