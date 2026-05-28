@@ -293,7 +293,7 @@ tenantImportsRouter.post("/imports", async (c) => {
     );
   }
 
-  if (fileType !== "statement") {
+  if (fileType !== "statement" && fileType !== "envelope_batch") {
     return c.json(
       {
         error: {
@@ -326,8 +326,19 @@ tenantImportsRouter.post("/imports", async (c) => {
   // Chapter scope enforcement. A chapter-scoped user MUST target one of
   // their own chapters; they cannot upload a zone-wide import (chapterId = null).
   const targetChapterId = parsed.data.chapterId ?? null;
-  if (!canWriteImport(ctx, targetChapterId)) return forbidden(c);
   const targetServiceEventId = parsed.data.serviceEventId ?? null;
+  if (parsed.data.fileType === "envelope_batch" && !targetChapterId) {
+    return c.json(
+      {
+        error: {
+          code: "chapter_required",
+          message: "Envelope batch imports must be scoped to a chapter.",
+        },
+      },
+      400,
+    );
+  }
+  if (!canWriteImport(ctx, targetChapterId)) return forbidden(c);
   if (targetChapterId && !targetServiceEventId) {
     return c.json(
       {

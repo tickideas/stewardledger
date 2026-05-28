@@ -93,6 +93,10 @@ export interface ParsedRow {
     serviceTypeShortCode: string | null;
     serviceDate: string | null;
     description: string | null;
+    kind?: "statement" | "envelope_batch";
+    envelopeNumber?: string | null;
+    cashAmount?: string | null;
+    chequeAmount?: string | null;
   };
 }
 
@@ -113,6 +117,24 @@ const EMPTY_PARSED: ParsedRow["parsed"] = {
   serviceTypeShortCode: null,
   serviceDate: null,
   description: null,
+};
+
+const ENVELOPE_HEADER_ALIASES: Record<string, keyof ParsedRow["parsed"]> = {
+  ...HEADER_ALIASES,
+  date: "serviceDate",
+  "service code": "serviceTypeShortCode",
+  "service type code": "serviceTypeShortCode",
+  "giving code": "givingTypeShortCode",
+  "cash amount": "cashAmount",
+  cash: "cashAmount",
+  "cheque amount": "chequeAmount",
+  "check amount": "chequeAmount",
+  cheque: "chequeAmount",
+  check: "chequeAmount",
+  "envelope number": "envelopeNumber",
+  "envelope no": "envelopeNumber",
+  "slip number": "envelopeNumber",
+  "slip no": "envelopeNumber",
 };
 
 function normaliseHeader(header: string): string {
@@ -166,12 +188,30 @@ function toAmount(value: string): string | null {
 
 function applyHeader(parsed: ParsedRow["parsed"], header: string, cell: string): void {
   const key = HEADER_ALIASES[normaliseHeader(header)];
+  applyValue(parsed, key, cell);
+}
+
+function applyEnvelopeHeader(parsed: ParsedRow["parsed"], header: string, cell: string): void {
+  const key = ENVELOPE_HEADER_ALIASES[normaliseHeader(header)];
+  applyValue(parsed, key, cell);
+}
+
+function applyValue(
+  parsed: ParsedRow["parsed"],
+  key: keyof ParsedRow["parsed"] | undefined,
+  cell: string,
+): void {
   if (!key) return;
-  if (key === "amount") parsed.amount = toAmount(cell);
-  else if (key === "contributionDate") parsed.contributionDate = toIsoDate(cell);
-  else if (key === "serviceDate") parsed.serviceDate = toIsoDate(cell);
+  if (key === "amount" || key === "cashAmount" || key === "chequeAmount") {
+    parsed[key] = toAmount(cell);
+  } else if (key === "contributionDate") parsed.contributionDate = toIsoDate(cell);
+  else if (key === "serviceDate") {
+    const iso = toIsoDate(cell);
+    parsed.serviceDate = iso;
+    parsed.contributionDate ??= iso;
+  }
   else if (key === "currencyCode") parsed.currencyCode = cell.trim().toUpperCase() || null;
-  else parsed[key] = cell.trim() || null;
+  else if (key !== "kind") parsed[key] = cell.trim() || null;
 }
 
 /** Quick sniff: does the first KB look like XLSX (zip header) or CSV? */
@@ -193,6 +233,7 @@ export function sniffFileType(body: Uint8Array, fileName: string): "csv" | "xlsx
 interface ParseInput {
   body: Uint8Array;
   fileName: string;
+  fileType?: string | null;
   /** Optional parser hint (e.g. "bank_csv"). Currently informational. */
   sourceType?: string | null;
 }
@@ -210,6 +251,17 @@ function buildParsed(headers: string[], cells: string[]): ParsedRow["parsed"] {
     const c = cells[i] ?? "";
     if (h) applyHeader(out, h, c);
   }
+  return out;
+}
+
+function buildEnvelopeParsed(headers: string[], cells: string[]): ParsedRow["parsed"] {
+  const out: ParsedRow["parsed"] = { ...EMPTY_PARSED, kind: "envelope_batch" };
+  for (let i = 0; i < headers.length; i++) {
+    const h = headers[i];
+    const c = cells[i] ?? "";
+    if (h) applyEnvelopeHeader(out, h, c);
+  }
+  if (!out.amount) out.amount = out.cashAmount ?? out.chequeAmount ?? null;
   return out;
 }
 
@@ -282,18 +334,47 @@ export function parseCsvBody(body: Uint8Array): ParseResult {
   return { rows: out, headers };
 }
 
+export function parseEnvelopeBatchCsvBody(body: Uint8Array): ParseResult {
+  const text = new TextDecoder("utf-8").decode(body);
+  if (text.trim().length === 0) return { rows: [], headers: [] };
+  const parsed = parseCsv<string[]>(text, { skipEmptyLines: true });
+  const fatal = parsed.errors.filter((e) => e.type !== "Delimiter");
+  if (fatal.length > 0) {
+    const first = fatal[0];
+    throw new Error(`CSV parse error on row ${first.row ?? "?"}: ${first.message}`);
+  }
+  const rows = parsed.data as unknown as string[][];
+  if (rows.length === 0) return { rows: [], headers: [] };
+  const headers = rows[0].map((h) => h.trim());
+  assertCsvBounds(headers, rows);
+  const out: ParsedRow[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    const cells = rows[i];
+    if (!cells || isRowEmpty(cells)) continue;
+    out.push({
+      rowNumber: i + 1,
+      raw: buildRaw(headers, cells),
+      parsed: buildEnvelopeParsed(headers, cells),
+    });
+  }
+  return { rows: out, headers };
+}
+
 export function parseXlsxBody(_body: Uint8Array): ParseResult {
   throw new Error(
     "XLSX imports are disabled until StewardLedger ships a hardened parser; export the sheet as CSV.",
   );
 }
 
-export function parseImportBody({ body, fileName, sourceType }: ParseInput): ParseResult {
+export function parseImportBody({ body, fileName, fileType, sourceType }: ParseInput): ParseResult {
   // sourceType is currently informational; bank-specific parsers can hook
   // off it in later phases (e.g. switch on "bank_a" to apply a header map
   // override).
   void sourceType;
   const kind = sniffFileType(body, fileName);
   if (kind === "xlsx") return parseXlsxBody(body);
+  if (fileType === "envelope_batch" || sourceType === "envelope_batch") {
+    return parseEnvelopeBatchCsvBody(body);
+  }
   return parseCsvBody(body);
 }

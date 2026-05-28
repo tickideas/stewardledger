@@ -79,7 +79,16 @@ interface ZoneLookups {
   givingTypeByName: Map<string, { id: string; accountId: string | null }>;
   givingTypeByShortCode: Map<string, { id: string; accountId: string | null }>;
   paymentMethodByCode: Map<string, string>;
-  serviceEventById: Map<string, { id: string; chapterId: string | null }>;
+  serviceEventById: Map<
+    string,
+    {
+      id: string;
+      chapterId: string | null;
+      serviceDate: string;
+      serviceTypeName: string | null;
+      serviceTypeShortCode: string | null;
+    }
+  >;
   serviceEventByKey: Map<string, { id: string; chapterId: string | null }[]>;
   /** Map<accountId, currencyCode>. The id is the key; storing it again in
    * the value was redundant. */
@@ -187,7 +196,16 @@ async function loadZoneLookups(database: Db, zoneId: string): Promise<ZoneLookup
   );
   const accountById = new Map(accountRows.map((r) => [r.id, r.currencyCode]));
   const serviceEventById = new Map(
-    serviceEventRows.map((r) => [r.id.toLowerCase(), { id: r.id, chapterId: r.chapterId }]),
+    serviceEventRows.map((r) => [
+      r.id.toLowerCase(),
+      {
+        id: r.id,
+        chapterId: r.chapterId,
+        serviceDate: String(r.serviceDate),
+        serviceTypeName: r.serviceTypeName,
+        serviceTypeShortCode: r.serviceTypeShortCode,
+      },
+    ]),
   );
   const serviceEventByKey = new Map<string, { id: string; chapterId: string | null }[]>();
   for (const event of serviceEventRows) {
@@ -300,6 +318,13 @@ function resolveChapter(
   parsed: ParsedRow["parsed"],
   ctx: MatchContext,
 ): { id: string | null; failure?: FailureCode } {
+  if (parsed.kind === "envelope_batch" && ctx.fileChapterId) {
+    if (!parsed.chapterReferenceCode) return { id: ctx.fileChapterId };
+    const hit = lookups.chapterByRef.get(parsed.chapterReferenceCode.toLowerCase());
+    if (!hit) return { id: null, failure: "CHAPTER_NOT_FOUND" };
+    if (hit !== ctx.fileChapterId) return { id: ctx.fileChapterId, failure: "CHAPTER_SCOPE_MISMATCH" };
+    return { id: ctx.fileChapterId };
+  }
   if (parsed.chapterReferenceCode) {
     const hit = lookups.chapterByRef.get(parsed.chapterReferenceCode.toLowerCase());
     if (!hit) return { id: null, failure: "CHAPTER_NOT_FOUND" };
@@ -326,6 +351,28 @@ function resolveServiceEvent(
         details: { serviceEventId: hit.id, chapterId },
       };
     }
+    if (parsed.kind === "envelope_batch") {
+      const parsedDate = parsed.serviceDate ?? parsed.contributionDate;
+      const parsedType = parsed.serviceTypeShortCode ?? parsed.serviceTypeName;
+      const typeMatches =
+        !parsedType ||
+        [hit.serviceTypeShortCode, hit.serviceTypeName]
+          .filter((v): v is string => Boolean(v))
+          .some((v) => v.toLowerCase() === parsedType.toLowerCase());
+      if ((parsedDate && parsedDate !== hit.serviceDate) || !typeMatches) {
+        return {
+          id: null,
+          failure: "SERVICE_EVENT_MISMATCH",
+          details: {
+            serviceEventId: hit.id,
+            rowServiceDate: parsedDate,
+            rowServiceType: parsedType,
+            selectedServiceDate: hit.serviceDate,
+            selectedServiceType: hit.serviceTypeShortCode ?? hit.serviceTypeName,
+          },
+        };
+      }
+    }
     return { id: hit.id };
   }
 
@@ -346,16 +393,50 @@ function resolveServiceEvent(
   return { id: matches[0].id };
 }
 
+function normaliseDedupeAmount(amount: string | null): string | null {
+  if (!amount) return null;
+  try {
+    return new Decimal(amount).toFixed(4);
+  } catch {
+    return null;
+  }
+}
+
+function deriveEnvelopeExternalTransactionId(args: {
+  row: ParsedRow;
+  chapterId: string | null;
+  serviceEventId: string | null;
+  memberId: string | null;
+  givingTypeId: string | null;
+  currencyCode: string | null;
+}): string | null {
+  if (args.row.parsed.externalTransactionId) return args.row.parsed.externalTransactionId;
+  if (args.row.parsed.kind !== "envelope_batch") return null;
+  const amount = normaliseDedupeAmount(args.row.parsed.amount);
+  if (!args.chapterId || !args.serviceEventId || !args.givingTypeId || !args.currencyCode || !amount) {
+    return null;
+  }
+  const memberKey = args.memberId ?? "anonymous";
+  const envelopeKey = args.row.parsed.envelopeNumber?.trim();
+  if (!envelopeKey) return null;
+  return [
+    "envelope_batch",
+    args.chapterId,
+    args.serviceEventId,
+    memberKey,
+    args.givingTypeId,
+    args.currencyCode,
+    amount,
+    envelopeKey,
+  ].join(":");
+}
+
 export async function matchRows(
   database: Db,
   ctx: MatchContext,
   rows: ParsedRow[],
 ): Promise<MatchedRow[]> {
   const lookups = await loadZoneLookups(database, ctx.zoneId);
-  const externalIds = rows
-    .map((r) => r.parsed.externalTransactionId)
-    .filter((v): v is string => Boolean(v));
-  const dupMap = await loadDuplicateMap(database, ctx.zoneId, externalIds);
   const dates = rows.map((r) => r.parsed.contributionDate).filter((d): d is string => Boolean(d));
   const periodMap = await loadPeriodMap(database, ctx.zoneId, dates);
 
@@ -369,6 +450,17 @@ export async function matchRows(
     const serviceEvent = resolveServiceEvent(lookups, row.parsed, chapter.id, ctx);
     if (serviceEvent.failure) {
       failures.push({ code: serviceEvent.failure, details: serviceEvent.details });
+    }
+
+    if (row.parsed.kind === "envelope_batch" && row.parsed.cashAmount && row.parsed.chequeAmount) {
+      failures.push({ code: "INVALID_AMOUNT_SPLIT" });
+    }
+    if (
+      row.parsed.kind === "envelope_batch" &&
+      !row.parsed.externalTransactionId?.trim() &&
+      !row.parsed.envelopeNumber?.trim()
+    ) {
+      failures.push({ code: "ENVELOPE_REFERENCE_REQUIRED" });
     }
 
     const member = resolveMember(lookups, row.parsed, chapter.id);
@@ -416,18 +508,14 @@ export async function matchRows(
       ? lookups.paymentMethodByCode.get(row.parsed.paymentMethodCode.toLowerCase()) ?? null
       : null;
 
-    // Duplicate check is independent of validation: a duplicate is still
-    // "valid" data, just one we won't re-post.
-    let isDuplicate = false;
-    let duplicateOfContributionId: string | null = null;
-    if (row.parsed.externalTransactionId && dupMap.has(row.parsed.externalTransactionId)) {
-      isDuplicate = true;
-      duplicateOfContributionId = dupMap.get(row.parsed.externalTransactionId) ?? null;
-      failures.push({
-        code: "DUPLICATE",
-        details: { externalTransactionId: row.parsed.externalTransactionId },
-      });
-    }
+    const externalTransactionId = deriveEnvelopeExternalTransactionId({
+      row,
+      chapterId: chapter.id,
+      serviceEventId: serviceEvent.id,
+      memberId: member.memberId,
+      givingTypeId: givingType.id,
+      currencyCode,
+    });
 
     const validationStatus: MatchedRow["validationStatus"] =
       failures.filter((f) => f.code !== "DUPLICATE").length > 0 ? "invalid" : "valid";
@@ -449,13 +537,39 @@ export async function matchRows(
       paymentMethodId,
       serviceEventId: serviceEvent.id,
       currencyCode,
-      externalTransactionId: row.parsed.externalTransactionId,
+      externalTransactionId,
       matchStatus,
       validationStatus,
-      isDuplicate,
-      duplicateOfContributionId,
+      isDuplicate: false,
+      duplicateOfContributionId: null,
       failures,
     });
+  }
+  const externalIds = out
+    .map((r) => r.externalTransactionId)
+    .filter((v): v is string => Boolean(v));
+  const dupMap = await loadDuplicateMap(database, ctx.zoneId, externalIds);
+  const seenExternalIds = new Set<string>();
+  for (const row of out) {
+    if (!row.externalTransactionId) continue;
+    if (dupMap.has(row.externalTransactionId)) {
+      row.isDuplicate = true;
+      row.duplicateOfContributionId = dupMap.get(row.externalTransactionId) ?? null;
+      row.failures.push({
+        code: "DUPLICATE",
+        details: { externalTransactionId: row.externalTransactionId },
+      });
+      continue;
+    }
+    if (seenExternalIds.has(row.externalTransactionId)) {
+      row.isDuplicate = true;
+      row.failures.push({
+        code: "DUPLICATE",
+        details: { externalTransactionId: row.externalTransactionId, duplicateWithinImport: true },
+      });
+      continue;
+    }
+    seenExternalIds.add(row.externalTransactionId);
   }
   return out;
 }
@@ -564,4 +678,3 @@ export function summariseMatch(rows: MatchedRow[]): {
     failedRows: failed,
   };
 }
-

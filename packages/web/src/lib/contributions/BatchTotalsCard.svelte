@@ -38,9 +38,7 @@
       const value = raw.trim() === "" ? null : new Decimal(raw).toFixed(4);
       await onpatch(field, value);
     } catch {
-      onparseerror?.(
-        "Could not update batch totals — check the value is a plain number.",
-      );
+      onparseerror?.("Could not update counted totals — check the value is a plain number.");
     }
   }
 </script>

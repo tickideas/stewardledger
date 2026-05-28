@@ -62,6 +62,13 @@
     name: string;
     isActive: boolean;
   };
+  type ServiceEvent = {
+    id: string;
+    chapterId: string | null;
+    serviceTypeId: string;
+    serviceDate: string;
+  };
+  type ServiceType = { id: string; name: string };
 
   let batch = $state<Batch | null>(null);
   let rows = $state<RowsTableContribution[]>([]);
@@ -71,6 +78,8 @@
   let memberCache = $state<Map<string, TypeaheadMember>>(new Map());
   let memberCacheCapped = $state(false);
   let givingTypes = $state<GivingType[]>([]);
+  let serviceEvents = $state<ServiceEvent[]>([]);
+  let serviceTypes = $state<ServiceType[]>([]);
 
   let loadError = $state<string | null>(null);
   let lookupNotice = $state<string | null>(null);
@@ -92,6 +101,7 @@
 
   // Race tokens — last-request-wins for the parallel batch + rows load.
   let loadToken = 0;
+  let serviceContextToken = 0;
 
   const id = $derived(page.params.id ?? "");
 
@@ -130,7 +140,7 @@
     } catch (err) {
       if (isAbortError(err)) return;
       if (my !== loadToken) return;
-      loadError = err instanceof ApiError ? err.message : "Could not load batch.";
+      loadError = err instanceof ApiError ? err.message : "Could not load entry session.";
     }
   }
 
@@ -165,11 +175,46 @@
     }
   }
 
+  async function loadServiceContext(current: Batch, signal: AbortSignal) {
+    const my = ++serviceContextToken;
+    serviceEvents = [];
+    serviceTypes = [];
+    if (!current.serviceEventId) return;
+    try {
+      const [eventRes, typeRes] = await Promise.all([
+        api.get<{ serviceEvent: ServiceEvent }>(
+          `/api/tenant/giving/service-events/${current.serviceEventId}`,
+          signal,
+        ),
+        api.get<{ items: ServiceType[] }>("/api/tenant/giving/service-types", signal),
+      ]);
+      if (my !== serviceContextToken) return;
+      serviceEvents = [eventRes.serviceEvent];
+      serviceTypes = typeRes.items;
+      contributionDate = eventRes.serviceEvent.serviceDate;
+    } catch (err) {
+      if (isAbortError(err)) return;
+      if (my !== serviceContextToken) return;
+      lookupNotice =
+        err instanceof ApiError
+          ? `Could not load service context: ${err.message}`
+          : "Could not load service context.";
+    }
+  }
+
   $effect(() => {
     void id;
     const controller = new AbortController();
     loadBatch(controller.signal);
     loadLookups(controller.signal);
+    return () => controller.abort();
+  });
+
+  $effect(() => {
+    const current = batch;
+    if (!current) return;
+    const controller = new AbortController();
+    loadServiceContext(current, controller.signal);
     return () => controller.abort();
   });
 
@@ -200,6 +245,13 @@
 
   // Slice of the cache shown when the typeahead input is empty.
   const recentMembers = $derived([...memberCache.values()].slice(0, 12));
+  const selectedServiceEvent = $derived(
+    serviceEvents.find((event) => event.id === batch?.serviceEventId) ?? null,
+  );
+  const selectedServiceType = $derived(
+    serviceTypes.find((type) => type.id === selectedServiceEvent?.serviceTypeId) ?? null,
+  );
+  const serviceTypeLabel = $derived(selectedServiceType?.name ?? "Service");
 
   // ─── Mutations ─────────────────────────────────────────────────────
 
@@ -211,7 +263,15 @@
     e.preventDefault();
     if (!batch) return;
     if (batch.status !== "draft") {
-      addError = "Cannot add rows once the batch leaves draft.";
+      addError = "Cannot add contributions once this entry session leaves draft.";
+      return;
+    }
+    if (!batch.serviceEventId) {
+      addError = "This entry session needs a service event before contributions can be added.";
+      return;
+    }
+    if (!rowSourceType) {
+      addError = "Pick the source for this contribution.";
       return;
     }
     addError = null;
@@ -269,7 +329,7 @@
       const controller = new AbortController();
       await loadBatch(controller.signal);
     } catch (err) {
-      addError = err instanceof ApiError ? err.message : "Could not add row.";
+      addError = err instanceof ApiError ? err.message : "Could not add contribution.";
     } finally {
       addingRow = false;
     }
@@ -317,14 +377,14 @@
       return;
     }
     busy = true;
-    busyMsg = `${action[0].toUpperCase() + action.slice(1)}ting batch…`;
+    busyMsg = `${action[0].toUpperCase() + action.slice(1)}ting entry session…`;
     actionError = null;
     try {
       await api.post(`/api/tenant/contribution-batches/${batch.id}/${action}`, {});
       const controller = new AbortController();
       await loadBatch(controller.signal);
     } catch (err) {
-      actionError = err instanceof ApiError ? err.message : `Could not ${action} batch.`;
+      actionError = err instanceof ApiError ? err.message : `Could not ${action} entry session.`;
     } finally {
       busy = false;
       busyMsg = null;
@@ -333,10 +393,10 @@
 
   async function voidBatch() {
     if (!batch) return;
-    const reason = prompt("Reason for voiding this batch?");
+    const reason = prompt("Reason for voiding this entry session?");
     if (!reason) return;
     busy = true;
-    busyMsg = "Voiding batch…";
+    busyMsg = "Voiding entry session…";
     actionError = null;
     try {
       await api.post(`/api/tenant/contribution-batches/${batch.id}/void`, {
@@ -345,7 +405,7 @@
       const controller = new AbortController();
       await loadBatch(controller.signal);
     } catch (err) {
-      actionError = err instanceof ApiError ? err.message : "Could not void batch.";
+      actionError = err instanceof ApiError ? err.message : "Could not void entry session.";
     } finally {
       busy = false;
       busyMsg = null;
@@ -360,7 +420,7 @@
       const controller = new AbortController();
       await loadBatch(controller.signal);
     } catch (err) {
-      actionError = err instanceof ApiError ? err.message : "Could not update batch totals.";
+      actionError = err instanceof ApiError ? err.message : "Could not update counted totals.";
     }
   }
 
@@ -376,7 +436,7 @@
   }
 </script>
 
-<svelte:head><title>Contribution batch · StewardLedger</title></svelte:head>
+<svelte:head><title>Contribution entry · StewardLedger</title></svelte:head>
 
 <div class="pt-2 pb-10 lg:pt-0">
   <a href="/zone/contributions" class="sl-btn sl-btn-ghost">← Back to contributions</a>
@@ -388,9 +448,9 @@
   {:else}
     <div class="sl-reveal sl-reveal-1 mt-4 flex flex-wrap items-end justify-between gap-6">
       <div>
-        <span class="sl-eyebrow">§ Daily ledger · Batch</span>
+        <span class="sl-eyebrow">§ Daily ledger · Entry session</span>
         <h1 class="mt-3 sl-display text-[40px] leading-[1] text-[var(--ink)]">
-          Batch <span class="sl-mono text-[24px] text-[var(--ink-soft)]" style="letter-spacing:0.04em">{batch.referenceCode ?? batch.id.slice(0, 8)}</span>
+          Entry <span class="sl-mono text-[24px] text-[var(--ink-soft)]" style="letter-spacing:0.04em">{batch.referenceCode ?? batch.id.slice(0, 8)}</span>
         </h1>
         <p class="mt-2 text-[13px] text-[var(--ink-mute)]">
           {batch.sourceType}
@@ -426,7 +486,7 @@
     <!-- Totals + lifecycle actions -->
     <div class="sl-reveal sl-reveal-2 mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
       <div class="sl-card p-5">
-        <p class="sl-eyebrow" style="font-size:10px">Rows captured</p>
+        <p class="sl-eyebrow" style="font-size:10px">Contributions</p>
         <p class="sl-num mt-2 sl-display text-[32px] text-[var(--ink)]">{liveCount}</p>
         {#if giftsTotal}
           <p class="mt-1 sl-num text-[13px] text-[var(--ink-mute)]">{fmt(giftsTotal.amount, giftsTotal.currency)}</p>
@@ -453,10 +513,10 @@
     <!-- Add-row form -->
     {#if batch.status === "draft"}
       <form class="sl-reveal sl-card-warm mt-10 p-6" onsubmit={addRow}>
-        <span class="sl-eyebrow">Add a row</span>
+        <span class="sl-eyebrow">Add a contribution</span>
 
         <div class="mt-4 grid grid-cols-12 gap-3">
-          <div class="col-span-12 md:col-span-5">
+          <div class="col-span-12 md:col-span-4">
             <span class="sl-eyebrow" style="font-size:10.5px">Member</span>
             <div class="mt-1.5">
               <MemberTypeahead
@@ -471,13 +531,24 @@
           </div>
 
           <div class="col-span-6 md:col-span-3">
+            <span class="sl-eyebrow" style="font-size:10.5px">Service type</span>
+            <input
+              type="text"
+              readonly
+              required
+              value={serviceTypeLabel}
+              class="sl-input mt-1.5"
+            />
+          </div>
+
+          <div class="col-span-6 md:col-span-2">
             <span class="sl-eyebrow" style="font-size:10.5px">Date</span>
             <input type="date" required bind:value={contributionDate} class="sl-input mt-1.5" />
           </div>
 
-          <div class="col-span-6 md:col-span-4">
+          <div class="col-span-12 md:col-span-3">
             <span class="sl-eyebrow" style="font-size:10.5px">Source</span>
-            <select bind:value={rowSourceType} class="sl-select mt-1.5">
+            <select bind:value={rowSourceType} required class="sl-select mt-1.5">
               {#each SOURCE_TYPES as s (s)}
                 <option value={s}>{s}</option>
               {/each}
@@ -487,22 +558,29 @@
 
         <div class="mt-5 space-y-2">
           {#each lines as line, i (i)}
-            <div class="grid grid-cols-12 items-center gap-2">
-              <select bind:value={line.givingTypeId} class="sl-select col-span-7">
-                <option value="" disabled>Pick a giving type</option>
-                {#each givingTypes as gt (gt.id)}
-                  <option value={gt.id}>{gt.name}</option>
-                {/each}
-              </select>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                bind:value={line.amount}
-                onkeydown={onAmountKeydown}
-                placeholder="Amount"
-                class="sl-input sl-num col-span-4 text-right"
-              />
+            <div class="grid grid-cols-12 items-end gap-2">
+              <label class="col-span-7">
+                <span class="sl-eyebrow" style="font-size:10.5px">Giving type</span>
+                <select bind:value={line.givingTypeId} required class="sl-select mt-1.5">
+                  <option value="" disabled>Pick a giving type</option>
+                  {#each givingTypes as gt (gt.id)}
+                    <option value={gt.id}>{gt.name}</option>
+                  {/each}
+                </select>
+              </label>
+              <label class="col-span-4">
+                <span class="sl-eyebrow" style="font-size:10.5px">Amount</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  required
+                  bind:value={line.amount}
+                  onkeydown={onAmountKeydown}
+                  placeholder="Amount"
+                  class="sl-input sl-num mt-1.5 text-right"
+                />
+              </label>
               <button
                 type="button"
                 onclick={() => removeLine(i)}
@@ -524,7 +602,7 @@
 
         <div class="mt-5 flex flex-wrap items-center gap-3">
           <button type="submit" disabled={addingRow} class="sl-btn sl-btn-primary">
-            {addingRow ? "Adding…" : "Add row"}
+            {addingRow ? "Adding…" : "Add contribution"}
           </button>
           <span class="text-[11.5px] text-[var(--ink-mute)]">
             Tip: Tab through the line, press Enter on the amount to add the row.

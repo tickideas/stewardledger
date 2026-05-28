@@ -114,6 +114,16 @@
     memberId = m.id;
     query = memberLabel(m);
     results = [];
+    resultsForQuery = query.trim();
+  }
+
+  function onKeydown(evt: KeyboardEvent) {
+    if (evt.key !== "Enter") return;
+    if (query.trim() === "") return;
+    const first = dropdownItems[0];
+    if (!first || memberId) return;
+    evt.preventDefault();
+    pick(first);
   }
 
   // What's shown in the dropdown: live results when typing, recent slice when empty.
@@ -125,11 +135,15 @@
     type="text"
     value={query}
     oninput={(e) => onInput((e.currentTarget as HTMLInputElement).value)}
+    onkeydown={onKeydown}
     {placeholder}
     {disabled}
     autocomplete="off"
     class="sl-input"
   />
+  {#if memberId}
+    <p class="mt-1.5 text-[11.5px] text-[var(--ok)]">Member selected.</p>
+  {/if}
   {#if showRecentTruncatedHint && query.trim() === ""}
     <p class="mt-1.5 text-[11.5px] text-[var(--ink-mute)]">
       Showing recent members. Type to search the full directory.
@@ -139,7 +153,11 @@
     <ul class="absolute z-10 mt-1 max-h-60 w-full overflow-auto border border-[var(--rule)] bg-[var(--card)] shadow-[var(--shadow-lift)]">
       {#each dropdownItems as m (m.id)}
         <li>
-          <button type="button" onclick={() => pick(m)} class="block w-full px-3 py-2 text-left text-[13px] text-[var(--ink)] hover:bg-[var(--paper-soft)]">
+          <button
+            type="button"
+            onclick={() => pick(m)}
+            class="block w-full px-3 py-2 text-left text-[13px] text-[var(--ink)] hover:bg-[var(--paper-soft)]"
+          >
             {memberLabel(m)}
           </button>
         </li>

@@ -436,6 +436,35 @@ describe("tenant giving setup routes", () => {
     expect(body.items.some((item) => item.chapterId === otherChapter.id)).toBe(false);
   });
 
+  it("reads a specific service event by id without depending on list pagination", async () => {
+    vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "giving-a@example.com"));
+    const [serviceType] = await db
+      .select({ id: serviceTypes.id })
+      .from(serviceTypes)
+      .where(sql`${serviceTypes.zoneId} = ${zoneA.id}`)
+      .limit(1);
+    const serviceDate = `${new Date().getUTCFullYear()}-10-07`;
+    const create = await call(zoneA.slug, "/api/tenant/giving/service-events", {
+      method: "POST",
+      body: { chapterId: chapterA, serviceTypeId: serviceType.id, serviceDate },
+    });
+    expect(create.status).toBe(201);
+    const created = (await create.json()) as { serviceEvent: { id: string } };
+
+    const res = await call(zoneA.slug, `/api/tenant/giving/service-events/${created.serviceEvent.id}`);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      serviceEvent: { id: string; chapterId: string; serviceTypeId: string; serviceDate: string };
+    };
+    expect(body.serviceEvent).toMatchObject({
+      id: created.serviceEvent.id,
+      chapterId: chapterA,
+      serviceTypeId: serviceType.id,
+      serviceDate,
+    });
+  });
+
   it("creates and reads back service event attendance, idempotent on PUT", async () => {
     vi.spyOn(auth.api, "getSession").mockResolvedValue(fakeSession(userA, "giving-a@example.com"));
     const [serviceType] = await db

@@ -1,0 +1,2 @@
+ALTER TABLE "import_files" DROP CONSTRAINT "import_files_file_type_check";--> statement-breakpoint
+ALTER TABLE "import_files" ADD CONSTRAINT "import_files_file_type_check" CHECK ("import_files"."file_type" in ('statement', 'envelope_batch', 'member', 'giving', 'target'));

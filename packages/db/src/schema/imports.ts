@@ -58,7 +58,7 @@ export const importFiles = pgTable(
     storageKey: text("storage_key").notNull(),
     sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
     checksumSha256: text("checksum_sha256").notNull(),
-    /** statement | member | giving | target */
+    /** statement | envelope_batch | member | giving | target */
     fileType: text("file_type").notNull(),
     /** "bank_csv" | "generic_csv" | "online_giving" | ... */
     sourceType: text("source_type").notNull().default("generic_csv"),
@@ -107,7 +107,7 @@ export const importFiles = pgTable(
     }).onDelete("restrict"),
     check(
       "import_files_file_type_check",
-      sql`${table.fileType} in ('statement', 'member', 'giving', 'target')`,
+      sql`${table.fileType} in ('statement', 'envelope_batch', 'member', 'giving', 'target')`,
     ),
     check(
       "import_files_chapter_service_event_check",

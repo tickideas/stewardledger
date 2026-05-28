@@ -151,24 +151,29 @@
         {chapter()?.name ?? "Chapter"} <span class="sl-serif-italic font-light text-[var(--brass-deep)]">contributions</span>
       </h1>
       <p class="mt-2 max-w-xl text-[14px] text-[var(--ink-mute)]">
-        Sunday batches and individual gifts for this chapter only — the same
-        ledger your zone treasurer sees, narrowed to your congregation.
+        Enter or import giving for this chapter, then review and post it into the same
+        ledger your zone treasurer sees.
       </p>
     </div>
     {#if chapter()}
-      <button onclick={newBatch} class="sl-btn sl-btn-primary">
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-          <path d="M7 3v8M3 7h8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-        </svg>
-        New batch
-      </button>
+      <div class="flex flex-wrap gap-2">
+        <a href="/church/imports?fileType=envelope_batch" class="sl-btn sl-btn-ghost">
+          Import contributions
+        </a>
+        <button onclick={newBatch} class="sl-btn sl-btn-primary">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path d="M7 3v8M3 7h8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+          </svg>
+          Enter contributions
+        </button>
+      </div>
     {/if}
   </div>
 
   <!-- KPI strip. No "across chapters" headline; one chapter in scope. -->
   <div class="sl-reveal sl-reveal-2 mt-10 grid grid-cols-2 gap-0 border-y border-[var(--rule)] bg-[var(--card)] md:grid-cols-3">
     <div class="px-6 py-7 border-r border-[var(--rule)]">
-      <span class="sl-eyebrow">Batches shown</span>
+      <span class="sl-eyebrow">Entry sessions</span>
       <div class="mt-3 sl-display sl-num text-[44px] leading-none text-[var(--ink)]">
         {batchTotal ?? batches.length}
       </div>
@@ -210,7 +215,7 @@
         class="relative -mb-px py-3"
         style={tab === "batches" ? "color:var(--ink)" : "color:var(--ink-mute)"}
       >
-        <span class="sl-display text-[16px]">Batches</span>
+        <span class="sl-display text-[16px]">Entry sessions</span>
         {#if batchTotal !== null}
           <span class="ml-2 sl-mono text-[11px] text-[var(--ink-mute)]">({batchTotal})</span>
         {/if}
@@ -224,7 +229,7 @@
         class="relative -mb-px py-3"
         style={tab === "contributions" ? "color:var(--ink)" : "color:var(--ink-mute)"}
       >
-        <span class="sl-display text-[16px]">All contributions</span>
+        <span class="sl-display text-[16px]">Contribution ledger</span>
         {#if contribTotal !== null}
           <span class="ml-2 sl-mono text-[11px] text-[var(--ink-mute)]">({contribTotal})</span>
         {/if}
@@ -288,7 +293,7 @@
           {#if !loading && batches.length === 0}
             <tr>
               <td colspan="6" class="py-12 text-center text-[13px] text-[var(--ink-mute)]">
-                {chapter() ? "No batches yet. Click New batch to record a Sunday close." : "Select a chapter to begin."}
+                {chapter() ? "No entry sessions yet. Click Enter contributions to start one." : "Select a chapter to begin."}
               </td>
             </tr>
           {/if}

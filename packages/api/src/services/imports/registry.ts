@@ -98,8 +98,8 @@ export const IMPORTER_REGISTRY = [
     fileType: "envelope_batch",
     sourceType: "envelope_batch",
     surface: "both",
-    enabled: false,
-    uploadHint: "Planned for the envelope-batch importer once the Phase 10 bulk slip flow is enabled.",
+    enabled: true,
+    uploadHint: "Choose File type 'Envelope batch'. Pick the chapter and service event before upload.",
     columns: [
       { header: "Service Date", required: true, notes: "Service date for the envelope batch. Use YYYY-MM-DD where possible.", width: 16 },
       { header: "Chapter Reference", required: true, notes: "Chapter reference code for the envelope row.", width: 20 },

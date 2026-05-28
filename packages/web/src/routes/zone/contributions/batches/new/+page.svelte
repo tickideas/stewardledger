@@ -41,6 +41,9 @@
   let createError = $state<string | null>(null);
   let loadError = $state<string | null>(null);
   const canSubmit = $derived(Boolean(chapterId) && Boolean(serviceEventId) && !creating);
+  const importHref = $derived(
+    `/zone/imports?fileType=envelope_batch${chapterId ? `&chapterId=${encodeURIComponent(chapterId)}` : ""}`,
+  );
 
   // Stale-response tokens — last-request-wins for both `loadEvents` and
   // `loadTemplates`, which re-fire every time the chapter changes.
@@ -201,7 +204,7 @@
       return;
     }
     if (!serviceEventId) {
-      createError = "Pick the service event for this counted offering batch.";
+      createError = "Pick the service event for these contributions.";
       return;
     }
     creating = true;
@@ -220,27 +223,30 @@
       );
       await goto(`/zone/contributions/batches/${res.batch.id}`);
     } catch (err) {
-      createError = err instanceof ApiError ? err.message : "Could not create batch.";
+      createError = err instanceof ApiError ? err.message : "Could not start contribution entry.";
     } finally {
       creating = false;
     }
   }
 </script>
 
-<svelte:head><title>New batch · StewardLedger</title></svelte:head>
+<svelte:head><title>Enter contributions · StewardLedger</title></svelte:head>
 
 <div class="pt-2 pb-10 lg:pt-0">
   <a href="/zone/contributions" class="sl-btn sl-btn-ghost">← Back to contributions</a>
 
   <div class="sl-reveal sl-reveal-1 mt-4">
-    <span class="sl-eyebrow">§ Daily ledger · New batch</span>
+    <span class="sl-eyebrow">§ Daily ledger · Contributions</span>
     <h1 class="mt-3 sl-display text-[40px] leading-[1] text-[var(--ink)]">
-      New <span class="sl-serif-italic font-light text-[var(--brass-deep)]">batch</span>
+      Enter <span class="sl-serif-italic font-light text-[var(--brass-deep)]">contributions</span>
     </h1>
     <p class="mt-2 max-w-2xl text-[14px] text-[var(--ink-mute)]">
-      Start a counted-offering batch for one service. After the church has counted and tabulated
-      the offering, record the batch here, add the member rows, review it, then submit for posting.
+      Choose the chapter and service first. StewardLedger creates an entry session where you can
+      add each person’s contribution, check the counted totals, then submit it for posting.
     </p>
+    <a href={importHref} class="mt-4 inline-flex sl-btn sl-btn-ghost">
+      Import envelope spreadsheet instead
+    </a>
   </div>
 
   {#if loadError}
@@ -334,7 +340,7 @@
     {/if}
 
     <button type="submit" disabled={!canSubmit} class="sl-btn sl-btn-primary">
-      {creating ? "Creating…" : "Start batch"}
+      {creating ? "Creating…" : "Start entry"}
     </button>
   </form>
 </div>

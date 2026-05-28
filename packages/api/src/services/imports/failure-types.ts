@@ -26,6 +26,10 @@ export const PLATFORM_FAILURE_TYPES = [
       "Row did not specify a chapter and the import file is not scoped to a single chapter.",
   },
   {
+    code: "CHAPTER_SCOPE_MISMATCH",
+    description: "Row chapter conflicts with the chapter selected for this import file.",
+  },
+  {
     code: "GIVING_TYPE_NOT_FOUND",
     description: "No active giving type matches the row's giving type label.",
   },
@@ -36,6 +40,15 @@ export const PLATFORM_FAILURE_TYPES = [
   {
     code: "INVALID_AMOUNT",
     description: "Amount is missing or could not be parsed as a positive number.",
+  },
+  {
+    code: "INVALID_AMOUNT_SPLIT",
+    description: "Envelope row supplied both cash and cheque amount fields.",
+  },
+  {
+    code: "ENVELOPE_REFERENCE_REQUIRED",
+    description:
+      "Envelope row needs an external reference or envelope number for stable idempotency.",
   },
   {
     code: "INVALID_DATE",
@@ -74,6 +87,10 @@ export const PLATFORM_FAILURE_TYPES = [
   {
     code: "SERVICE_EVENT_CHAPTER_MISMATCH",
     description: "The resolved service event belongs to a different chapter than the row.",
+  },
+  {
+    code: "SERVICE_EVENT_MISMATCH",
+    description: "The row's service date or type does not match the selected service event.",
   },
 ] as const;
 
@@ -159,4 +176,3 @@ function pickFailureRow<T extends { zoneId: string | null }>(rows: readonly T[])
   );
   return sorted[0];
 }
-

@@ -166,6 +166,24 @@ tenantGivingEventsRouter.post(
   },
 );
 
+tenantGivingEventsRouter.get(
+  "/giving/service-events/:id",
+  async (c) => {
+    const ctx = c.get("auth") as AuthorizedContext;
+    if (!hasZoneEventRead(ctx) && !hasChapterEventRead(ctx)) return forbidden(c);
+    const id = c.req.param("id");
+    const [serviceEvent] = await db
+      .select()
+      .from(serviceEvents)
+      .where(and(eq(serviceEvents.id, id), eq(serviceEvents.zoneId, ctx.zoneId)))
+      .limit(1);
+    if (!serviceEvent || !canReadEvent(ctx, serviceEvent.chapterId)) {
+      return c.json({ error: { code: "not_found", message: "Service event not found" } }, 404);
+    }
+    return c.json({ serviceEvent });
+  },
+);
+
 tenantGivingEventsRouter.patch(
   "/giving/service-events/:id",
   zValidator("json", serviceEventUpdateSchema),

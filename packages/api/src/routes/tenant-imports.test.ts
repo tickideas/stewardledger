@@ -193,6 +193,22 @@ function buildCsv(memberRef: string, dateBase: string): FormData {
   return form;
 }
 
+function buildEnvelopeCsv(memberRef: string, dateBase: string): FormData {
+  const csv = [
+    "service date,member reference,giving type code,amount,currency,payment method,envelope number,external reference",
+    `${dateBase},${memberRef},TITHE,100.00,GBP,cash,ENV-${unique()},ENV-TX-${unique()}`,
+  ].join("\n");
+  const form = new FormData();
+  form.append(
+    "file",
+    new Blob([csv], { type: "text/csv" }),
+    `envelopes-${unique()}.csv`,
+  );
+  form.append("fileType", "envelope_batch");
+  form.append("sourceType", "envelope_batch");
+  return form;
+}
+
 describe("tenant import routes", () => {
   let zoneA: SeededZone;
   let zoneB: SeededZone;
@@ -334,9 +350,18 @@ describe("tenant import routes", () => {
         "generic-bank-statement",
         "bank-statement",
         "online-giving-statement",
+        "envelope-batch",
       ]),
     );
-    expect(body.items.map((item) => item.kind)).not.toContain("envelope-batch");
+  });
+
+  it("lists envelope batch templates on the church import surface", async () => {
+    asUser(ownerA, "owner@example.com");
+    const res = await call(zoneA.slug, "/api/tenant/imports/templates?surface=church");
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: { kind: string; requiredColumns: string[] }[] };
+    expect(body.items.map((item) => item.kind)).toContain("envelope-batch");
   });
 
   it("downloads a branded XLSX template", async () => {
@@ -373,14 +398,14 @@ describe("tenant import routes", () => {
     });
   });
 
-  it("does not expose planned template kinds before their importer is enabled", async () => {
+  it("downloads the envelope batch template once its importer is enabled", async () => {
     asUser(ownerA, "owner@example.com");
     const res = await call(zoneA.slug, "/api/tenant/imports/templates/envelope-batch.xlsx");
 
-    expect(res.status).toBe(404);
-    await expect(res.json()).resolves.toMatchObject({
-      error: { code: "template_not_found" },
-    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-disposition")).toContain(
+      `${zoneA.slug}-envelope-batch-template.xlsx`,
+    );
   });
 
   // ─── Cross-tenant ──────────────────────────────────────────────────
@@ -434,6 +459,35 @@ describe("tenant import routes", () => {
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toMatchObject({
       error: { code: "unsupported_file_type" },
+    });
+  });
+
+  it("accepts chapter-scoped envelope batch uploads", async () => {
+    asUser(ownerA, "owner@example.com");
+    const form = buildEnvelopeCsv(zoneA.memberRef, today);
+    form.set("chapterId", zoneA.chapterIdA);
+    form.set("serviceEventId", zoneA.serviceEventIdA);
+
+    const res = await call(zoneA.slug, "/api/tenant/imports", { multipart: form });
+
+    expect(res.status).toBe(201);
+    await expect(res.json()).resolves.toMatchObject({
+      reused: false,
+      totalRows: 1,
+      failedRows: 0,
+    });
+  });
+
+  it("rejects envelope batch uploads without a chapter", async () => {
+    asUser(ownerA, "owner@example.com");
+    const form = buildEnvelopeCsv(zoneA.memberRef, today);
+    form.set("serviceEventId", zoneA.serviceEventIdA);
+
+    const res = await call(zoneA.slug, "/api/tenant/imports", { multipart: form });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: { code: "chapter_required" },
     });
   });
 

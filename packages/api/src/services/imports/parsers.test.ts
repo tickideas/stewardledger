@@ -97,4 +97,51 @@ describe("parseImportBody (dispatch)", () => {
       }),
     ).toThrow(/XLSX imports are disabled/);
   });
+
+  it("routes envelope batch CSVs through the envelope parser", () => {
+    const csv = [
+      "Service Date,Member Reference,Giving Type Code,Amount,Currency Code,Payment Method,Envelope Number,External Reference",
+      "2024-01-07,M0000001,TITHE,25.00,GBP,cash,ENV-001,ENV-TX-1",
+    ].join("\n");
+
+    const r = parseImportBody({
+      body: bytes(csv),
+      fileName: "envelopes.csv",
+      fileType: "envelope_batch",
+      sourceType: "envelope_batch",
+    });
+
+    expect(r.rows[0].parsed).toMatchObject({
+      kind: "envelope_batch",
+      serviceDate: "2024-01-07",
+      memberReferenceCode: "M0000001",
+      givingTypeShortCode: "TITHE",
+      amount: "25.00",
+      currencyCode: "GBP",
+      paymentMethodCode: "cash",
+      envelopeNumber: "ENV-001",
+      externalTransactionId: "ENV-TX-1",
+    });
+  });
+
+  it("preserves envelope rows that supply both cash and cheque amounts for row-level validation", () => {
+    const csv = [
+      "Service Date,Member Reference,Giving Type Code,Cash Amount,Cheque Amount,Currency Code",
+      "2024-01-07,M0000001,TITHE,10.00,5.00,GBP",
+    ].join("\n");
+
+    const r = parseImportBody({
+      body: bytes(csv),
+      fileName: "envelopes.csv",
+      fileType: "envelope_batch",
+      sourceType: "envelope_batch",
+    });
+
+    expect(r.rows[0].parsed).toMatchObject({
+      kind: "envelope_batch",
+      cashAmount: "10.00",
+      chequeAmount: "5.00",
+      amount: "10.00",
+    });
+  });
 });
