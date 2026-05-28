@@ -882,13 +882,14 @@ export type ContributionBatchVoidInput = z.infer<typeof contributionBatchVoidSch
 
 // ─── Imports (Phase 6) ───────────────────────────────────────────────
 
-export const IMPORT_FILE_TYPES = ["statement"] as const;
+export const IMPORT_FILE_TYPES = ["statement", "envelope_batch"] as const;
 export const importFileTypeSchema = z.enum(IMPORT_FILE_TYPES);
 
 export const IMPORT_SOURCE_TYPES = [
   "generic_csv",
   "bank_csv",
   "online_giving",
+  "envelope_batch",
 ] as const;
 export const importSourceTypeSchema = z.enum(IMPORT_SOURCE_TYPES);
 
@@ -902,6 +903,21 @@ export const importCreateSchema = z.object({
   sourceType: importSourceTypeSchema.default("generic_csv"),
   chapterId: uuidSchema.nullish(),
   serviceEventId: uuidSchema.nullish(),
+}).superRefine((value, ctx) => {
+  if (value.fileType === "envelope_batch" && value.sourceType !== "envelope_batch") {
+    ctx.addIssue({
+      code: "custom",
+      path: ["sourceType"],
+      message: "Envelope batch imports must use the envelope_batch source type",
+    });
+  }
+  if (value.fileType === "statement" && value.sourceType === "envelope_batch") {
+    ctx.addIssue({
+      code: "custom",
+      path: ["sourceType"],
+      message: "Statement imports cannot use the envelope_batch source type",
+    });
+  }
 });
 export type ImportCreateInput = z.infer<typeof importCreateSchema>;
 
@@ -924,6 +940,7 @@ export const importListQuerySchema = z.object({
   // the id against the caller's zone + bindings; cross-zone ids return
   // 404, chapter-only users requesting another chapter return 403.
   chapterId: uuidSchema.optional(),
+  fileType: importFileTypeSchema.optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
 });

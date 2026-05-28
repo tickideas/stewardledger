@@ -29,6 +29,7 @@
 import Decimal from "decimal.js";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
+  contributionBatches,
   contributionLines,
   contributions,
   importFiles,
@@ -87,10 +88,45 @@ function chunksOf<T>(items: readonly T[], size = BULK_WRITE_CHUNK): T[][] {
   return chunks;
 }
 
+function envelopeCashComponent(row: {
+  amount: string;
+  cashAmount: string | null;
+  chequeAmount: string | null;
+  paymentMethodCode: string | null;
+}): string {
+  if (row.cashAmount) return row.cashAmount;
+  if (row.chequeAmount) return "0";
+  return row.paymentMethodCode === null || row.paymentMethodCode === "cash" ? row.amount : "0";
+}
+
+function envelopeChequeComponent(row: {
+  amount: string;
+  cashAmount: string | null;
+  chequeAmount: string | null;
+  paymentMethodCode: string | null;
+}): string {
+  if (row.chequeAmount) return row.chequeAmount;
+  return row.paymentMethodCode === "cheque" || row.paymentMethodCode === "check" ? row.amount : "0";
+}
+
+function envelopeBatchGroupKey(row: {
+  chapterId: string;
+  serviceEventId: string;
+  currencyCode: string;
+}): string {
+  return [row.chapterId, row.serviceEventId, row.currencyCode].join("|");
+}
+
+function commonPaymentMethodId(rows: readonly { paymentMethodId: string | null }[]): string | null {
+  const ids = new Set(rows.map((row) => row.paymentMethodId ?? ""));
+  return ids.size === 1 ? rows[0]?.paymentMethodId ?? null : null;
+}
+
 type ImportRowParsedShape = {
   amount: string | null;
   contributionDate: string | null;
   description: string | null;
+  paymentMethodCode?: string | null;
 };
 type EligibleImportRow = typeof importRows.$inferSelect & {
   chapterId: string;
@@ -275,6 +311,7 @@ export async function uploadImport(
   const summary = await runImportJob(database, ctx.zoneId, persisted.importJobId, {
     body: input.body,
     fileName: input.fileName,
+    fileType: input.fileType,
     sourceType: input.sourceType ?? null,
     fileChapterId: input.chapterId ?? null,
     fileServiceEventId: input.serviceEventId ?? null,
@@ -402,6 +439,7 @@ async function persistUpload(
 interface RunInput {
   body: Uint8Array;
   fileName: string;
+  fileType: string;
   sourceType: string | null;
   fileChapterId: string | null;
   fileServiceEventId: string | null;
@@ -470,6 +508,7 @@ export async function runImportJob(
     parsed = parseImportBody({
       body: input.body,
       fileName: input.fileName,
+      fileType: input.fileType,
       sourceType: input.sourceType,
     });
   } catch (err) {
@@ -603,6 +642,33 @@ export async function scheduleImport(
  * they are never silent.
  */
 export async function commitImport(
+  database: Database,
+  ctx: ActorContext,
+  importJobId: string,
+): Promise<{ committedRows: number; skippedDuplicates: number }> {
+  const [file] = await database
+    .select({
+      fileType: importFiles.fileType,
+      originalFileName: importFiles.originalFileName,
+    })
+    .from(importJobs)
+    .innerJoin(
+      importFiles,
+      and(
+        eq(importFiles.zoneId, importJobs.zoneId),
+        eq(importFiles.id, importJobs.importFileId),
+      ),
+    )
+    .where(and(eq(importJobs.zoneId, ctx.zoneId), eq(importJobs.id, importJobId)))
+    .limit(1);
+  if (!file) throw new ImportError("not_found", "Import job not in this zone.");
+  if (file.fileType === "envelope_batch") {
+    return commitEnvelopeBatchImport(database, ctx, importJobId, file.originalFileName);
+  }
+  return commitStatementImport(database, ctx, importJobId);
+}
+
+async function commitStatementImport(
   database: Database,
   ctx: ActorContext,
   importJobId: string,
@@ -889,6 +955,350 @@ export async function commitImport(
   });
 }
 
+async function commitEnvelopeBatchImport(
+  database: Database,
+  ctx: ActorContext,
+  importJobId: string,
+  originalFileName: string,
+): Promise<{ committedRows: number; skippedDuplicates: number }> {
+  return await database.transaction(async (tx) => {
+    const flipped = await tx
+      .update(importJobs)
+      .set({ status: "committing", updatedAt: new Date() })
+      .where(
+        and(
+          eq(importJobs.zoneId, ctx.zoneId),
+          eq(importJobs.id, importJobId),
+          eq(importJobs.status, "scheduled"),
+        ),
+      )
+      .returning({ id: importJobs.id, status: importJobs.status });
+    if (flipped.length === 0) {
+      const [job] = await tx
+        .select({ status: importJobs.status })
+        .from(importJobs)
+        .where(and(eq(importJobs.zoneId, ctx.zoneId), eq(importJobs.id, importJobId)))
+        .limit(1);
+      if (!job) throw new ImportError("not_found", "Import job not in this zone.");
+      throw new ImportError(
+        "invalid_transition",
+        `Only scheduled jobs can be committed (status='${job.status}').`,
+      );
+    }
+
+    const rows = await tx
+      .select()
+      .from(importRows)
+      .where(
+        and(eq(importRows.zoneId, ctx.zoneId), eq(importRows.importJobId, importJobId)),
+      );
+
+    let skippedDuplicates = 0;
+    const skippedRows: { rowId: string; reason: string }[] = [];
+    const eligible: {
+      rowId: string;
+      contributionId: string;
+      chapterId: string;
+      memberId: string | null;
+      givingTypeId: string;
+      accountId: string | null;
+      paymentMethodId: string | null;
+      serviceEventId: string;
+      givingPeriodId: string | null;
+      currencyCode: string;
+      externalTransactionId: string | null;
+      contributionDate: string;
+      amount: string;
+      description: string | null;
+      cashAmount: string | null;
+      chequeAmount: string | null;
+      paymentMethodCode: string | null;
+    }[] = [];
+
+    for (const row of rows) {
+      if (row.isDuplicate) {
+        skippedDuplicates++;
+        continue;
+      }
+      if (row.validationStatus !== "valid") continue;
+      const parsedRaw = row.parsed as (ImportRowParsedShape & {
+        cashAmount?: string | null;
+        chequeAmount?: string | null;
+      }) | null;
+      const check = checkEligibility(row, parsedRaw);
+      if (!check.ok) {
+        skippedRows.push({ rowId: row.id, reason: check.reason });
+        continue;
+      }
+      if (!check.row.serviceEventId) {
+        skippedRows.push({ rowId: row.id, reason: "service_event_id_missing" });
+        continue;
+      }
+      eligible.push({
+        rowId: check.row.id,
+        contributionId: crypto.randomUUID(),
+        chapterId: check.row.chapterId,
+        memberId: check.row.memberId,
+        givingTypeId: check.row.givingTypeId,
+        accountId: check.row.accountId,
+        paymentMethodId: check.row.paymentMethodId,
+        serviceEventId: check.row.serviceEventId,
+        givingPeriodId: check.row.givingPeriodId,
+        currencyCode: check.row.currencyCode,
+        externalTransactionId: check.row.externalTransactionId,
+        contributionDate: check.parsed.contributionDate,
+        amount: toMoney(new Decimal(check.parsed.amount)),
+        description: check.parsed.description,
+        cashAmount: parsedRaw?.cashAmount ? toMoney(new Decimal(parsedRaw.cashAmount)) : null,
+        chequeAmount: parsedRaw?.chequeAmount ? toMoney(new Decimal(parsedRaw.chequeAmount)) : null,
+        paymentMethodCode: parsedRaw?.paymentMethodCode?.toLowerCase() ?? null,
+      });
+    }
+
+    const now = new Date();
+    const committedCount = eligible.length;
+
+    if (skippedRows.length > 0) {
+      await writeAudit(tx, {
+        zoneId: ctx.zoneId,
+        actorUserId: ctx.userId,
+        action: "import.commit_skip",
+        entityType: "import_job",
+        entityId: importJobId,
+        after: {
+          skippedCount: skippedRows.length,
+          sample: skippedRows.slice(0, AUDIT_SAMPLE_LIMIT),
+        },
+      });
+    }
+
+    const batchIdByGroup = new Map<string, string>();
+    if (eligible.length > 0) {
+      const grouped = new Map<string, typeof eligible>();
+      for (const e of eligible) {
+        const key = envelopeBatchGroupKey(e);
+        const list = grouped.get(key) ?? [];
+        list.push(e);
+        grouped.set(key, list);
+      }
+
+      let groupIndex = 0;
+      for (const [key, group] of grouped) {
+        groupIndex++;
+        const [first] = group;
+        const cashTotal = group.reduce(
+          (sum, row) => sum.plus(envelopeCashComponent(row)),
+          new Decimal(0),
+        );
+        const chequeTotal = group.reduce(
+          (sum, row) => sum.plus(envelopeChequeComponent(row)),
+          new Decimal(0),
+        );
+        const [batch] = await tx
+          .insert(contributionBatches)
+          .values({
+            zoneId: ctx.zoneId,
+            chapterId: first.chapterId,
+            serviceEventId: first.serviceEventId,
+            paymentMethodId: commonPaymentMethodId(group),
+            sourceType: "envelope",
+            status: "draft",
+            referenceCode: `IMPORT-${importJobId.slice(0, 8)}-${groupIndex}`,
+            cashTotal: toMoney(cashTotal),
+            chequeTotal: toMoney(chequeTotal),
+            currencyCode: first.currencyCode,
+            notes: `Generated from import ${importJobId} (${originalFileName})`,
+            createdByUserId: ctx.userId,
+            updatedByUserId: ctx.userId,
+          })
+          .returning({ id: contributionBatches.id });
+        batchIdByGroup.set(key, batch.id);
+      }
+
+      for (const chunk of chunksOf(eligible)) {
+        await tx.insert(contributions).values(
+          chunk.map((e) => ({
+            id: e.contributionId,
+            zoneId: ctx.zoneId,
+            batchId: batchIdByGroup.get(envelopeBatchGroupKey(e))!,
+            chapterId: e.chapterId,
+            memberId: e.memberId,
+            sourceType: "envelope",
+            paymentMethodId: e.paymentMethodId,
+            serviceEventId: e.serviceEventId,
+            givingPeriodId: e.givingPeriodId,
+            contributionDate: e.contributionDate,
+            totalAmount: e.amount,
+            currencyCode: e.currencyCode,
+            externalTransactionId: e.externalTransactionId,
+            description: e.description,
+            status: "draft",
+            createdByUserId: ctx.userId,
+            updatedByUserId: ctx.userId,
+          })),
+        );
+      }
+
+      for (const chunk of chunksOf(eligible)) {
+        await tx.insert(contributionLines).values(
+          chunk.map((e) => ({
+            zoneId: ctx.zoneId,
+            contributionId: e.contributionId,
+            givingTypeId: e.givingTypeId,
+            accountId: e.accountId,
+            amount: e.amount,
+            currencyCode: e.currencyCode,
+          })),
+        );
+      }
+
+      const ids = eligible.map((e) => e.contributionId);
+      for (const idChunk of chunksOf(ids)) {
+        await tx
+          .update(contributions)
+          .set({
+            status: "posted",
+            postedAt: now,
+            postedByUserId: ctx.userId,
+            updatedAt: now,
+            updatedByUserId: ctx.userId,
+          })
+          .where(
+            and(
+              eq(contributions.zoneId, ctx.zoneId),
+              inArray(contributions.id, idChunk),
+            ),
+          );
+      }
+
+      const batchIds = Array.from(batchIdByGroup.values());
+      for (const idChunk of chunksOf(batchIds)) {
+        await tx
+          .update(contributionBatches)
+          .set({
+            status: "posted",
+            postedAt: now,
+            postedByUserId: ctx.userId,
+            updatedAt: now,
+            updatedByUserId: ctx.userId,
+          })
+          .where(
+            and(
+              eq(contributionBatches.zoneId, ctx.zoneId),
+              inArray(contributionBatches.id, idChunk),
+            ),
+          );
+      }
+
+      const dedupe = eligible.filter((e) => e.externalTransactionId);
+      for (const chunk of chunksOf(dedupe)) {
+        if (chunk.length === 0) continue;
+        await tx.insert(processedTransactions).values(
+          chunk.map((e) => ({
+            zoneId: ctx.zoneId,
+            externalTransactionId: e.externalTransactionId!,
+            importJobId,
+            contributionId: e.contributionId,
+          })),
+        );
+      }
+
+      const nowIso = now.toISOString();
+      for (const chunk of chunksOf(eligible)) {
+        const values = sql.join(
+          chunk.map((e) => sql`(${e.rowId}, ${e.contributionId})`),
+          sql`, `,
+        );
+        await tx.execute(sql`
+          update ${importRows} as r
+          set
+            contribution_id = v.contribution_id,
+            updated_at = ${nowIso}::timestamptz
+          from (values ${values}) as v(row_id, contribution_id)
+          where r.zone_id = ${ctx.zoneId}
+            and r.id = v.row_id
+        `);
+      }
+
+      const auditEvts: Parameters<typeof writeAuditMany>[1] = [];
+      for (const batchId of batchIds) {
+        auditEvts.push({
+          zoneId: ctx.zoneId,
+          actorUserId: ctx.userId,
+          action: "contribution_batch.create",
+          entityType: "contribution_batch",
+          entityId: batchId,
+          after: { status: "posted", sourceType: "envelope", importJobId },
+        });
+      }
+      for (const e of eligible) {
+        auditEvts.push({
+          zoneId: ctx.zoneId,
+          actorUserId: ctx.userId,
+          action: "contribution.create",
+          entityType: "contribution",
+          entityId: e.contributionId,
+          after: {
+            status: "draft",
+            sourceType: "envelope",
+            importJobId,
+            totalAmount: e.amount,
+            currencyCode: e.currencyCode,
+            externalTransactionId: e.externalTransactionId,
+          },
+        });
+        auditEvts.push({
+          zoneId: ctx.zoneId,
+          actorUserId: ctx.userId,
+          action: "contribution.post",
+          entityType: "contribution",
+          entityId: e.contributionId,
+          before: { status: "draft" },
+          after: { status: "posted", postedAt: now.toISOString(), importJobId },
+        });
+      }
+      await writeAuditMany(tx, auditEvts);
+    }
+
+    await tx
+      .update(importJobs)
+      .set({
+        status: "committed",
+        committedRows: committedCount,
+        finishedAt: now,
+        updatedAt: now,
+      })
+      .where(and(eq(importJobs.zoneId, ctx.zoneId), eq(importJobs.id, importJobId)));
+
+    await tx
+      .update(importSchedules)
+      .set({ committedAt: now, committedByUserId: ctx.userId })
+      .where(
+        and(
+          eq(importSchedules.zoneId, ctx.zoneId),
+          eq(importSchedules.importJobId, importJobId),
+          sql`${importSchedules.committedAt} is null`,
+          sql`${importSchedules.rolledBackAt} is null`,
+        ),
+      );
+
+    await writeAudit(tx, {
+      zoneId: ctx.zoneId,
+      actorUserId: ctx.userId,
+      action: "import.commit",
+      entityType: "import_job",
+      entityId: importJobId,
+      after: {
+        committedRows: committedCount,
+        skippedDuplicates,
+        generatedBatchIds: Array.from(batchIdByGroup.values()),
+      },
+    });
+
+    return { committedRows: committedCount, skippedDuplicates };
+  });
+}
+
 /**
  * Roll back a committed import: void every contribution emitted by the
  * job and delete the matching processed_transactions rows (so a fixed
@@ -954,6 +1364,22 @@ export async function rollbackImport(
     const auditEvts: Parameters<typeof writeAuditMany>[1] = [];
 
     if (targetContributionIds.length > 0) {
+      const batchIds = (
+        await tx
+          .select({ batchId: contributions.batchId })
+          .from(contributions)
+          .where(
+            and(
+              eq(contributions.zoneId, ctx.zoneId),
+              inArray(contributions.id, targetContributionIds),
+              sql`${contributions.batchId} is not null`,
+            ),
+          )
+      )
+        .map((r) => r.batchId)
+        .filter((id): id is string => id !== null);
+      const distinctBatchIds = Array.from(new Set(batchIds));
+
       // One bulk UPDATE instead of N per-id UPDATEs. The Phase 5 posted-
       // immutability guard explicitly allows status → voided + the
       // void_* bookkeeping columns to change on a posted row.
@@ -983,6 +1409,36 @@ export async function rollbackImport(
           importJobId,
         ),
       );
+
+      for (const idChunk of chunksOf(distinctBatchIds)) {
+        await tx
+          .update(contributionBatches)
+          .set({
+            status: "voided",
+            voidedAt: now,
+            voidedByUserId: ctx.userId,
+            voidReason,
+            updatedAt: now,
+            updatedByUserId: ctx.userId,
+          })
+          .where(
+            and(
+              eq(contributionBatches.zoneId, ctx.zoneId),
+              inArray(contributionBatches.id, idChunk),
+            ),
+          );
+      }
+      for (const batchId of distinctBatchIds) {
+        auditEvts.push({
+          zoneId: ctx.zoneId,
+          actorUserId: ctx.userId,
+          action: "contribution_batch.void",
+          entityType: "contribution_batch",
+          entityId: batchId,
+          before: { status: "posted" },
+          after: { status: "voided", voidReason, importJobId },
+        });
+      }
     }
 
     // Capture which external ids the rollback freed (snapshot BEFORE the
@@ -1086,6 +1542,7 @@ export async function listImports(
   }
   const conditions = [eq(importJobs.zoneId, zoneId)];
   if (query.status) conditions.push(eq(importJobs.status, query.status));
+  if (query.fileType) conditions.push(eq(importFiles.fileType, query.fileType));
   if (query.chapterId) {
     // Caller pinned the list to one chapter. The route layer has already
     // validated the chapter is in the zone + the caller can scope to it

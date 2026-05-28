@@ -1,14 +1,12 @@
+<!-- packages/web/src/routes/church/imports/+page.svelte -->
+<!-- Chapter-scoped import dashboard for statements and envelope batches. -->
+<!-- Exists so chapter uploaders can preview, schedule, and commit files within their active chapter. -->
+<!-- RELEVANT FILES: packages/api/src/routes/tenant-imports.ts, packages/api/src/services/imports/index.ts, packages/web/src/lib/imports/template-download-centre.svelte -->
+
 <script lang="ts">
-  // Chapter-scoped imports. Forks /zone/imports but with the chapter pinned
-  // to the sidebar's active chapter — chapter-scoped uploaders can't pick a
-  // different chapter, so we hide the selector. The API enforces the same
-  // rule server-side (`canWriteImport` requires the chapter to be in the
-  // user's bindings), so this is UX, not security.
-  //
-  // Detail screens still live at /zone/imports/[id]; the row click takes
-  // the user there so we don't fork the deep-detail flow yet.
 
   import { goto } from "$app/navigation";
+  import { page } from "$app/state";
   import { useActiveChapter } from "$lib/active-chapter.svelte";
   import { api, ApiError, isAbortError } from "$lib/api";
   import { PUBLIC_API_URL } from "$lib/env";
@@ -43,9 +41,13 @@
   let loadError = $state<string | null>(null);
   let refreshToken = 0;
 
+  const initialFileType =
+    page.url.searchParams.get("fileType") === "envelope_batch" ? "envelope_batch" : "statement";
   let file = $state<File | null>(null);
-  let fileType = $state<"statement">("statement");
-  let sourceType = $state<"generic_csv" | "bank_csv" | "online_giving">("generic_csv");
+  let fileType = $state<"statement" | "envelope_batch">(initialFileType);
+  let sourceType = $state<"generic_csv" | "bank_csv" | "online_giving" | "envelope_batch">(
+    initialFileType === "envelope_batch" ? "envelope_batch" : "generic_csv",
+  );
   let serviceEvents = $state<ServiceEvent[]>([]);
   let serviceTypes = $state<ServiceType[]>([]);
   let selectedServiceEventId = $state("");
@@ -78,6 +80,7 @@
       // server-side; for chapter-scoped users that's their own chapter.
       const params = new URLSearchParams();
       if (status) params.set("status", status);
+      params.set("fileType", fileType);
       const res = await api.get<{ items: Job[]; total: number }>(
         `/api/tenant/imports?${params.toString()}`,
         signal,
@@ -96,6 +99,7 @@
 
   $effect(() => {
     void status;
+    void fileType;
     const controller = new AbortController();
     refresh(controller.signal);
     return () => controller.abort();
@@ -116,6 +120,15 @@
   function onFileChange(evt: Event) {
     const input = evt.target as HTMLInputElement;
     file = input.files?.[0] ?? null;
+  }
+
+  function onFileTypeChange(evt: Event) {
+    const next = (evt.target as HTMLSelectElement).value as "statement" | "envelope_batch";
+    if (next === fileType) return;
+    fileType = next;
+    sourceType = next === "envelope_batch" ? "envelope_batch" : "generic_csv";
+    file = null;
+    uploadError = null;
   }
 
   async function submitUpload(evt: SubmitEvent) {
@@ -158,49 +171,52 @@
   }
 </script>
 
-<svelte:head><title>Imports · {chapter()?.name ?? "Chapter"} · StewardLedger</title></svelte:head>
+<svelte:head><title>Import contributions · {chapter()?.name ?? "Chapter"} · StewardLedger</title></svelte:head>
 
 <div>
   <div class="sl-reveal sl-reveal-1">
-    <span class="sl-eyebrow">§ Chapter pipeline · Imports</span>
+    <span class="sl-eyebrow">§ Chapter ledger · Import contributions</span>
     <h1 class="mt-3 sl-display text-[44px] leading-[1] text-[var(--ink)]">
-      {chapter()?.name ?? "Chapter"} <span class="sl-serif-italic font-light text-[var(--brass-deep)]">imports</span>
+      Import <span class="sl-serif-italic font-light text-[var(--brass-deep)]">contributions</span>
     </h1>
     <p class="mt-2 max-w-2xl text-[14px] text-[var(--ink-mute)]">
-      Upload your chapter's bank or online-giving exports. Each file is
-      previewed and matched before any rows commit to the ledger.
+      Upload your chapter's bank, online-giving, or envelope spreadsheet files.
+      Each file is previewed and matched before it posts to the contribution ledger.
     </p>
   </div>
 
-  <!-- New upload. Same form-shaped wrapper as the zonal /zone/imports page
-       (mirrors the "Filter bar" pattern on /zone/paying-in-books). -->
   <form onsubmit={submitUpload} class="sl-reveal sl-reveal-2 sl-card-warm mt-8 p-6">
-    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-end lg:grid-cols-6">
-      <label class="block">
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-12 lg:items-end">
+      <label class="block lg:col-span-8">
         <span class="sl-eyebrow" style="font-size:10.5px">File</span>
         <input
           type="file"
-          accept=".csv,.tsv"
+          accept={fileType === "envelope_batch" ? ".csv" : ".csv,.tsv"}
           onchange={onFileChange}
           required
           class="mt-1.5 block w-full text-[12px] text-[var(--ink-mute)] file:mr-3 file:rounded-[2px] file:border file:border-[var(--rule-strong)] file:bg-[var(--card)] file:px-3 file:py-2 file:text-[12px] file:text-[var(--ink)] hover:file:bg-[var(--paper-soft)]"
         />
       </label>
-      <label class="block">
+      <label class="block lg:col-span-4">
         <span class="sl-eyebrow" style="font-size:10.5px">File type</span>
-        <select bind:value={fileType} class="sl-select mt-1.5">
+        <select value={fileType} onchange={onFileTypeChange} class="sl-select mt-1.5">
           <option value="statement">Bank statement</option>
+          <option value="envelope_batch">Envelope spreadsheet</option>
         </select>
       </label>
-      <label class="block">
+      <label class="block lg:col-span-4">
         <span class="sl-eyebrow" style="font-size:10.5px">Source</span>
         <select bind:value={sourceType} class="sl-select mt-1.5">
-          <option value="generic_csv">Generic CSV</option>
-          <option value="bank_csv">Bank CSV</option>
-          <option value="online_giving">Online giving export</option>
+          {#if fileType === "envelope_batch"}
+            <option value="envelope_batch">Envelope spreadsheet CSV</option>
+          {:else}
+            <option value="generic_csv">Generic CSV</option>
+            <option value="bank_csv">Bank CSV</option>
+            <option value="online_giving">Online giving export</option>
+          {/if}
         </select>
       </label>
-      <label class="block lg:col-span-2">
+      <label class="block lg:col-span-5">
         <span class="sl-eyebrow" style="font-size:10.5px">Service event</span>
         <select bind:value={selectedServiceEventId} required class="sl-select mt-1.5">
           <option value="" disabled>Pick service event</option>
@@ -209,14 +225,18 @@
           {/each}
         </select>
       </label>
-      <div class="flex justify-end">
-        <button type="submit" disabled={!canSubmitUpload} class="sl-btn sl-btn-primary">
+      <div class="flex sm:col-span-2 sm:justify-end lg:col-span-3">
+        <button type="submit" disabled={!canSubmitUpload} class="sl-btn sl-btn-primary w-full justify-center sm:w-auto">
           {uploading ? "Uploading…" : "Upload + parse"}
         </button>
       </div>
     </div>
     <p class="mt-3 text-[11px] text-[var(--ink-mute)]">
-      Staged for {chapter()?.name ?? "this chapter"} only. Pick the service event before upload so posted rows report against the right service.
+      {#if fileType === "envelope_batch"}
+        Envelope spreadsheets post as physical envelope contributions for {chapter()?.name ?? "this chapter"} after review.
+      {:else}
+        Staged for {chapter()?.name ?? "this chapter"} only. Pick the service event before upload so posted rows report against the right service.
+      {/if}
     </p>
     {#if uploadError}
       <p class="mt-3 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{uploadError}</p>
@@ -279,7 +299,7 @@
         {#if !loading && jobs.length === 0}
           <tr>
             <td colspan="7" class="py-12 text-center text-[13px] text-[var(--ink-mute)]">
-              No imports yet. Upload a statement above to begin.
+              No {fileType === "envelope_batch" ? "envelope spreadsheet imports" : "statement imports"} yet.
             </td>
           </tr>
         {/if}

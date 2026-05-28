@@ -80,7 +80,7 @@
       {#if rows.length === 0}
         <tr>
           <td colspan="6" class="py-12 text-center text-[13px] text-[var(--ink-mute)]">
-            No rows yet. Add the first one above.
+            No contributions yet. Add the first one above.
           </td>
         </tr>
       {/if}

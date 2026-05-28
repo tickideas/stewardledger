@@ -667,8 +667,8 @@ import_files
   storage_key text not null               -- object storage key
   size_bytes int not null
   checksum_sha256 text not null
-  file_type text not null                 -- statement in Phase 6; member/giving/target deferred
-  source_type text not null default 'generic_csv' -- generic_csv | bank_csv | online_giving
+  file_type text not null                 -- statement | envelope_batch; member/giving/target deferred
+  source_type text not null default 'generic_csv' -- generic_csv | bank_csv | online_giving | envelope_batch
   uploaded_at timestamptz default now()
 
 import_jobs
@@ -779,6 +779,8 @@ paying_in_books
 ```
 
 Church-scoped contribution imports require `import_files.service_event_id`; the matcher copies it to each `import_rows.service_event_id` unless a row-level service event column is present. Zone-wide imports leave `import_files.service_event_id` null and resolve `import_rows.service_event_id` from row columns such as service event id, service type, and service date.
+
+Envelope-batch imports (`file_type='envelope_batch'`, `source_type='envelope_batch'`) are chapter-scoped imports surfaced from `/church/imports` and `/zone/imports`. They use the same upload -> match -> schedule -> commit state machine and the same `processed_transactions(zone_id, external_transaction_id)` idempotency guard as statement imports, but the commit materializer posts `source_type='envelope'` ledger rows: one generated `contribution_batches` row per `(chapter_id, service_event_id, currency_code)` group and one posted `contributions` row per valid, non-duplicate spreadsheet row. Rows need either an external reference or envelope number so edited re-uploads have a stable idempotency key; chapter-scoped uploads reject any row-level chapter value that conflicts with the selected chapter. Rollback voids both the emitted contributions and the generated batches, then frees the processed transaction keys for a corrected re-upload. XLSX envelope uploads remain deferred until the parser can be made asynchronous or a hardened synchronous workbook reader is added; v1 accepts CSV envelope sheets.
 
 Implemented (Phase 8). Reference codes are stored as `text` and
 compared lexicographically — treasurer pads use either zero-padded

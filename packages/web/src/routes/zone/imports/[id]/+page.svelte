@@ -1,7 +1,9 @@
+<!-- packages/web/src/routes/zone/imports/[id]/+page.svelte -->
+<!-- Import job detail with row preview, lifecycle actions, and rollback controls. -->
+<!-- Exists so treasurers can inspect matched imports before posting ledger rows. -->
+<!-- RELEVANT FILES: packages/api/src/routes/tenant-imports.ts, packages/api/src/services/imports/index.ts, packages/web/src/routes/church/imports/+page.svelte -->
+
 <script lang="ts">
-  // Import job detail. Shows summary, per-row preview with failures, and
-  // the operator buttons: Schedule (only when 0 failed), Commit (only
-  // after schedule), Rollback (only after commit).
 
   import { page } from "$app/stores";
   import { api, ApiError, isAbortError } from "$lib/api";
@@ -47,6 +49,11 @@
     currencyCode: string | null;
     paymentMethodCode: string | null;
     description: string | null;
+    kind?: "statement" | "envelope_batch";
+    serviceDate?: string | null;
+    envelopeNumber?: string | null;
+    cashAmount?: string | null;
+    chequeAmount?: string | null;
   };
 
   type Row = {
@@ -161,9 +168,17 @@
       return amount;
     }
   }
+
+  function rowDate(row: Row): string {
+    return row.parsed.serviceDate ?? row.parsed.contributionDate ?? "—";
+  }
+
+  function rowExternalRef(row: Row): string {
+    return row.parsed.externalTransactionId ?? row.parsed.envelopeNumber ?? "—";
+  }
 </script>
 
-<svelte:head><title>Import job · StewardLedger</title></svelte:head>
+<svelte:head><title>Import review · StewardLedger</title></svelte:head>
 
 <div class="pt-2 pb-10 lg:pt-0">
   <a href="/zone/imports" class="sl-btn sl-btn-ghost">← All imports</a>
@@ -175,10 +190,10 @@
   {#if job && file}
     <div class="sl-reveal sl-reveal-1 mt-4 flex flex-wrap items-end justify-between gap-6">
       <div>
-        <span class="sl-eyebrow">§ Pipeline · Import job</span>
+        <span class="sl-eyebrow">§ Ledger · Import review</span>
         <h1 class="mt-3 sl-display text-[36px] leading-[1] text-[var(--ink)]">{file.originalFileName}</h1>
         <p class="mt-2 text-[12.5px] text-[var(--ink-mute)]">
-          {file.fileType} · {file.sourceType ?? "—"} · {file.sizeBytes} bytes ·
+          {file.fileType === "envelope_batch" ? "Envelope spreadsheet" : file.fileType} · {file.sourceType ?? "—"} · {file.sizeBytes} bytes ·
           {new Date(file.uploadedAt).toLocaleString()}
         </p>
         <p class="mt-1 sl-mono text-[11px] text-[var(--ink-faint)]">sha256: {file.checksumSha256}</p>
@@ -230,7 +245,7 @@
       {/if}
       {#if job.status === "scheduled"}
         <button disabled={busy} onclick={() => doAction(`/api/tenant/imports/${job!.id}/commit`)} class="sl-btn sl-btn-accent">
-          Commit ({job.matchedRows - job.duplicateRows} contributions)
+          Commit ({job.matchedRows - job.duplicateRows} {file?.fileType === "envelope_batch" ? "envelope rows" : "contributions"})
         </button>
       {/if}
       {#if job.status === "committed"}
@@ -305,11 +320,11 @@
             {#each rows as row (row.id)}
               <tr>
                 <td class="sl-mono text-[var(--ink-faint)]">{row.rowNumber}</td>
-                <td class="sl-mono text-[var(--ink-soft)]">{row.parsed.contributionDate ?? "—"}</td>
+                <td class="sl-mono text-[var(--ink-soft)]">{rowDate(row)}</td>
                 <td>{row.parsed.memberReferenceCode ?? row.parsed.memberName ?? "—"}</td>
                 <td>{row.parsed.givingTypeShortCode ?? row.parsed.givingTypeName ?? "—"}</td>
                 <td class="sl-num text-right text-[var(--ink)]">{fmtParsedAmount(row)}</td>
-                <td class="sl-mono text-[var(--ink-mute)]">{row.parsed.externalTransactionId ?? "—"}</td>
+                <td class="sl-mono text-[var(--ink-mute)]">{rowExternalRef(row)}</td>
                 <td>
                   <span class={`sl-badge ${rowBadge(row)}`}>
                     {row.isDuplicate ? "duplicate" : row.validationStatus === "invalid" ? "failed" : row.matchStatus}

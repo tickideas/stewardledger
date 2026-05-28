@@ -242,7 +242,7 @@
     {/if}
     {#if contribution.batchId}
       <p class="mt-4 text-[13px] text-[var(--ink-soft)]">
-        Part of batch
+        Part of entry session
         <a href={`/zone/contributions/batches/${contribution.batchId}`} class="sl-mono text-[12px] text-[var(--brass-deep)] hover:underline">
           {contribution.batchId.slice(0, 8)}
         </a>

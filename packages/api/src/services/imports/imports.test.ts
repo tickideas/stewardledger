@@ -14,7 +14,11 @@ import { eq, sql } from "drizzle-orm";
 import {
   applyContributionTriggers,
   chapters,
+  contributionBatches,
+  contributionLines,
   contributions,
+  importRowFailures,
+  importRows,
   givingTypes,
   importFiles,
   importJobs,
@@ -162,6 +166,59 @@ function buildCsv(zone: SeededZone, dateBase = TODAY): string {
     `${dateBase},${zone.memberRefs[0]},${zone.givingTypeShortCode},100.00,TX-A,GBP,Tithe`,
     `${dateBase},${zone.memberRefs[1]},${zone.givingTypeShortCode},50.00,TX-B,GBP,Tithe`,
     `${dateBase},${zone.memberRefs[2]},${zone.givingTypeShortCode},25.00,TX-C,GBP,Tithe`,
+  ].join("\n");
+}
+
+function buildEnvelopeCsv(zone: SeededZone, dateBase = TODAY): string {
+  return [
+    "service date,member reference,giving type code,amount,currency,payment method,envelope number,external reference,description",
+    `${dateBase},${zone.memberRefs[0]},${zone.givingTypeShortCode},100.00,GBP,cash,ENV-A,ENV-TX-A,Tithe`,
+    `${dateBase},${zone.memberRefs[1]},${zone.givingTypeShortCode},50.00,GBP,cash,ENV-B,ENV-TX-B,Tithe`,
+  ].join("\n");
+}
+
+function buildEnvelopeCsvWithoutExternalRef(zone: SeededZone, dateBase = TODAY, description = "Tithe"): string {
+  return [
+    "service date,member reference,giving type code,amount,currency,payment method,envelope number,description",
+    `${dateBase},${zone.memberRefs[0]},${zone.givingTypeShortCode},100.00,GBP,cash,ENV-A,${description}`,
+    `${dateBase},${zone.memberRefs[1]},${zone.givingTypeShortCode},50.00,GBP,cash,ENV-B,${description}`,
+  ].join("\n");
+}
+
+function buildEnvelopeChequeCsv(zone: SeededZone, dateBase = TODAY): string {
+  return [
+    "service date,member reference,giving type code,amount,currency,payment method,envelope number,external reference",
+    `${dateBase},${zone.memberRefs[0]},${zone.givingTypeShortCode},50.00,GBP,cheque,ENV-CHEQUE,ENV-CHEQUE-TX`,
+  ].join("\n");
+}
+
+function buildEnvelopeMixedPaymentCsv(zone: SeededZone, dateBase = TODAY): string {
+  return [
+    "service date,member reference,giving type code,amount,currency,payment method,envelope number,external reference",
+    `${dateBase},${zone.memberRefs[0]},${zone.givingTypeShortCode},100.00,GBP,cash,ENV-CASH,ENV-CASH-TX`,
+    `${dateBase},${zone.memberRefs[1]},${zone.givingTypeShortCode},50.00,GBP,cheque,ENV-CHEQUE,ENV-CHEQUE-TX`,
+  ].join("\n");
+}
+
+function buildEnvelopeDuplicateDerivedKeyCsv(zone: SeededZone, dateBase = TODAY): string {
+  return [
+    "service date,member reference,giving type code,amount,currency,payment method,envelope number,description",
+    `${dateBase},${zone.memberRefs[0]},${zone.givingTypeShortCode},100.00,GBP,cash,ENV-DUP,First row`,
+    `${dateBase},${zone.memberRefs[0]},${zone.givingTypeShortCode},100.00,GBP,cash,ENV-DUP,Duplicate row`,
+  ].join("\n");
+}
+
+function buildEnvelopeCsvWithoutStableReference(zone: SeededZone, dateBase = TODAY): string {
+  return [
+    "service date,member reference,giving type code,amount,currency,payment method,description",
+    `${dateBase},${zone.memberRefs[0]},${zone.givingTypeShortCode},100.00,GBP,cash,Tithe`,
+  ].join("\n");
+}
+
+function buildEnvelopeSplitCsv(zone: SeededZone, dateBase = TODAY): string {
+  return [
+    "service date,member reference,giving type code,cash amount,cheque amount,currency,envelope number,external reference",
+    `${dateBase},${zone.memberRefs[0]},${zone.givingTypeShortCode},10.00,5.00,GBP,ENV-SPLIT,ENV-SPLIT-TX`,
   ].join("\n");
 }
 
@@ -356,6 +413,369 @@ describe("import pipeline (end-to-end)", () => {
       .from(processedTransactions)
       .where(eq(processedTransactions.zoneId, zone.id));
     expect(procRows).toHaveLength(3);
+  });
+
+  it("commits envelope batch imports into posted envelope batches and contributions", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const body = new TextEncoder().encode(buildEnvelopeCsv(zone));
+
+    const uploaded = await uploadImport(
+      db,
+      { zoneId: zone.id, userId: zone.userId },
+      {
+        fileName: "sunday-envelopes.csv",
+        body,
+        fileType: "envelope_batch",
+        sourceType: "envelope_batch",
+        chapterId: zone.chapterId,
+        serviceEventId: zone.serviceEventId,
+      },
+    );
+    expect(uploaded).toMatchObject({
+      reused: false,
+      totalRows: 2,
+      matchedRows: 2,
+      failedRows: 0,
+      duplicateRows: 0,
+    });
+
+    await scheduleImport(db, { zoneId: zone.id, userId: zone.userId }, uploaded.importJobId);
+    const committed = await commitImport(db, { zoneId: zone.id, userId: zone.userId }, uploaded.importJobId);
+    expect(committed).toMatchObject({ committedRows: 2, skippedDuplicates: 0 });
+
+    const batches = await db
+      .select({
+        id: contributionBatches.id,
+        status: contributionBatches.status,
+        sourceType: contributionBatches.sourceType,
+        cashTotal: contributionBatches.cashTotal,
+        currencyCode: contributionBatches.currencyCode,
+      })
+      .from(contributionBatches)
+      .where(eq(contributionBatches.zoneId, zone.id));
+    expect(batches).toHaveLength(1);
+    expect(batches[0]).toMatchObject({
+      status: "posted",
+      sourceType: "envelope",
+      cashTotal: "150.0000",
+      currencyCode: "GBP",
+    });
+
+    const rows = await db
+      .select({
+        id: contributions.id,
+        status: contributions.status,
+        sourceType: contributions.sourceType,
+        batchId: contributions.batchId,
+        externalTransactionId: contributions.externalTransactionId,
+        totalAmount: contributions.totalAmount,
+      })
+      .from(contributions)
+      .where(eq(contributions.zoneId, zone.id));
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.status === "posted")).toBe(true);
+    expect(rows.every((r) => r.sourceType === "envelope")).toBe(true);
+    expect(rows.every((r) => r.batchId === batches[0].id)).toBe(true);
+    expect(new Set(rows.map((r) => r.externalTransactionId))).toEqual(
+      new Set(["ENV-TX-A", "ENV-TX-B"]),
+    );
+
+    const lines = await db
+      .select({ id: contributionLines.id })
+      .from(contributionLines)
+      .where(eq(contributionLines.zoneId, zone.id));
+    expect(lines).toHaveLength(2);
+
+    const procRows = await db
+      .select({ id: processedTransactions.id })
+      .from(processedTransactions)
+      .where(eq(processedTransactions.zoneId, zone.id));
+    expect(procRows).toHaveLength(2);
+  });
+
+  it("rejects envelope rows whose service date does not match the selected service event", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const wrongDate = shiftDays(TODAY, -7);
+    const body = new TextEncoder().encode(buildEnvelopeCsv(zone, wrongDate));
+
+    const uploaded = await uploadImport(db, { zoneId: zone.id, userId: zone.userId }, {
+      fileName: "wrong-service-date.csv",
+      body,
+      fileType: "envelope_batch",
+      sourceType: "envelope_batch",
+      chapterId: zone.chapterId,
+      serviceEventId: zone.serviceEventId,
+    });
+
+    expect(uploaded.failedRows).toBe(2);
+    expect(uploaded.matchedRows).toBe(0);
+
+    const failures = await db
+      .select({ code: importRowFailures.failureCode })
+      .from(importRowFailures)
+      .innerJoin(importRows, eq(importRows.id, importRowFailures.rowId))
+      .where(eq(importRows.importJobId, uploaded.importJobId));
+    expect(failures.map((failure) => failure.code)).toContain("SERVICE_EVENT_MISMATCH");
+  });
+
+  it("derives envelope idempotency keys when external references are omitted", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+
+    const first = await uploadImport(db, { zoneId: zone.id, userId: zone.userId }, {
+      fileName: "no-ref-envelopes.csv",
+      body: new TextEncoder().encode(buildEnvelopeCsvWithoutExternalRef(zone, TODAY, "First upload")),
+      fileType: "envelope_batch",
+      sourceType: "envelope_batch",
+      chapterId: zone.chapterId,
+      serviceEventId: zone.serviceEventId,
+    });
+    await scheduleImport(db, { zoneId: zone.id, userId: zone.userId }, first.importJobId);
+    await commitImport(db, { zoneId: zone.id, userId: zone.userId }, first.importJobId);
+
+    const second = await uploadImport(db, { zoneId: zone.id, userId: zone.userId }, {
+      fileName: "no-ref-envelopes-edited.csv",
+      body: new TextEncoder().encode(buildEnvelopeCsvWithoutExternalRef(zone, TODAY, "Edited note")),
+      fileType: "envelope_batch",
+      sourceType: "envelope_batch",
+      chapterId: zone.chapterId,
+      serviceEventId: zone.serviceEventId,
+    });
+
+    expect(second.reused).toBe(false);
+    expect(second.duplicateRows).toBe(2);
+    expect(second.matchedRows).toBe(2);
+    await scheduleImport(db, { zoneId: zone.id, userId: zone.userId }, second.importJobId);
+    const committed = await commitImport(db, { zoneId: zone.id, userId: zone.userId }, second.importJobId);
+    expect(committed.committedRows).toBe(0);
+
+    const rows = await db
+      .select({ id: contributions.id })
+      .from(contributions)
+      .where(eq(contributions.zoneId, zone.id));
+    expect(rows).toHaveLength(2);
+  });
+
+  it("uses payment method when calculating envelope batch cash and cheque totals", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const uploaded = await uploadImport(db, { zoneId: zone.id, userId: zone.userId }, {
+      fileName: "cheque-envelopes.csv",
+      body: new TextEncoder().encode(buildEnvelopeChequeCsv(zone)),
+      fileType: "envelope_batch",
+      sourceType: "envelope_batch",
+      chapterId: zone.chapterId,
+      serviceEventId: zone.serviceEventId,
+    });
+    await scheduleImport(db, { zoneId: zone.id, userId: zone.userId }, uploaded.importJobId);
+    await commitImport(db, { zoneId: zone.id, userId: zone.userId }, uploaded.importJobId);
+
+    const [batch] = await db
+      .select({
+        cashTotal: contributionBatches.cashTotal,
+        chequeTotal: contributionBatches.chequeTotal,
+      })
+      .from(contributionBatches)
+      .where(eq(contributionBatches.zoneId, zone.id));
+    expect(batch).toMatchObject({
+      cashTotal: "0.0000",
+      chequeTotal: "50.0000",
+    });
+  });
+
+  it("keeps mixed cash and cheque envelope rows in one generated batch", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const uploaded = await uploadImport(db, { zoneId: zone.id, userId: zone.userId }, {
+      fileName: "mixed-payment-envelopes.csv",
+      body: new TextEncoder().encode(buildEnvelopeMixedPaymentCsv(zone)),
+      fileType: "envelope_batch",
+      sourceType: "envelope_batch",
+      chapterId: zone.chapterId,
+      serviceEventId: zone.serviceEventId,
+    });
+    await scheduleImport(db, { zoneId: zone.id, userId: zone.userId }, uploaded.importJobId);
+    await commitImport(db, { zoneId: zone.id, userId: zone.userId }, uploaded.importJobId);
+
+    const batches = await db
+      .select({
+        paymentMethodId: contributionBatches.paymentMethodId,
+        cashTotal: contributionBatches.cashTotal,
+        chequeTotal: contributionBatches.chequeTotal,
+      })
+      .from(contributionBatches)
+      .where(eq(contributionBatches.zoneId, zone.id));
+    expect(batches).toHaveLength(1);
+    expect(batches[0]).toMatchObject({
+      paymentMethodId: null,
+      cashTotal: "100.0000",
+      chequeTotal: "50.0000",
+    });
+  });
+
+  it("marks repeated derived envelope keys inside one upload as duplicates before commit", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const uploaded = await uploadImport(db, { zoneId: zone.id, userId: zone.userId }, {
+      fileName: "duplicate-derived-envelopes.csv",
+      body: new TextEncoder().encode(buildEnvelopeDuplicateDerivedKeyCsv(zone)),
+      fileType: "envelope_batch",
+      sourceType: "envelope_batch",
+      chapterId: zone.chapterId,
+      serviceEventId: zone.serviceEventId,
+    });
+
+    expect(uploaded).toMatchObject({
+      totalRows: 2,
+      matchedRows: 2,
+      duplicateRows: 1,
+      failedRows: 0,
+    });
+
+    await scheduleImport(db, { zoneId: zone.id, userId: zone.userId }, uploaded.importJobId);
+    const committed = await commitImport(db, { zoneId: zone.id, userId: zone.userId }, uploaded.importJobId);
+    expect(committed).toMatchObject({ committedRows: 1, skippedDuplicates: 1 });
+
+    const rows = await db
+      .select({ id: contributions.id })
+      .from(contributions)
+      .where(eq(contributions.zoneId, zone.id));
+    expect(rows).toHaveLength(1);
+  });
+
+  it("rejects envelope rows without an external reference or envelope number", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const uploaded = await uploadImport(db, { zoneId: zone.id, userId: zone.userId }, {
+      fileName: "unstable-reference-envelopes.csv",
+      body: new TextEncoder().encode(buildEnvelopeCsvWithoutStableReference(zone)),
+      fileType: "envelope_batch",
+      sourceType: "envelope_batch",
+      chapterId: zone.chapterId,
+      serviceEventId: zone.serviceEventId,
+    });
+
+    expect(uploaded).toMatchObject({
+      totalRows: 1,
+      matchedRows: 0,
+      failedRows: 1,
+      duplicateRows: 0,
+    });
+
+    const failures = await db
+      .select({ code: importRowFailures.failureCode })
+      .from(importRowFailures)
+      .innerJoin(importRows, eq(importRows.id, importRowFailures.rowId))
+      .where(eq(importRows.importJobId, uploaded.importJobId));
+    expect(failures.map((failure) => failure.code)).toContain("ENVELOPE_REFERENCE_REQUIRED");
+  });
+
+  it("rejects envelope row chapter columns that conflict with a chapter-scoped upload", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const [serviceType] = await db
+      .select({ id: serviceTypes.id })
+      .from(serviceTypes)
+      .where(sql`${serviceTypes.zoneId} = ${zone.id}`)
+      .limit(1);
+    const [zoneWideEvent] = await db
+      .insert(serviceEvents)
+      .values({
+        zoneId: zone.id,
+        chapterId: null,
+        serviceTypeId: serviceType.id,
+        serviceDate: TODAY,
+      })
+      .returning({ id: serviceEvents.id });
+    const csv = [
+      "service date,chapter,member reference,giving type code,amount,currency,payment method,envelope number",
+      `${TODAY},${zone.otherChapterReferenceCode},${zone.memberRefs[0]},${zone.givingTypeShortCode},100.00,GBP,cash,ENV-SCOPE`,
+    ].join("\n");
+
+    const uploaded = await uploadImport(db, { zoneId: zone.id, userId: zone.userId }, {
+      fileName: "chapter-conflict-envelopes.csv",
+      body: new TextEncoder().encode(csv),
+      fileType: "envelope_batch",
+      sourceType: "envelope_batch",
+      chapterId: zone.chapterId,
+      serviceEventId: zoneWideEvent.id,
+    });
+
+    expect(uploaded).toMatchObject({
+      totalRows: 1,
+      matchedRows: 0,
+      failedRows: 1,
+      duplicateRows: 0,
+    });
+
+    const failures = await db
+      .select({ code: importRowFailures.failureCode })
+      .from(importRowFailures)
+      .innerJoin(importRows, eq(importRows.id, importRowFailures.rowId))
+      .where(eq(importRows.importJobId, uploaded.importJobId));
+    expect(failures.map((failure) => failure.code)).toContain("CHAPTER_SCOPE_MISMATCH");
+  });
+
+  it("keeps cash-and-cheque split envelope rows in preview as invalid rows", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const uploaded = await uploadImport(db, { zoneId: zone.id, userId: zone.userId }, {
+      fileName: "split-envelopes.csv",
+      body: new TextEncoder().encode(buildEnvelopeSplitCsv(zone)),
+      fileType: "envelope_batch",
+      sourceType: "envelope_batch",
+      chapterId: zone.chapterId,
+      serviceEventId: zone.serviceEventId,
+    });
+
+    expect(uploaded.totalRows).toBe(1);
+    expect(uploaded.failedRows).toBe(1);
+    const failures = await db
+      .select({ code: importRowFailures.failureCode })
+      .from(importRowFailures)
+      .innerJoin(importRows, eq(importRows.id, importRowFailures.rowId))
+      .where(eq(importRows.importJobId, uploaded.importJobId));
+    expect(failures.map((failure) => failure.code)).toContain("INVALID_AMOUNT_SPLIT");
+  });
+
+  it("rolls back envelope batch imports by voiding generated batches", async () => {
+    const zone = await seedZone();
+    seededZones.push(zone.id);
+    const body = new TextEncoder().encode(buildEnvelopeCsv(zone));
+
+    const uploaded = await uploadImport(db, { zoneId: zone.id, userId: zone.userId }, {
+      fileName: "rollback-envelopes.csv",
+      body,
+      fileType: "envelope_batch",
+      sourceType: "envelope_batch",
+      chapterId: zone.chapterId,
+      serviceEventId: zone.serviceEventId,
+    });
+    await scheduleImport(db, { zoneId: zone.id, userId: zone.userId }, uploaded.importJobId);
+    await commitImport(db, { zoneId: zone.id, userId: zone.userId }, uploaded.importJobId);
+
+    const rolledBack = await rollbackImport(db, { zoneId: zone.id, userId: zone.userId }, uploaded.importJobId, {
+      reason: "wrong envelope file",
+    });
+    expect(rolledBack.voidedContributions).toBe(2);
+
+    const batches = await db
+      .select({ status: contributionBatches.status, voidReason: contributionBatches.voidReason })
+      .from(contributionBatches)
+      .where(eq(contributionBatches.zoneId, zone.id));
+    expect(batches).toHaveLength(1);
+    expect(batches[0]).toMatchObject({
+      status: "voided",
+      voidReason: "Import rollback: wrong envelope file",
+    });
+
+    const procRows = await db
+      .select({ id: processedTransactions.id })
+      .from(processedTransactions)
+      .where(eq(processedTransactions.zoneId, zone.id));
+    expect(procRows).toHaveLength(0);
   });
 
   it("re-uploading the same bytes returns the existing job (file-level idempotency)", async () => {

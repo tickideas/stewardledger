@@ -16,19 +16,24 @@ describe("IMPORTER_REGISTRY", () => {
     }
   });
 
-  it("tracks statement source types plus the planned envelope-batch template", () => {
+  it("tracks statement source types plus the envelope-batch template", () => {
     const bySource = new Set(IMPORTER_REGISTRY.map((template) => template.sourceType));
     expect([...bySource]).toEqual(expect.arrayContaining(["generic_csv", "bank_csv", "online_giving", "envelope_batch"]));
   });
 
   it("returns enabled UI-safe summaries without full column note payloads", () => {
     const summaries = listImportTemplates("church");
-    expect(summaries.map((template) => template.kind)).not.toContain("envelope-batch");
+    expect(summaries.map((template) => template.kind)).toContain("envelope-batch");
     expect(summaries[0]).toMatchObject({
       title: expect.any(String),
       requiredColumns: expect.any(Array),
       optionalColumns: expect.any(Array),
     });
     expect("columns" in summaries[0]).toBe(false);
+  });
+
+  it("offers the envelope template on the zone import surface", () => {
+    const summaries = listImportTemplates("zone");
+    expect(summaries.map((template) => template.kind)).toContain("envelope-batch");
   });
 });

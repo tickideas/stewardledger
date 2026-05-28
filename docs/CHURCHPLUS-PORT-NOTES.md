@@ -145,12 +145,12 @@ Capabilities that StewardLedger should ship before GA (Phase 10). Each one is so
 
 - **Church Plus**: `utils/bulk_slip_import.py` ingests envelope CSV/XLSX in bulk, distinct from the bank statement import.
 - **Why it matters**: chapters that still use physical paying-in books send batches of envelope rows on a spreadsheet. The bank statement pipeline is the wrong shape for this.
-- **StewardLedger today**: `contribution_batches` exists for manual entry but no bulk upload path.
+- **StewardLedger today**: **Landed** on `feature/envelope-import-v1` for CSV envelope sheets. The importer reuses the existing import pipeline and idempotency guard, materialises posted envelope batches/contributions at commit time, and is surfaced as an "Envelope batches" tab on `/church/imports`. XLSX remains deferred until the workbook parser is hardened without changing the bank-statement parser.
 - **Verdict**: **Port v1.**
 - **Suggested target**:
-  - Parser: extend `packages/api/src/services/imports/parsers.ts` with an envelope-batch parser (zone + chapter + service event + member ref + giving-type rows).
-  - Service: reuses the imports pipeline (`upload → match → schedule → commit`), but materialises a `contribution_batches`/`contributions` set instead of bank statement rows.
-  - UI: `/church/imports` already exists; add an "Envelope batch" tab.
+  - Parser: `packages/api/src/services/imports/parsers.ts` includes an envelope-batch CSV parser (chapter + service event + member ref + giving-type rows).
+  - Service: reuses the imports pipeline (`upload → match → schedule → commit`), but materialises a `contribution_batches`/`contributions` set instead of bank statement rows and reuses `processed_transactions`.
+  - UI: `/church/imports` has an "Envelope batches" tab.
 
 #### 2.2.4 Member email verification (double opt-in)
 

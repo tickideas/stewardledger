@@ -165,22 +165,26 @@ RELEVANT FILES: packages/web/src/routes/church/contributions/+page.svelte, packa
         Contributions <span class="sl-serif-italic font-light text-[var(--brass-deep)]">journal</span>
       </h1>
       <p class="mt-2 max-w-xl text-[14px] text-[var(--ink-mute)]">
-        Sunday batches, individual gifts, and online imports — all reconciled into a single
-        traceable ledger.
+        Enter or import giving, then review and post it into one traceable ledger.
       </p>
     </div>
-    <button onclick={newBatch} class="sl-btn sl-btn-primary">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-        <path d="M7 3v8M3 7h8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-      </svg>
-      New batch
-    </button>
+    <div class="flex flex-wrap gap-2">
+      <a href="/zone/imports?fileType=envelope_batch" class="sl-btn sl-btn-ghost">
+        Import contributions
+      </a>
+      <button onclick={newBatch} class="sl-btn sl-btn-primary">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <path d="M7 3v8M3 7h8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+        </svg>
+        Enter contributions
+      </button>
+    </div>
   </div>
 
   <!-- KPI strip -->
   <div class="sl-reveal sl-reveal-2 mt-10 grid grid-cols-2 gap-0 border-y border-[var(--rule)] bg-[var(--card)] md:grid-cols-4">
     <div class="px-6 py-7 border-r border-[var(--rule)]">
-      <span class="sl-eyebrow">Batches shown</span>
+      <span class="sl-eyebrow">Entry sessions</span>
       <div class="mt-3 sl-display sl-num text-[44px] leading-none text-[var(--ink)]">
         {batchTotal ?? batches.length}
       </div>
@@ -194,7 +198,7 @@ RELEVANT FILES: packages/web/src/routes/church/contributions/+page.svelte, packa
       <p class="mt-2 text-[12px] text-[var(--ink-mute)]">across filters in view</p>
     </div>
     <div class="border-t border-[var(--rule)] px-6 py-7 md:border-r md:border-t-0 md:border-[var(--rule)]">
-      <span class="sl-eyebrow">Cash on hand · batches</span>
+      <span class="sl-eyebrow">Cash on hand</span>
       <div class="mt-3 sl-display sl-num text-[28px] leading-tight text-[var(--ink)]">
         {#if batchCashTotal.length === 0}
           <span class="text-[var(--ink-faint)]">—</span>
@@ -230,7 +234,7 @@ RELEVANT FILES: packages/web/src/routes/church/contributions/+page.svelte, packa
         class="relative -mb-px py-3"
         style={tab === "batches" ? "color:var(--ink)" : "color:var(--ink-mute)"}
       >
-        <span class="sl-display text-[16px]">Batches</span>
+        <span class="sl-display text-[16px]">Entry sessions</span>
         {#if batchTotal !== null}
           <span class="ml-2 sl-mono text-[11px] text-[var(--ink-mute)]">({batchTotal})</span>
         {/if}
@@ -244,7 +248,7 @@ RELEVANT FILES: packages/web/src/routes/church/contributions/+page.svelte, packa
         class="relative -mb-px py-3"
         style={tab === "contributions" ? "color:var(--ink)" : "color:var(--ink-mute)"}
       >
-        <span class="sl-display text-[16px]">All contributions</span>
+        <span class="sl-display text-[16px]">Contribution ledger</span>
         {#if contribTotal !== null}
           <span class="ml-2 sl-mono text-[11px] text-[var(--ink-mute)]">({contribTotal})</span>
         {/if}
@@ -329,7 +333,7 @@ RELEVANT FILES: packages/web/src/routes/church/contributions/+page.svelte, packa
           {#if !loading && batches.length === 0}
             <tr>
               <td colspan="7" class="py-12 text-center text-[13px] text-[var(--ink-mute)]">
-                No batches yet. Click <strong class="text-[var(--ink)]">New batch</strong> to record a Sunday close.
+                No entry sessions yet. Click <strong class="text-[var(--ink)]">Enter contributions</strong> to start one.
               </td>
             </tr>
           {/if}

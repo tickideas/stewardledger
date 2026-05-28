@@ -27,7 +27,7 @@
 </script>
 
 <div class="sl-card p-5">
-  <p class="sl-eyebrow" style="font-size:10px">Lifecycle</p>
+  <p class="sl-eyebrow" style="font-size:10px">Review and post</p>
   <div class="mt-3 flex flex-wrap gap-2">
     {#if status === "draft"}
       <button type="button" disabled={busy || submitDisabled} onclick={() => onaction("submit")} class="sl-btn sl-btn-primary">
