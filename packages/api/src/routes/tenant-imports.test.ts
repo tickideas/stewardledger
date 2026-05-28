@@ -321,6 +321,68 @@ describe("tenant import routes", () => {
     });
   });
 
+  // ─── Template downloads ───────────────────────────────────────────
+
+  it("lists registered import templates for zone import readers", async () => {
+    asUser(ownerA, "owner@example.com");
+    const res = await call(zoneA.slug, "/api/tenant/imports/templates");
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: { kind: string; requiredColumns: string[] }[] };
+    expect(body.items.map((item) => item.kind)).toEqual(
+      expect.arrayContaining([
+        "generic-bank-statement",
+        "bank-statement",
+        "online-giving-statement",
+      ]),
+    );
+    expect(body.items.map((item) => item.kind)).not.toContain("envelope-batch");
+  });
+
+  it("downloads a branded XLSX template", async () => {
+    asUser(ownerA, "owner@example.com");
+    const res = await call(zoneA.slug, "/api/tenant/imports/templates/generic-bank-statement.xlsx");
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain(
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    expect(res.headers.get("content-disposition")).toContain(
+      `${zoneA.slug}-generic-bank-statement-template.xlsx`,
+    );
+    expect((await res.arrayBuffer()).byteLength).toBeGreaterThan(1000);
+  });
+
+  it("returns 404 for unknown template kinds", async () => {
+    asUser(ownerA, "owner@example.com");
+    const res = await call(zoneA.slug, "/api/tenant/imports/templates/not-real.xlsx");
+
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toMatchObject({
+      error: { code: "template_not_found" },
+    });
+  });
+
+  it("requires the .xlsx suffix for template downloads", async () => {
+    asUser(ownerA, "owner@example.com");
+    const res = await call(zoneA.slug, "/api/tenant/imports/templates/generic-bank-statement");
+
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toMatchObject({
+      error: { code: "template_not_found" },
+    });
+  });
+
+  it("does not expose planned template kinds before their importer is enabled", async () => {
+    asUser(ownerA, "owner@example.com");
+    const res = await call(zoneA.slug, "/api/tenant/imports/templates/envelope-batch.xlsx");
+
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toMatchObject({
+      error: { code: "template_not_found" },
+    });
+  });
+
   // ─── Cross-tenant ──────────────────────────────────────────────────
 
   it("rejects accessing zone A's import detail from zone B subdomain", async () => {

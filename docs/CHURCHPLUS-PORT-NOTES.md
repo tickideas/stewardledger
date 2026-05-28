@@ -133,12 +133,13 @@ Capabilities that StewardLedger should ship before GA (Phase 10). Each one is so
 
 - **Church Plus**: `api/template_download_center.py` + web page `template-download-center` distribute the exact Excel/CSV import templates expected by the importer (members, chapters, giving, envelope batch, etc).
 - **Why it matters**: when a new chapter onboards, treasurers download the templates, fill them in, and re-upload. Without this, every new tenant calls support for the schema.
-- **StewardLedger today**: importers exist (Phase 6) but there's no canonical "download an empty template" surface.
+- **StewardLedger today**: In progress on `feature/template-download-centre` (Phase 10 GA exit-checklist item; see `docs/ROADMAP.md`). Enabled statement-importer templates are downloadable; the `envelope-batch` template metadata is staged but hidden until §2.2.3 lands.
 - **Verdict**: **Port v1.**
-- **Suggested target**:
-  - Service: `packages/api/src/services/imports/templates.ts` generating .xlsx via `exceljs` from the registered import parsers.
-  - Route: `GET /api/tenant/imports/templates/:kind.xlsx`.
-  - UI: link block on `/zone/imports` and `/church/imports`.
+- **Implementation**:
+  - Registry: `packages/api/src/services/imports/registry.ts` defines downloadable templates for existing statement importer source types (`generic_csv`, `bank_csv`, `online_giving`) plus a planned, disabled §2.2.3 `envelope-batch` template entry.
+  - Service: `packages/api/src/services/imports/templates.ts` generates branded `.xlsx` workbooks via `exceljs`, `loadReportBranding`, and the existing `addBrandedSheet` frozen-header helper.
+  - Routes: `GET /api/tenant/imports/templates` lists visible templates; `GET /api/tenant/imports/templates/:kind.xlsx` streams the workbook with attachment headers.
+  - UI: `/zone/imports` and `/church/imports` render the shared template download centre (`packages/web/src/lib/imports/template-download-centre.svelte`) using existing `sl-*` primitives.
 
 #### 2.2.3 Bulk slip / envelope import (XLSX/CSV)
 

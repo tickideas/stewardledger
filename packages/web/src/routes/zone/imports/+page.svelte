@@ -2,7 +2,7 @@
   import { goto } from "$app/navigation";
   import { api, ApiError, isAbortError } from "$lib/api";
   import { PUBLIC_API_URL } from "$lib/env";
-  import { importTemplateHref } from "$lib/import-templates";
+  import TemplateDownloadCentre from "$lib/imports/template-download-centre.svelte";
   import { statusBadgeClass } from "$lib/ui";
   import { CHAPTER_ROLES, ZONE_ROLES, type AuthorizedContext } from "@stewardledger/shared";
 
@@ -56,7 +56,6 @@
     CHAPTER_ROLES.CHAPTER_BOOKKEEPER,
   ]);
   const canZoneWideUpload = $derived(auth?.roleCodes.some((r) => zoneWriteRoles.has(r)) ?? false);
-  const canChapterUpload = $derived(auth?.roleCodes.some((r) => chapterWriteRoles.has(r)) ?? false);
   const selectableChapters = $derived(
     canZoneWideUpload
       ? chapters
@@ -69,14 +68,6 @@
         ? !selectedChapterId || Boolean(selectedServiceEventId)
         : Boolean(selectedChapterId) && Boolean(selectedServiceEventId)),
   );
-  const templateScope = $derived(canZoneWideUpload ? "zone" : "chapter");
-  const templateHref = $derived(importTemplateHref(templateScope));
-  const templateFilename = $derived(
-    canZoneWideUpload
-      ? "stewardledger-zone-import-template.csv"
-      : "stewardledger-chapter-import-template.csv",
-  );
-
   async function loadUploadContext(signal: AbortSignal) {
     const [me, chapterRes, serviceTypeRes] = await Promise.all([
       api.get<{ auth: AuthorizedContext }>("/api/tenant/me", signal),
@@ -281,29 +272,12 @@
     <p class="mt-3 text-[11px] text-[var(--ink-mute)]">
       Files are staged for review before any rows commit. {#if selectedChapterId}The selected service event is applied to every imported row.{:else}Zone-wide files must include chapter and service event columns.{/if}
     </p>
-    <div class="mt-4 border-t border-[var(--rule)] pt-4">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <span class="sl-eyebrow" style="font-size:10px">CSV template</span>
-          {#if canZoneWideUpload}
-            <p class="mt-1 text-[12px] text-[var(--ink-mute)]">
-              Zone uploads should include <span class="sl-mono">chapter, service type, service date, date, member reference, giving type code, amount, reference, currency, description</span>.
-            </p>
-          {:else}
-            <p class="mt-1 text-[12px] text-[var(--ink-mute)]">
-              Chapter-scoped uploads should include <span class="sl-mono">date, member reference, giving type code, amount, reference, currency, description</span>.
-            </p>
-          {/if}
-        </div>
-        <a href={templateHref} download={templateFilename} class="sl-btn sl-btn-ghost">
-          Download template
-        </a>
-      </div>
-    </div>
     {#if uploadError}
       <p class="mt-3 border-l-2 border-[var(--bad)] bg-[var(--bad-soft)] px-3 py-2 text-[13px] text-[var(--bad)]">{uploadError}</p>
     {/if}
   </form>
+
+  <TemplateDownloadCentre surface="zone" />
 
   <!-- Filters -->
   <div class="sl-reveal sl-reveal-3 mt-8 flex flex-wrap items-center gap-3">

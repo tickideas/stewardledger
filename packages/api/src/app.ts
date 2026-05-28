@@ -13,21 +13,40 @@ import { healthRouter } from "./routes/health";
 import { publicRouter } from "./routes/public";
 import { tenantRouter } from "./routes/tenant";
 
+export function allowedCorsOrigin(origin: string | undefined): string | undefined {
+  if (!origin) return env.PUBLIC_APP_URL;
+  if (origin === env.PUBLIC_APP_URL || origin === env.PUBLIC_API_URL) return origin;
+  if (env.NODE_ENV !== "production" && origin.startsWith("http://localhost")) return origin;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return undefined;
+  }
+  if (parsed.protocol !== "https:") return undefined;
+  if (hostIsAllowedSubdomain(parsed.hostname, env.PUBLIC_APP_DOMAIN)) return origin;
+  if (hostIsAllowedSubdomain(parsed.hostname, env.PUBLIC_TENANT_DOMAIN)) return origin;
+  return undefined;
+}
+
+function hostIsAllowedSubdomain(host: string, domain: string): boolean {
+  if (!domain || domain === "localhost") return false;
+  const normalisedHost = host.toLowerCase();
+  const normalisedDomain = domain.replace(/^\./, "").toLowerCase();
+  return normalisedHost === normalisedDomain || normalisedHost.endsWith(`.${normalisedDomain}`);
+}
+
 export function createApp() {
   const app = new Hono();
 
   app.use(
     "*",
     cors({
-      origin: (origin) => {
-        if (!origin) return env.PUBLIC_APP_URL;
-        if (origin === env.PUBLIC_APP_URL) return origin;
-        if (env.NODE_ENV !== "production" && origin.startsWith("http://localhost")) return origin;
-        // Tenant subdomains are trusted via Better Auth trustedOrigins.
-        return origin;
-      },
+      origin: allowedCorsOrigin,
       credentials: true,
       allowHeaders: ["content-type", "x-stewardledger-zone-slug"],
+      exposeHeaders: ["content-disposition"],
     }),
   );
 

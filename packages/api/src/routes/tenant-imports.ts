@@ -31,6 +31,11 @@ import {
   scheduleImport,
   uploadImport,
 } from "../services/imports";
+import { listImportTemplates } from "../services/imports/registry";
+import {
+  ImportTemplateError,
+  buildImportTemplateWorkbook,
+} from "../services/imports/templates";
 
 export const tenantImportsRouter = new Hono();
 
@@ -136,6 +141,10 @@ function forbidden(c: { json: (b: unknown, s: number) => Response }, msg = "Insu
   return c.json({ error: { code: "forbidden", message: msg } }, 403);
 }
 
+function canReadTemplates(ctx: AuthorizedContext): boolean {
+  return hasZoneRead(ctx) || hasChapterRead(ctx) || hasGroupRead(ctx);
+}
+
 function handleError(c: { json: (b: unknown, s: number) => Response }, err: unknown): Response {
   if (err instanceof ImportError) {
     return c.json(
@@ -147,6 +156,50 @@ function handleError(c: { json: (b: unknown, s: number) => Response }, err: unkn
 }
 
 const MAX_IMPORT_BYTES = 20 * 1024 * 1024; // 20MB ceiling for v1
+
+tenantImportsRouter.get("/imports/templates", async (c) => {
+  const ctx = c.get("auth") as AuthorizedContext;
+  if (!canReadTemplates(ctx)) return forbidden(c);
+  const surface = c.req.query("surface") === "church" ? "church" : "zone";
+  return c.json({ items: listImportTemplates(surface) });
+});
+
+tenantImportsRouter.get("/imports/templates/:kind", async (c) => {
+  const ctx = c.get("auth") as AuthorizedContext;
+  if (!canReadTemplates(ctx)) return forbidden(c);
+  const rawKind = c.req.param("kind");
+  if (!rawKind?.endsWith(".xlsx")) {
+    return c.json({ error: { code: "template_not_found", message: "Import template not found" } }, 404);
+  }
+  const kind = rawKind.slice(0, -5);
+  if (!kind) {
+    return c.json({ error: { code: "template_not_found", message: "Import template not found" } }, 404);
+  }
+  try {
+    const result = await buildImportTemplateWorkbook(db, ctx, kind);
+    return new Response(toArrayBuffer(result.body), {
+      headers: {
+        "content-type": result.contentType,
+        "content-disposition": `attachment; filename="${result.fileName}"`,
+        "cache-control": "private, no-store",
+      },
+    });
+  } catch (err) {
+    if (err instanceof ImportTemplateError) {
+      return c.json(
+        { error: { code: err.code, message: "Import template not found" } },
+        404,
+      );
+    }
+    throw err;
+  }
+});
+
+function toArrayBuffer(view: Uint8Array): ArrayBuffer {
+  const copy = new ArrayBuffer(view.byteLength);
+  new Uint8Array(copy).set(view);
+  return copy;
+}
 
 // POST /api/tenant/imports — multipart upload (file + JSON fields).
 // We accept either `multipart/form-data` (the canonical browser flow) or
